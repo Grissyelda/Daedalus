@@ -15,6 +15,7 @@ permissions:
 env:
   DXC_VERSION: v1.8.2505.1
   DXC_LINUX_ARCHIVE: linux_dxc_2025_07_14.x86_64.tar.gz
+  DXC_WINDOWS_ARCHIVE: dxc_2025_07_14.zip
   ISPC_VERSION: v1.27.0
 
 jobs:
@@ -84,9 +85,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install ISPC
+      - name: Install DXC and ISPC
         shell: pwsh
         run: |
+          $dxcZip = "$env:RUNNER_TEMP\dxc.zip"
+          Invoke-WebRequest "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$env:DXC_VERSION/$env:DXC_WINDOWS_ARCHIVE" -OutFile $dxcZip
+          Expand-Archive $dxcZip -DestinationPath "$env:RUNNER_TEMP\dxc"
           $zip = "$env:RUNNER_TEMP\ispc.zip"
           Invoke-WebRequest "https://github.com/ispc/ispc/releases/download/$env:ISPC_VERSION/ispc-$env:ISPC_VERSION-windows.zip" -OutFile $zip
           Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\ispc"
@@ -96,7 +100,8 @@ jobs:
       - name: Configure (DirectX 12)
         working-directory: neo
         # The Vulkan renderer needs the Vulkan SDK on Windows; CI builds the default DX12 renderer.
-        run: cmake --preset ${{ matrix.preset }} -DUSE_VULKAN=OFF
+        shell: pwsh
+        run: cmake --preset ${{ matrix.preset }} -DUSE_VULKAN=OFF -DDXC_CUSTOM_PATH="$env:RUNNER_TEMP/dxc/bin/x64"
 
       - name: Build
         working-directory: neo
