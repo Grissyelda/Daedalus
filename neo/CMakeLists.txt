@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 if(NOT DEFINED APP_NAME)
 	# RB: This sets the name of the .exe and is the only line needed for a different mod executable.
 	# If you want to make a different game then you also need to change neo/framework/Licensee.h
-    set(APP_NAME RBDoom3BFG)
+    set(APP_NAME GrizzTech4)
 endif()
 project(${APP_NAME})
 
@@ -17,10 +17,13 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.6")
 endif()
 	
 option(STANDALONE
-		"Skip DOOM-3-BFG base/ folder and use content/ instead" OFF)
+		"Use the standalone GrizzTech4 content/ folder instead of DOOM-3-BFG base/" ON)
 
-option(DOOM_CLASSIC
-		"Build with Doom 1 & 2" ON)
+option(GRIZZ_EDITOR
+		"Build the GrizzTech4 editor into the executable (turn off for shipped games)" ON)
+
+# GrizzTech4: classic Doom 1 & 2 support was removed together with the doomclassic/ folder
+set(DOOM_CLASSIC OFF)
 
 option(FORCE_COLOR_OUTPUT
 		"Always produce ANSI-colored output (GNU/Clang only)." OFF)
@@ -306,6 +309,10 @@ endif()
 if (USE_INTRINSICS_NEON)
 	add_definitions(-DUSE_INTRINSICS_NEON)
 	add_definitions(-DSTBI_NEON)
+endif()
+
+if(GRIZZ_EDITOR)
+	add_definitions(-DGRIZZ_EDITOR)
 endif()
 
 if(STANDALONE)
@@ -771,19 +778,12 @@ file(GLOB IMGUI_EDITOR_SOURCES tools/imgui/*.cpp)
 file(GLOB IMGUI_EDITOR_LIGHT_INCLUDES tools/imgui/lighteditor/*.h)
 file(GLOB IMGUI_EDITOR_LIGHT_SOURCES tools/imgui/lighteditor/*.cpp)
 
+file(GLOB IMGUI_EDITOR_SHELL_INCLUDES tools/imgui/editor/*.h)
+file(GLOB IMGUI_EDITOR_SHELL_SOURCES tools/imgui/editor/*.cpp)
+
 file(GLOB IMGUI_EDITOR_UTIL_INCLUDES tools/imgui/util/*.h)
 file(GLOB IMGUI_EDITOR_UTIL_SOURCES tools/imgui/util/*.cpp)
 
-file(GLOB DOOMCLASSIC_INCLUDES ../doomclassic/doom/*.h)
-file(GLOB DOOMCLASSIC_SOURCES ../doomclassic/doom/*.cpp)
-
-set(DOOMCLASSIC_STUBAUDIO_SOURCES ../doomclassic/doom/i_sound_stub.cpp)
-set(DOOMCLASSIC_OPENAL_SOURCES ../doomclassic/doom/i_sound_openal.cpp)
-set(DOOMCLASSIC_XAUDIO2_SOURCES ../doomclassic/doom/i_sound_win32.cpp)
-
-list(REMOVE_ITEM DOOMCLASSIC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../doomclassic/doom/i_sound_stub.cpp)
-list(REMOVE_ITEM DOOMCLASSIC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../doomclassic/doom/i_sound_openal.cpp)
-list(REMOVE_ITEM DOOMCLASSIC_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/../doomclassic/doom/i_sound_win32.cpp)
 
 file(GLOB TIMIDITY_INCLUDES libs/timidity/*.h)
 file(GLOB TIMIDITY_SOURCES libs/timidity/*.cpp)
@@ -915,12 +915,7 @@ source_group("libs\\oggvorbis" FILES ${OGGVORBIS_SOURCES})
 source_group("libs\\timidity" FILES ${TIMIDITY_INCLUDES})
 source_group("libs\\timidity" FILES ${TIMIDITY_SOURCES})
 
-source_group("doomclassic" FILES ${DOOMCLASSIC_INCLUDES})
-source_group("doomclassic" FILES ${DOOMCLASSIC_SOURCES})
 
-source_group("doomclassic" FILES ${DOOMCLASSIC_STUBAUDIO_SOURCES})
-source_group("doomclassic" FILES ${DOOMCLASSIC_OPENAL_SOURCES})
-source_group("doomclassic" FILES ${DOOMCLASSIC_XAUDIO2_SOURCES})
 
 source_group("game-d3xp" FILES ${GAMED3XP_INCLUDES})
 source_group("game-d3xp" FILES ${GAMED3XP_SOURCES})
@@ -959,6 +954,8 @@ source_group("tools\\imgui" FILES ${IMGUI_EDITOR_SOURCES})
 source_group("tools\\imgui\\lighteditor" FILES ${IMGUI_EDITOR_LIGHT_INCLUDES})
 source_group("tools\\imgui\\lighteditor" FILES ${IMGUI_EDITOR_LIGHT_SOURCES})
 
+source_group("tools\\imgui\\editor" FILES ${IMGUI_EDITOR_SHELL_INCLUDES})
+source_group("tools\\imgui\\editor" FILES ${IMGUI_EDITOR_SHELL_SOURCES})
 source_group("tools\\imgui\\util" FILES ${IMGUI_EDITOR_UTIL_INCLUDES})
 source_group("tools\\imgui\\util" FILES ${IMGUI_EDITOR_UTIL_SOURCES})
 
@@ -999,6 +996,7 @@ set(RBDOOM3_INCLUDES
 			${TOOLS_INCLUDES}
 			${IMGUI_EDITOR_INCLUDES}
 			${IMGUI_EDITOR_LIGHT_INCLUDES}
+			${IMGUI_EDITOR_SHELL_INCLUDES}
 			${IMGUI_EDITOR_UTIL_INCLUDES}
 			
 			${GAMED3XP_INCLUDES}
@@ -1039,6 +1037,7 @@ set(RBDOOM3_SOURCES
 			
 			${IMGUI_EDITOR_SOURCES}
 			${IMGUI_EDITOR_LIGHT_SOURCES}
+			${IMGUI_EDITOR_SHELL_SOURCES}
 			${IMGUI_EDITOR_UTIL_SOURCES}
 			
 			${GAMED3XP_SOURCES}
@@ -1390,7 +1389,7 @@ else()
 	
 	if(MACOSX_BUNDLE)
 		# define contents of macOS app bundle Resources folder
-		set(MACOS_RESOURCES sys/posix/res/Doom3BFG.icns ../base)
+		set(MACOS_RESOURCES sys/posix/res/Doom3BFG.icns ../content)
 		source_group("Resources" FILES ${MACOS_RESOURCES})
 		set_source_files_properties(${MACOS_RESOURCES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 

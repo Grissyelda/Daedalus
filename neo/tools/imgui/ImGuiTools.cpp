@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "afeditor/AfEditor.h"
 #include "lighteditor/LightEditor.h"
+#include "editor/EditorShell.h"
 
 
 extern idCVar g_editEntityMode;
@@ -53,13 +54,14 @@ void SetReleaseToolMouse( bool doRelease )
 bool AreEditorsActive()
 {
 	// FIXME: this is not exactly clean and must be changed if we ever support game dlls
-	return g_editEntityMode.GetInteger() > 0 || com_editors != 0;
+	return g_editEntityMode.GetInteger() > 0 || com_editors != 0 || GrizzEditor::IsEditing();
 }
 
 bool ReleaseMouseForTools()
 {
 	// RB: ignore everything as long right mouse button is pressed
-	return AreEditorsActive() && releaseMouse && !ImGuiHook::RightMouseActive();
+	// GrizzTech4: the editor shell always owns the mouse while editing, except while the right button flies the camera
+	return AreEditorsActive() && ( releaseMouse || GrizzEditor::IsEditing() ) && !ImGuiHook::RightMouseActive();
 }
 
 void DrawToolWindows()

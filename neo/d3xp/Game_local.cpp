@@ -2188,7 +2188,7 @@ void idGameLocal::SpawnPlayer( int clientNum )
 	else
 	{
 		// precache the player
-		args.Set( "classname", gameLocal.world->spawnArgs.GetString( "def_player", "player_doommarine" ) );
+		args.Set( "classname", gameLocal.world->spawnArgs.GetString( "def_player", "player" ) );	// GrizzTech4: default player def
 	}
 
 	// It's important that we increment numClients before calling SpawnEntityDef, because some

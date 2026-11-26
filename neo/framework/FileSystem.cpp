@@ -1099,7 +1099,7 @@ void idFileSystemLocal::BuildOrderedStartupContainer()
 	}
 	FreeFileList( fl );
 
-	orderedFiles.Append( "script/doom_main.script" );
+	orderedFiles.Append( "script/main.script" );
 	orderedFiles.Append( "script/doom_defs.script" );
 	orderedFiles.Append( "script/doom_defs.script" );
 	orderedFiles.Append( "script/doom_events.script" );

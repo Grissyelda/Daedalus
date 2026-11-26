@@ -1,0 +1,16 @@
+/*
+	GrizzTech4 default player
+
+	A first-person player with no body model and no weapons: enough to walk
+	around a level. Projects replace or extend it with their own player def
+	(set "def_player" on the level's worldspawn to use a different one).
+	Movement speeds are the pm_* console variables.
+*/
+
+entityDef player
+{
+	"editor_usage"			"The default first-person player."
+
+	"spawnclass"			"idPlayer"
+	"scriptobject"			"player"		// see script/player.script
+}

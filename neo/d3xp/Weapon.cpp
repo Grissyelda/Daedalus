@@ -359,7 +359,8 @@ void idWeapon::Save( idSaveGame* savefile ) const
 
 	savefile->WriteVec3( pushVelocity );
 
-	savefile->WriteString( weaponDef->GetName() );
+	// GrizzTech4: weapons without a definition (a player with no weapons) save an empty name
+	savefile->WriteString( weaponDef ? weaponDef->GetName() : "" );
 	savefile->WriteFloat( meleeDistance );
 	savefile->WriteString( meleeDefName );
 	savefile->WriteInt( brassDelay );
@@ -532,10 +533,11 @@ void idWeapon::Restore( idRestoreGame* savefile )
 
 	idStr objectname;
 	savefile->ReadString( objectname );
-	weaponDef = gameLocal.FindEntityDef( objectname );
-	meleeDef = gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_melee" ), false );
+	// GrizzTech4: an empty name means this weapon had no definition when saved
+	weaponDef = objectname.IsEmpty() ? NULL : gameLocal.FindEntityDef( objectname );
+	meleeDef = weaponDef ? gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_melee" ), false ) : NULL;
 
-	const idDeclEntityDef* projectileDef = gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_projectile" ), false );
+	const idDeclEntityDef* projectileDef = weaponDef ? gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_projectile" ), false ) : NULL;
 	if( projectileDef )
 	{
 		projectileDict = projectileDef->dict;
@@ -545,7 +547,7 @@ void idWeapon::Restore( idRestoreGame* savefile )
 		projectileDict.Clear();
 	}
 
-	const idDeclEntityDef* brassDef = gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_ejectBrass" ), false );
+	const idDeclEntityDef* brassDef = weaponDef ? gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_ejectBrass" ), false ) : NULL;
 	if( brassDef )
 	{
 		brassDict = brassDef->dict;
@@ -2860,6 +2862,12 @@ void idWeapon::PresentWeapon( bool showViewModel )
 	}
 
 	UpdateSound();
+
+	// GrizzTech4: a player can exist without any weapon, in which case there is no weaponDef
+	if( weaponDef == NULL )
+	{
+		return;
+	}
 
 	// constant rumble...
 	float highMagnitude = weaponDef->dict.GetFloat( "controllerConstantShakeHighMag" );

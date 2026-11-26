@@ -1,4 +1,4 @@
-build*
+/build*/
 eclipse*
 xcode*
 neo/ipch
@@ -14,23 +14,21 @@ neo/ipch
 .DS_Store
 imgui.ini
 
-base/autoexec.cfg
-base/classicmusic/
-base/joy_360_0.cfg
-base/joy_360_1.cfg
-base/joy_lefty.cfg
-base/joy_righty.cfg
-base/maps/
-base/sound/
-base/strings/
-base/video/
-base/wads/
-base/renderprogs2/
-base/generated/
-base/env/
-base/screenshots/
-base/_tb/*.obj
-base/_tb/*.mtl
+# engine output written into content/ while building and running
+content/renderprogs2/
+content/generated/
+content/env/
+content/screenshots/
+content/savegames/
+content/maps/**/*.proc
+content/maps/**/*.cm
+content/maps/**/*.aas*
+content/maps/**/*.bcm
+content/maps/**/*.bproc
+content/maps/**/*.lightgrid
+content/*.cfg
+!content/default.cfg
+base/
 
 GPATH
 GRTAGS

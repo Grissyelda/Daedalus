@@ -40,8 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 // default scripts
-#define SCRIPT_DEFAULTDEFS			"script/doom_defs.script"
-#define SCRIPT_DEFAULT				"script/doom_main.script"
+#define SCRIPT_DEFAULTDEFS			"script/grizz_defs.script"	// GrizzTech4: included at the top of every script
+#define SCRIPT_DEFAULT				"script/main.script"	// GrizzTech4: the game's main script
 #define SCRIPT_DEFAULTFUNC			"doom_main"
 
 struct gameReturn_t

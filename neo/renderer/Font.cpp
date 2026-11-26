@@ -29,7 +29,8 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 #include "Font.h"
 
-const char* DEFAULT_FONT = "Arial_Narrow";
+// GrizzTech4: engine default font, generated from DejaVu Sans by scripts/content/make_font.py
+const char* DEFAULT_FONT = "grizzsans";
 
 static const float old_scale2 = 0.6f;
 static const float old_scale1 = 0.3f;

@@ -1,0 +1,74 @@
+/*
+	GrizzTech4 core entity definitions
+
+	The entity classes every level relies on. Each "editor_" key documents the
+	class for the editor's Inspector; the other keys are defaults that a placed
+	entity can override.
+*/
+
+entityDef worldspawn
+{
+	"editor_color"			"0 0 0"
+	"editor_usage"			"The level itself. Holds level-wide settings."
+	"editor_var def_player"	"Entity definition used for the player. Defaults to 'player'."
+
+	"spawnclass"			"idWorldspawn"
+}
+
+entityDef info_player_start
+{
+	"editor_color"			"1 0 0"
+	"editor_mins"			"-16 -16 0"
+	"editor_maxs"			"16 16 64"
+	"editor_usage"			"Where the player starts. 'angle' sets the facing direction."
+
+	"spawnclass"			"idPlayerStart"
+}
+
+entityDef light
+{
+	"editor_color"			"0 1 0"
+	"editor_mins"			"-8 -8 -8"
+	"editor_maxs"			"8 8 8"
+	"editor_usage"			"A dynamic light. Set 'light_radius' for a point light, or 'light_target', 'light_right' and 'light_up' for a projected one."
+	"editor_var light_radius"	"Size of a point light along x, y and z."
+	"editor_color _color"	"Light colour."
+	"editor_var start_off"	"Starts switched off when set to 1."
+
+	"spawnclass"			"idLight"
+	"texture"				"lights/defaultPointLight"
+	"health"				"0"
+	"levels"				"1"
+	"start_off"				"0"
+	"count"					"1"
+}
+
+entityDef func_static
+{
+	"editor_color"			"0 0.5 0.8"
+	"editor_usage"			"Brushes or a model that never move. Use it for detail that shouldn't split the level's visibility."
+
+	"spawnclass"			"idStaticEntity"
+	"solid"					"1"
+	"noclipmodel"			"0"
+}
+
+// reflection/ambient light probe; levels get them automatically when lighting is baked
+entityDef env_probe
+{
+	"editor_color"			"0.4 0.6 1"
+	"editor_mins"			"-8 -8 -8"
+	"editor_maxs"			"8 8 8"
+	"editor_usage"			"Captures surrounding light for reflections and ambient lighting."
+
+	"spawnclass"			"EnvironmentProbe"
+}
+
+// ammo and inventory bookkeeping the player code expects; projects list their ammo types here
+entityDef ammo_types
+{
+}
+
+entityDef ammo_names
+{
+}

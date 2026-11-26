@@ -1,0 +1,145 @@
+Version 3
+// entity 0
+{
+"classname" "worldspawn"
+"def_player" "player"
+// primitive 0
+{
+ brushDef3
+ {
+  ( 0 0 1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_floor" 0 0 0
+  ( 0 0 -1 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_floor" 0 0 0
+  ( 1 0 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_floor" 0 0 0
+  ( -1 0 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_floor" 0 0 0
+  ( 0 1 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_floor" 0 0 0
+  ( 0 -1 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_floor" 0 0 0
+ }
+}
+// primitive 1
+{
+ brushDef3
+ {
+  ( 0 0 1 -272 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_ceiling" 0 0 0
+  ( 0 0 -1 256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_ceiling" 0 0 0
+  ( 1 0 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_ceiling" 0 0 0
+  ( -1 0 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_ceiling" 0 0 0
+  ( 0 1 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_ceiling" 0 0 0
+  ( 0 -1 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_ceiling" 0 0 0
+ }
+}
+// primitive 2
+{
+ brushDef3
+ {
+  ( 0 0 1 -256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 1 0 0 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( -1 0 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 1 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 -1 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+ }
+}
+// primitive 3
+{
+ brushDef3
+ {
+  ( 0 0 1 -256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 1 0 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( -1 0 0 768 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 1 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 -1 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+ }
+}
+// primitive 4
+{
+ brushDef3
+ {
+  ( 0 0 1 -256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 1 0 0 -768 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( -1 0 0 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 1 0 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 -1 0 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+ }
+}
+// primitive 5
+{
+ brushDef3
+ {
+  ( 0 0 1 -256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 1 0 0 -768 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( -1 0 0 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 1 0 -784 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+  ( 0 -1 0 768 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_wall" 0 0 0
+ }
+}
+// primitive 6
+{
+ brushDef3
+ {
+  ( 0 0 1 -32 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 1 0 0 -704 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( -1 0 0 448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 0 1 0 -704 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 0 -1 0 448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+ }
+}
+// primitive 7
+{
+ brushDef3
+ {
+  ( 0 0 1 -16 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 1 0 0 -448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( -1 0 0 416 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 0 1 0 -704 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+  ( 0 -1 0 448 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_trim" 0 0 0
+ }
+}
+// primitive 8
+{
+ brushDef3
+ {
+  ( 0 0 1 -192 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_accent" 0 0 0
+  ( 0 0 -1 0 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_accent" 0 0 0
+  ( 1 0 0 -320 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_accent" 0 0 0
+  ( -1 0 0 256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_accent" 0 0 0
+  ( 0 1 0 -256 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_accent" 0 0 0
+  ( 0 -1 0 192 ) ( ( 0.0078125 0 0 ) ( 0 0.0078125 0 ) ) "textures/dev/grid_accent" 0 0 0
+ }
+}
+}
+// entity 1
+{
+"classname" "info_player_start"
+"name" "info_player_start_1"
+"origin" "96 384 1"
+"angle" "0"
+}
+// entity 2
+{
+"classname" "light"
+"name" "light_main"
+"origin" "384 384 224"
+"light_radius" "520 520 300"
+"_color" "1 0.92 0.82"
+}
+// entity 3
+{
+"classname" "light"
+"name" "light_platform"
+"origin" "640 640 160"
+"light_radius" "300 300 220"
+"_color" "0.55 0.7 1"
+}
+// entity 4
+{
+"classname" "light"
+"name" "light_entry"
+"origin" "96 96 200"
+"light_radius" "320 320 260"
+"_color" "1 0.6 0.35"
+}

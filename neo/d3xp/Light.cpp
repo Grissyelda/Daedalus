@@ -192,7 +192,7 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
 	args->GetBool( "parallel", "0", renderLight->parallel );
 
-	args->GetString( "texture", "lights/squarelight1", &texture );
+	args->GetString( "texture", "lights/defaultPointLight", &texture );	// GrizzTech4: engine default light shape
 
 	// allow this to be NULL
 	renderLight->shader = declManager->FindMaterial( texture, false );

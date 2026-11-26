@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "ImGuizmo.h"
 #include "renderer/RenderCommon.h"
 #include "renderer/RenderBackend.h"
+#include "../tools/imgui/editor/EditorShell.h"
 
 
 idCVar imgui_showDemoWindow( "imgui_showDemoWindow", "0", CVAR_GUI | CVAR_BOOL, "show big ImGui demo window" );
@@ -243,7 +244,8 @@ void SetClipboardText( void*, const char* text )
 
 bool ShowWindows()
 {
-	return ( ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 );
+	// GrizzTech4: the editor shell is always drawn in editor mode (also while playing, for the Stop button)
+	return ( GrizzEditor::IsEditorMode() || ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 );
 }
 
 bool UseInput()
@@ -906,9 +908,14 @@ void Render()
 			NewFrame();
 		}
 
+		// GrizzTech4: the editor's menu bar goes first so the dockspace fits below it
+		GrizzEditor::DrawMainMenuBar();
+
 		// make dockspace transparent
 		static ImGuiDockNodeFlags dockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
-		ImGui::DockSpaceOverViewport( NULL, dockspaceFlags, NULL );
+		ImGuiID mainDockSpaceId = ImGui::DockSpaceOverViewport( NULL, dockspaceFlags, NULL );
+
+		GrizzEditor::Draw( mainDockSpaceId );
 
 		ImGuiTools::DrawToolWindows();
 

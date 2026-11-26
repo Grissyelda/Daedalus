@@ -97,7 +97,7 @@ static char exit_spawn[ 1024 ];
 const char* Sys_DefaultSavePath()
 {
 #if defined(__APPLE__)
-	char* base_path = SDL_GetPrefPath( "", "RBDOOM-3-BFG" );
+	char* base_path = SDL_GetPrefPath( "", PREF_PATH_APP );
 	if( base_path )
 	{
 		savepath = base_path;
@@ -108,11 +108,11 @@ const char* Sys_DefaultSavePath()
 	const char* xdg_data_home = getenv( "XDG_DATA_HOME" );
 	if( xdg_data_home != NULL )
 	{
-		sprintf( savepath, "%s/rbdoom3bfg", xdg_data_home );
+		sprintf( savepath, "%s/" SAVE_DIR_POSIX, xdg_data_home );
 	}
 	else
 	{
-		sprintf( savepath, "%s/.local/share/rbdoom3bfg", getenv( "HOME" ) );
+		sprintf( savepath, "%s/.local/share/" SAVE_DIR_POSIX, getenv( "HOME" ) );
 	}
 #endif
 

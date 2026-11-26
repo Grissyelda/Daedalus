@@ -5990,6 +5990,13 @@ void idPlayer::UpdateFlashlight()
 		return;
 	}
 
+	// GrizzTech4: the flashlight is optional; a project enables it by defining weapon_flashlight_new
+	// (or weapon_flashlight for the classic one)
+	if( gameLocal.FindEntityDef( UsesClassicFlashlight() ? "weapon_flashlight" : "weapon_flashlight_new", false ) == NULL )
+	{
+		return;
+	}
+
 	if( !flashlightReset )
 	{
 		flashlight->Clear();

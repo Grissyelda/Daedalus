@@ -1338,10 +1338,9 @@ idUDP::InitForPort
 */
 bool idUDP::InitForPort( int portNumber )
 {
-	// DG: don't specify an IP to bind for (and certainly not net_ip)
-	// => it'll listen on all addresses (0.0.0.0 / INADDR_ANY)
-	netSocket = NET_IPSocket( NULL, portNumber, &bound_to );
-	// DG end
+	// GrizzTech4: games are single-player only. The session still talks to itself through
+	// this socket, so bind it to the loopback address and never listen on the network.
+	netSocket = NET_IPSocket( "127.0.0.1", portNumber, &bound_to );
 	if( netSocket <= 0 )
 	{
 		netSocket = 0;

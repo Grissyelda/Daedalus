@@ -1,0 +1,30 @@
+/***********************************************************************
+
+grizz_defs.script
+
+Constants shared by GrizzTech4 scripts. The script compiler includes
+this file at the top of every script automatically.
+
+***********************************************************************/
+
+#define TRUE	1
+#define FALSE	0
+
+#define PI		3.14159265358979323846
+#define DEG2RAD( a )	( ( a ) * ( PI / 180.0f ) )
+#define RAD2DEG( a )	( ( a ) * ( 180.0f / PI ) )
+
+// sound channels (match s_channelType in the game code)
+#define SND_CHANNEL_ANY		0
+#define SND_CHANNEL_VOICE	1
+#define SND_CHANNEL_VOICE2	2
+#define SND_CHANNEL_BODY	3
+#define SND_CHANNEL_BODY2	4
+#define SND_CHANNEL_BODY3	5
+#define SND_CHANNEL_WEAPON	6
+#define SND_CHANNEL_ITEM	7
+
+// axis
+#define X_AXIS	0
+#define Y_AXIS	1
+#define Z_AXIS	2
