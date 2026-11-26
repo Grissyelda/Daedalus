@@ -59,6 +59,9 @@ void	DrawMainMenuBar();
 // the editor's panels, docked into the main dockspace
 void	Draw( unsigned int mainDockSpaceId );
 
+// the 3D view of the level being edited; drawn in place of the game view while editing
+void	DrawWorld();
+
 #else
 
 inline bool	IsEditorMode()
@@ -71,6 +74,7 @@ inline bool	IsEditing()
 }
 inline void	DrawMainMenuBar() {}
 inline void	Draw( unsigned int ) {}
+inline void	DrawWorld() {}
 
 #endif
 

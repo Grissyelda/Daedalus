@@ -1899,6 +1899,95 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 
 /*
 ============
+idMapFile::WriteToFile
+
+GrizzTech4 editor: the map as Write() would save it, into an already open file
+============
+*/
+bool idMapFile::WriteToFile( idFile* fp ) const
+{
+	if( fp == NULL )
+	{
+		return false;
+	}
+
+	if( valve220Format )
+	{
+		fp->WriteFloatString( "// Game: Doom 3 BFG\n// Format: Doom3 (Valve)\n" );
+	}
+	else
+	{
+		fp->WriteFloatString( "Version %d\n", CURRENT_MAP_VERSION );
+	}
+
+	for( int i = 0; i < entities.Num(); i++ )
+	{
+		entities[i]->Write( fp, i, valve220Format );
+	}
+
+	return true;
+}
+
+/*
+============
+idMapFile::ParseFromMemory
+
+GrizzTech4 editor: parses .map text (as written by WriteToFile) without touching the disk.
+Unlike Parse(), it applies no worldspawn options or _extra_ents files, so the map comes
+back exactly as it was written.
+============
+*/
+bool idMapFile::ParseFromMemory( const char* text, int length, const char* mapName )
+{
+	idLexer src( LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
+	idToken token;
+
+	name = mapName;
+	name.StripFileExtension();
+	hasPrimitiveData = false;
+	valve220Format = false;
+	version = OLD_MAP_VERSION;
+	entities.DeleteContents( true );
+
+	if( !src.LoadMemory( text, length, name.c_str() ) )
+	{
+		return false;
+	}
+
+	if( !src.ReadToken( &token ) )
+	{
+		return false;
+	}
+
+	if( token == "Version" )
+	{
+		src.ReadTokenOnLine( &token );
+		version = token.GetIntValue();
+	}
+	else
+	{
+		src.UnreadToken( &token );
+		valve220Format = true;
+		version = 220;
+	}
+
+	while( 1 )
+	{
+		idMapEntity* mapEnt = idMapEntity::Parse( src, ( entities.Num() == 0 ), version );
+		if( !mapEnt )
+		{
+			break;
+		}
+		entities.Append( mapEnt );
+	}
+
+	SetGeometryCRC();
+	hasPrimitiveData = true;
+	return true;
+}
+
+/*
+============
 idMapFile::Write
 ============
 */

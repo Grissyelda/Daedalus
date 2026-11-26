@@ -123,3 +123,18 @@ textures/common/clip
 	playerclip
 	monsterclip
 }
+
+// how the editor shows surfaces that are invisible in the game (caulk, clip, visportals)
+editor/toolsurface
+{
+	noshadows
+	translucent
+	{
+		blend	blend
+		map		_white
+		red		0.25
+		green	0.75
+		blue	0.85
+		alpha	0.35
+	}
+}

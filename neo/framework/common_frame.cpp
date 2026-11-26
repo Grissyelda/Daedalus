@@ -31,6 +31,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "precompiled.h"
 #pragma hdrstop
 
+#include "../tools/imgui/editor/EditorShell.h"
+
 #include "Common_local.h"
 #include "../renderer/Image.h"
 
@@ -360,6 +362,13 @@ void idCommonLocal::Draw()
 	}
 #endif
 	// RB end
+	else if( GrizzEditor::IsEditing() && !mapSpawned )
+	{
+		// GrizzTech4: no game running, so show the level being edited (instead of the menu shell)
+		renderSystem->SetColor4( 0, 0, 0, 1 );
+		renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
+		GrizzEditor::DrawWorld();
+	}
 	else if( game && game->Shell_IsActive() )
 	{
 		bool gameDraw = game->Draw( game->GetLocalClientNum() );

@@ -475,6 +475,18 @@ public:
 	{
 		primitives.Append( p );
 	}
+	// GrizzTech4 editor: remove one primitive (deleting it) or take it out without deleting it
+	void					RemovePrimitive( int i )
+	{
+		delete primitives[i];
+		primitives.RemoveIndex( i );
+	}
+	idMapPrimitive* 		DetachPrimitive( int i )
+	{
+		idMapPrimitive* p = primitives[i];
+		primitives.RemoveIndex( i );
+		return p;
+	}
 	unsigned int			GetGeometryCRC() const;
 	void					RemovePrimitiveData();
 
@@ -500,6 +512,10 @@ public:
 	// load a .map file
 	bool					Parse( const char* filename, bool ignoreRegion = false, bool osPath = false, bool ignoreExtraEnts = false );
 	bool					Write( const char* fileName, const char* ext, bool fromBasePath = true );
+
+	// GrizzTech4 editor: write the whole map to an open file, and parse a map from text in memory
+	bool					WriteToFile( idFile* fp ) const;
+	bool					ParseFromMemory( const char* text, int length, const char* mapName );
 
 	// RB begin
 	bool					WriteJSON( const char* fileName, const char* ext, bool fromBasePath = true );
@@ -573,9 +589,12 @@ protected:
 	bool					valve220Format;	// RB: for TrenchBroom support
 	bool					gltfFormat;
 
+public:
+	// GrizzTech4 editor: also used to name newly placed entities
+	const char*				GetUniqueEntityName( const char* classname ) const; // RB
+
 private:
 	void					SetGeometryCRC();
-	const char*				GetUniqueEntityName( const char* classname ) const; // RB
 };
 
 ID_INLINE idMapFile::idMapFile()

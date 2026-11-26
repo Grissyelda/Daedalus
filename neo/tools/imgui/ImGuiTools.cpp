@@ -60,8 +60,12 @@ bool AreEditorsActive()
 bool ReleaseMouseForTools()
 {
 	// RB: ignore everything as long right mouse button is pressed
-	// GrizzTech4: the editor shell always owns the mouse while editing, except while the right button flies the camera
-	return AreEditorsActive() && ( releaseMouse || GrizzEditor::IsEditing() ) && !ImGuiHook::RightMouseActive();
+	// GrizzTech4: the editor shell keeps the cursor free while editing; the right button looks around without capturing it
+	if( GrizzEditor::IsEditing() )
+	{
+		return true;
+	}
+	return AreEditorsActive() && releaseMouse && !ImGuiHook::RightMouseActive();
 }
 
 void DrawToolWindows()
