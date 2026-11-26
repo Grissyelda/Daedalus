@@ -44,3 +44,16 @@ neo/.vscode/
 neo/cmake-build-*/
 neo/bin/
 /tools/
+
+# GrizzTech4: keep personal and local files out of this public repository
+.hygiene-denylist
+.env
+.env.*
+*.pem
+*.key
+.claude/
+CLAUDE.local.md
+.vs/
+.vscode/
+*.user
+*.local.*

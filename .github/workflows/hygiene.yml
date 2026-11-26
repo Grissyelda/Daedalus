@@ -1,0 +1,41 @@
+name: Hygiene
+
+# GrizzTech4 is public. Every pushed or proposed commit is checked for personal
+# information, local paths, secrets and design documents.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check new commits
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            python3 scripts/hygiene/check_hygiene.py --commits "$PR_BASE..$PR_HEAD"
+          elif [ -z "$PUSH_BEFORE" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            # New branch: check the commits that aren't already on main.
+            if git rev-parse --verify -q origin/main >/dev/null && [ "$(git rev-parse origin/main)" != "$PUSH_AFTER" ]; then
+              python3 scripts/hygiene/check_hygiene.py --commits "origin/main..$PUSH_AFTER"
+            else
+              python3 scripts/hygiene/check_hygiene.py --commit "$PUSH_AFTER"
+            fi
+          else
+            python3 scripts/hygiene/check_hygiene.py --commits "$PUSH_BEFORE..$PUSH_AFTER"
+          fi
