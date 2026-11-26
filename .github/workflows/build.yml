@@ -1,0 +1,117 @@
+name: Build
+
+# Builds GrizzTech4 for Linux (editor and Steam Deck game builds) and Windows,
+# runs the headless smoke test on Linux, and uploads ready-to-run packages.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DXC_VERSION: v1.8.2505.1
+  DXC_LINUX_ARCHIVE: linux_dxc_2025_07_14.x86_64.tar.gz
+  ISPC_VERSION: v1.27.0
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [ linux-release, steamdeck-release ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ninja-build libsdl2-dev libopenal-dev libvulkan-dev \
+            zlib1g-dev libncurses-dev xvfb mesa-vulkan-drivers
+
+      - name: Install DXC and ISPC
+        run: |
+          mkdir -p "$RUNNER_TEMP/dxc" "$RUNNER_TEMP/ispc"
+          curl -sSL "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$DXC_VERSION/$DXC_LINUX_ARCHIVE" | tar -xz -C "$RUNNER_TEMP/dxc"
+          curl -sSL "https://github.com/ispc/ispc/releases/download/$ISPC_VERSION/ispc-$ISPC_VERSION-linux.tar.gz" | tar -xz -C "$RUNNER_TEMP/ispc" --strip-components=1
+          echo "$RUNNER_TEMP/dxc/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/ispc/bin" >> "$GITHUB_PATH"
+
+      - name: Configure
+        working-directory: neo
+        run: cmake --preset ${{ matrix.preset }} -DDXC_SPIRV_PATH="$RUNNER_TEMP/dxc/bin/dxc"
+
+      - name: Build
+        working-directory: neo
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
+
+      - name: Smoke test
+        run: bash scripts/ci/smoke_test.sh build/${{ matrix.preset }}/GrizzTech4
+
+      - name: Package
+        run: |
+          mkdir -p package/GrizzTech4
+          cp build/${{ matrix.preset }}/GrizzTech4 package/GrizzTech4/
+          cp -r content template README.md LICENSE.md LICENSE_EXCEPTIONS.md package/GrizzTech4/
+          rm -rf package/GrizzTech4/content/maps/testmaps/*.proc package/GrizzTech4/content/maps/testmaps/*.cm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GrizzTech4-${{ matrix.preset }}
+          path: package
+          retention-days: 14
+
+  windows:
+    name: Windows (${{ matrix.preset }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: windows-vs2022
+            build: windows-release
+          - preset: windows-game
+            build: windows-game-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ISPC
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ispc.zip"
+          Invoke-WebRequest "https://github.com/ispc/ispc/releases/download/$env:ISPC_VERSION/ispc-$env:ISPC_VERSION-windows.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\ispc"
+          $bin = Get-ChildItem "$env:RUNNER_TEMP\ispc" -Recurse -Filter ispc.exe | Select-Object -First 1
+          Add-Content $env:GITHUB_PATH $bin.DirectoryName
+
+      - name: Configure (DirectX 12)
+        working-directory: neo
+        # The Vulkan renderer needs the Vulkan SDK on Windows; CI builds the default DX12 renderer.
+        run: cmake --preset ${{ matrix.preset }} -DUSE_VULKAN=OFF
+
+      - name: Build
+        working-directory: neo
+        run: cmake --build --preset ${{ matrix.build }} --parallel 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package/GrizzTech4 | Out-Null
+          Copy-Item build/${{ matrix.preset }}/Release/GrizzTech4.exe package/GrizzTech4/
+          Copy-Item -Recurse content, template package/GrizzTech4/
+          Copy-Item README.md, LICENSE.md, LICENSE_EXCEPTIONS.md package/GrizzTech4/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GrizzTech4-${{ matrix.preset }}
+          path: package
+          retention-days: 14

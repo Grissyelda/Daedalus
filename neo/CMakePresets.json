@@ -1,0 +1,70 @@
+{
+	"version": 6,
+	"cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+	"configurePresets": [
+		{
+			"name": "base",
+			"hidden": true,
+			"binaryDir": "${sourceDir}/../build/${presetName}",
+			"cacheVariables": {
+				"FFMPEG": "OFF",
+				"BINKDEC": "ON"
+			}
+		},
+		{
+			"name": "linux",
+			"hidden": true,
+			"inherits": "base",
+			"generator": "Ninja",
+			"condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+		},
+		{
+			"name": "linux-release",
+			"displayName": "Linux: editor, release",
+			"inherits": "linux",
+			"cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+		},
+		{
+			"name": "linux-debug",
+			"displayName": "Linux: editor, debug info",
+			"inherits": "linux",
+			"cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+		},
+		{
+			"name": "steamdeck-release",
+			"displayName": "Steam Deck: game only (no editor), release",
+			"inherits": "linux",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release",
+				"GRIZZ_EDITOR": "OFF"
+			}
+		},
+		{
+			"name": "windows",
+			"hidden": true,
+			"inherits": "base",
+			"generator": "Visual Studio 17 2022",
+			"architecture": "x64",
+			"condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+		},
+		{
+			"name": "windows-vs2022",
+			"displayName": "Windows: editor (Visual Studio 2022)",
+			"inherits": "windows"
+		},
+		{
+			"name": "windows-game",
+			"displayName": "Windows: game only (no editor) (Visual Studio 2022)",
+			"inherits": "windows",
+			"cacheVariables": { "GRIZZ_EDITOR": "OFF" }
+		}
+	],
+	"buildPresets": [
+		{ "name": "linux-release", "configurePreset": "linux-release", "targets": [ "GrizzTech4" ] },
+		{ "name": "linux-debug", "configurePreset": "linux-debug", "targets": [ "GrizzTech4" ] },
+		{ "name": "steamdeck-release", "configurePreset": "steamdeck-release", "targets": [ "GrizzTech4" ] },
+		{ "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release", "targets": [ "GrizzTech4" ] },
+		{ "name": "windows-debug", "configurePreset": "windows-vs2022", "configuration": "RelWithDebInfo", "targets": [ "GrizzTech4" ] },
+		{ "name": "windows-game-release", "configurePreset": "windows-game", "configuration": "Release", "targets": [ "GrizzTech4" ] }
+	]
+}

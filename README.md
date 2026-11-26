@@ -4,7 +4,7 @@ An all-in-one game editor and engine built on id Tech 4: one executable that ope
 
 GrizzTech4 is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG), the modernised Doom 3 BFG Edition source port. That gives it DX12 and Vulkan through NVRHI, physically based rendering, baked global illumination, soft shadows and glTF 2 model support.
 
-> **Status: pre-alpha.** This repository currently holds the unmodified RBDOOM-3-BFG code base plus repository setup. The GrizzTech4 editor, standalone base content and engine changes land in the coming milestones. Nothing here is ready to make a game with yet.
+> **Status: pre-alpha (milestone 0).** GrizzTech4 now runs standalone, with its own small engine content and no Doom 3 data. It opens into an editor shell whose Play button runs a level in the same window. Level editing, the inspector and the other tools arrive from milestone 1 onward, so it isn't ready to make a game with yet.
 
 ## Goals
 
@@ -18,13 +18,43 @@ GrizzTech4 is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM
 
 ## Building
 
-Until the GrizzTech4 build changes land, build it exactly as RBDOOM-3-BFG is built. See [docs/upstream/RBDOOM-3-BFG-README.md](docs/upstream/RBDOOM-3-BFG-README.md) for compilers, the Vulkan SDK, ISPC and DXC. Clone with submodules:
+Clone with submodules:
 
 ```
 git clone --recurse-submodules https://github.com/Grissyelda/GrizzTech4.git
 ```
 
-Running it currently needs Doom 3 BFG Edition game data, as RBDOOM-3-BFG does.
+You need CMake 3.25 or newer, [ISPC](https://github.com/ispc/ispc/releases) on your `PATH`, and:
+
+- **Windows:** Visual Studio 2022. For the Vulkan renderer, the [Vulkan SDK](https://vulkan.lunarg.com/) as well; otherwise add `-DUSE_VULKAN=OFF` to build DirectX 12 only.
+- **Linux / Steam Deck:** GCC or Clang, Ninja, SDL2, OpenAL and the Vulkan headers and loader (on Ubuntu: `ninja-build libsdl2-dev libopenal-dev libvulkan-dev`), plus [DXC](https://github.com/microsoft/DirectXShaderCompiler/releases) for compiling shaders.
+
+Then, from the `neo` folder, pick a preset (`cmake --list-presets` shows them all):
+
+| Preset | Builds |
+| --- | --- |
+| `windows-vs2022` | Windows, with the editor |
+| `windows-game` | Windows, game only (what you ship) |
+| `linux-release` | Linux, with the editor |
+| `linux-debug` | Linux, with the editor and debug info |
+| `steamdeck-release` | Steam Deck / Linux, game only |
+
+```
+cmake --preset linux-release
+cmake --build --preset linux-release
+```
+
+Shaders compile into `content/renderprogs2` as part of the build. Every push also builds Windows and Linux packages on GitHub Actions (see the **Build** workflow's artifacts).
+
+## Running
+
+Run the executable from the repository root (or a package folder), next to `content/`. It opens the editor:
+
+- **Play** (top centre) runs the map selected in the Content Browser, or the test room if none is selected; double-clicking a map plays it too. Play compiles the map first when it's new or has changed. **F10** stops and returns to the editor.
+- **File → New Project** creates a project folder from `template/`. It asks whether the project starts with the stylized or the PBR look. (Opening a project from inside the editor comes later; for now start with `+set fs_game <project name>`.)
+- Start with `+set editor 0` to run as the game, without the editor.
+
+`content/` holds the engine's own content: default materials, the `grizzsans` font (generated from DejaVu Sans), prototype grid textures, the default player and a test room. The scripts in `scripts/content/` regenerate the font, textures and test map.
 
 ## Contributing
 

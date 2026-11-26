@@ -77,6 +77,13 @@ UPSTREAM_SKIP_RULES = {"email address", "local Windows user path", "local macOS 
 
 SELF_PATH = "scripts/hygiene/check_hygiene.py"
 
+# Third-party license and notice files must keep their authors' contact details intact.
+LICENSE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS")
+
+
+def is_license_file(path):
+    return os.path.basename(path).upper().startswith(LICENSE_PREFIXES)
+
 
 def git(*args):
     return subprocess.run(["git", *args], check=True, capture_output=True,
@@ -141,7 +148,7 @@ def check_diff(diff_text, added_paths, denylist, upstream=False):
         if path == SELF_PATH or ALLOW_MARKER in text:
             continue
         where = f"{path}:{line_no}"
-        if not upstream:
+        if not upstream and not is_license_file(path):
             for addr in EMAIL_RE.findall(text):
                 if not email_allowed(addr):
                     problems.append(f"{where}: email address '{addr}'")

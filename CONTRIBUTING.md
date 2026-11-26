@@ -25,7 +25,7 @@ GrizzTech4 is a public repository, so keep personal information out of it.
 
 The pre-commit hook and the Hygiene workflow on GitHub check only what each change adds. They block:
 
-- email addresses other than GitHub and Anthropic noreply addresses
+- email addresses other than GitHub and Anthropic noreply addresses (third-party `LICENSE`, `COPYING`, `NOTICE` and `AUTHORS` files are exempt, since they must keep their authors' details)
 - local paths such as Windows user folders and home directories
 - API keys, tokens, private keys and hard-coded passwords
 - terms from your `.hygiene-denylist`
