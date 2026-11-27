@@ -624,6 +624,37 @@ void			Sys_WarpMouseInWindow( int x, int y );
 void			Sys_CaptureMouseForLook( bool capture, int x, int y );
 void			Sys_GetMouseLookDelta( float& dx, float& dy );	// movement since the last call
 
+// GrizzTech4: extra OS windows, for editor panels dragged out of the main window
+// (e.g. onto another monitor). Rectangles are client areas in screen pixels.
+struct sysScreenRect_t
+{
+	int x, y, w, h;
+};
+struct sysExtraWindowEvents_t
+{
+	bool		closeRequested;
+	bool		moved;
+	bool		resized;
+};
+void* 			Sys_MainWindowHandle();					// HWND or SDL_Window*
+bool			Sys_MainWindowRect( sysScreenRect_t& rect );
+bool			Sys_GetCursorScreenPos( int& x, int& y );
+void* 			Sys_WindowUnderCursor();					// the main or an extra window, if one is under the cursor and takes input; else NULL
+int				Sys_GetMonitors( sysScreenRect_t* full, sysScreenRect_t* work, int max );	// the primary one first
+void			Sys_CaptureMouseAllWindows( bool capture );	// keep getting mouse buttons while dragging outside our windows
+void* 			Sys_ExtraWindowCreate( const sysScreenRect_t& rect, void* owner );	// hidden until shown
+void			Sys_ExtraWindowDestroy( void* window );
+void			Sys_ExtraWindowShow( void* window, bool activate );
+void			Sys_ExtraWindowSetPos( void* window, int x, int y );
+void			Sys_ExtraWindowSetSize( void* window, int w, int h );
+bool			Sys_ExtraWindowGetRect( void* window, sysScreenRect_t& rect );
+void			Sys_ExtraWindowFocus( void* window );
+bool			Sys_ExtraWindowHasFocus( void* window );		// also works for the main window
+bool			Sys_ExtraWindowIsMinimized( void* window );	// also works for the main window
+void			Sys_ExtraWindowSetTitle( void* window, const char* title );
+void			Sys_ExtraWindowSetNoInputs( void* window, bool noInputs );	// clicks fall through to what's behind
+void			Sys_ExtraWindowTakeEvents( void* window, sysExtraWindowEvents_t& events );	// since the last call
+
 void			Sys_ShowWindow( bool show );
 bool			Sys_IsWindowVisible();
 void			Sys_ShowConsole( int visLevel, bool quitOnClose );

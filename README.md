@@ -51,7 +51,7 @@ Shaders compile into `content/renderprogs2` as part of the build. Every push als
 Run the executable from the repository root (or a package folder), next to `content/`. It opens the editor:
 
 - The level fills the middle. The **tool dock** at the bottom has five tabs: **Build** (move, turn, resize, draw, cut, corners, and shapes to drag in), **Paint** (click surfaces to paint them), **Logic** (doors and the player start), **Light** and **Kits** (ready-made things to drop in). Keys 1 to 5 switch tabs; hold **Space** over the level for a wheel of every tool.
-- The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** panels dock around it.
+- The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** panels dock around it. Drag a panel's tab to rearrange them, or out of the window onto another monitor (`editor_detachablePanels 0` turns that off). **View → Reset layout** puts them back.
 - **Play** (top centre) saves and runs the open level, compiling it first when it's new or has changed. **Esc** or **F10** returns to the editor.
 - **File → New Project** creates a project folder from `template/` and asks whether it starts with the stylized or the PBR look. **File → Open Project** switches to another project.
 - Start with `+set editor 0` to run as the game, without the editor. `editor_uiScale` makes the editor's text and controls bigger or smaller.

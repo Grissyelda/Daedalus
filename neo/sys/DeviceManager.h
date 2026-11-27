@@ -221,6 +221,21 @@ public:
 
 	void SetWindowTitle( const char* title );
 
+	// GrizzTech4: swap chains for extra OS windows (editor panels dragged onto other monitors).
+	// The handles are opaque. Draw a frame with BeginExtraFrame, execute the command list that
+	// draws into its framebuffer right away (nothing else in between), then PresentExtra.
+	virtual void* CreateExtraSwapChain( void* windowHandle, int width, int height )
+	{
+		return nullptr;
+	}
+	virtual void ResizeExtraSwapChain( void* swapChain, int width, int height ) {}
+	virtual void DestroyExtraSwapChain( void* swapChain ) {}
+	virtual nvrhi::IFramebuffer* BeginExtraFrame( void* swapChain )		// null: skip this window this frame
+	{
+		return nullptr;
+	}
+	virtual void PresentExtra( void* swapChain ) {}
+
 	virtual bool IsVulkanInstanceExtensionEnabled( const char* extensionName ) const
 	{
 		return false;

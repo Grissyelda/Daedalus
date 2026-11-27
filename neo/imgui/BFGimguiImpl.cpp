@@ -98,6 +98,12 @@ bool ImGui::DragVec3fitLabel( const char* label, idVec3& v, float v_speed,
 namespace ImGuiHook
 {
 
+// GrizzTech4: panels in windows of their own (BFGimguiViewports.cpp)
+bool g_FrameRendered = false;				// an ImGui frame was rendered since the last RenderPlatformWindows
+void InitViewports();
+void ViewportsNewFrame( bool pollMouse, ImVec2& mousePos );
+
+
 namespace
 {
 
@@ -108,6 +114,7 @@ float	g_MouseWheel = 0.0f;
 ImVec2	g_MousePos = ImVec2( -1.0f, -1.0f ); //{-1.0f, -1.0f};
 ImVec2	g_DisplaySize = ImVec2( 0.0f, 0.0f ); //{0.0f, 0.0f};
 bool	g_haveNewFrame = false;
+bool	g_MousePosForced = false;			// GrizzTech4: SetMousePos was called; use that rather than polling the mouse
 bool	g_insideRender = false;
 
 bool HandleKeyEvent( const sysEvent_t& keyEvent )
@@ -756,6 +763,9 @@ bool Init( int windowWidth, int windowHeight )
 	GrizzEditor::UI::Init();
 #endif
 
+	// GrizzTech4: panels can be dragged out into windows of their own
+	InitViewports();
+
 	g_IsInit = true;
 
 	return true;
@@ -764,6 +774,7 @@ bool Init( int windowWidth, int windowHeight )
 void SetMousePos( float x, float y )
 {
 	g_MousePos = ImVec2( x, y );
+	g_MousePosForced = true;
 }
 
 void NotifyDisplaySizeChanged( int width, int height )
@@ -795,8 +806,12 @@ bool InjectSysEvent( const sysEvent_t* event )
 				// RB: still allow mouse movement if right mouse button is pressed
 				//if( !g_MousePressed[1] )
 			{
-				g_MousePos.x = ev.evValue;
-				g_MousePos.y = ev.evValue2;
+				// GrizzTech4: with panel windows the mouse is polled in screen coordinates instead
+				if( !ViewportsActive() )
+				{
+					g_MousePos.x = ev.evValue;
+					g_MousePos.y = ev.evValue2;
+				}
 				return true;
 			}
 
@@ -809,7 +824,10 @@ bool InjectSysEvent( const sysEvent_t* event )
 				break;
 
 			case SE_MOUSE_LEAVE:
-				g_MousePos = ImVec2( -1.0f, -1.0f );
+				if( !ViewportsActive() )
+				{
+					g_MousePos = ImVec2( -1.0f, -1.0f );
+				}
 				return true;
 
 			default:
@@ -855,8 +873,13 @@ void NewFrame()
 
 		g_Time = current_time;
 
+		// GrizzTech4: panel windows follow the main window, and the mouse is found in screen coordinates
+		const bool playing = PlayingFromEditor();
+		ViewportsNewFrame( !playing && !g_MousePosForced, g_MousePos );
+		g_MousePosForced = false;
+
 		// Setup inputs
-		if( PlayingFromEditor() )
+		if( playing )
 		{
 			// the game has the mouse: no position, no buttons, and nothing left held for later
 			io.MousePos = ImVec2( -FLT_MAX, -FLT_MAX );
@@ -944,6 +967,7 @@ void Render()
 
 		ImGui::Render();
 		idRenderBackend::ImGui_RenderDrawLists( ImGui::GetDrawData() );
+		g_FrameRendered = true;
 		g_haveNewFrame = false;
 		g_insideRender = false;
 	}
@@ -953,6 +977,7 @@ void Destroy()
 {
 	if( IsInitialized() )
 	{
+		ShutdownViewports();
 		ImGui::DestroyContext();
 		g_IsInit = false;
 		g_haveNewFrame = false;

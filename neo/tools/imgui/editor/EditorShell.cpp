@@ -2666,6 +2666,8 @@ static void DrawAbout()
 		ImGui::Separator();
 		ImGui::Text( "Moving around" );
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
+		ImGui::Text( "Panels" );
+		Hint( "Drag a panel's tab to move it: onto another panel to stack them, to a side to split, or out of the window onto another monitor. View > Reset layout puts everything back." );
 		ImGui::Text( "Editing" );
 		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces. W, E and R move, turn and resize; B draws brushes, C cuts them, V drags their corners, P paints and I picks a material up. Hold Space for the tool wheel. 1 to 5 switch the dock's tabs (Build, Paint, Logic, Light, Kits). [ and ] change the grid. Carve cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
 	}

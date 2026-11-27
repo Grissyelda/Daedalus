@@ -467,6 +467,13 @@ sysEvent_t Sys_GetEvent()
 	// loop until there is an event we care about (will return then) or no more events
 	while( SDL_PollEvent( &ev ) )
 	{
+		// GrizzTech4: the editor's panel windows handle their own window events
+		extern bool Sys_SDL_HandleExtraWindowEvent( const SDL_Event & ev );
+		if( Sys_SDL_HandleExtraWindowEvent( ev ) )
+		{
+			continue;
+		}
+
 		switch( ev.type )
 		{
 			case SDL_WINDOWEVENT:
@@ -651,11 +658,25 @@ sysEvent_t Sys_GetEvent()
 				continue; // just handle next event
 
 			case SDL_MOUSEMOTION:
+			{
+				// GrizzTech4: the editor's panel windows follow the mouse in screen coordinates
+				extern void Sys_SDL_TrackMouseMotion( const SDL_Event & ev );
+				Sys_SDL_TrackMouseMotion( ev );
+			}
 				// GrizzTech4: raw movement for the editor's mouse look
 				if( lookCaptured )
 				{
 					lookDeltaX += ev.motion.xrel;
 					lookDeltaY += ev.motion.yrel;
+				}
+				else
+				{
+					// over a panel window: the position is in its coordinates, and the editor polls the mouse instead
+					extern bool Sys_SDL_IsExtraWindow( Uint32 windowID );
+					if( Sys_SDL_IsExtraWindow( ev.motion.windowID ) )
+					{
+						continue;
+					}
 				}
 				// DG: return event with absolute mouse-coordinates when in menu
 				// to fix cursor problems in windowed mode

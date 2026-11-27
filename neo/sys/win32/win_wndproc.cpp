@@ -179,6 +179,27 @@ MainWndProc
 main window procedure
 ====================
 */
+// GrizzTech4: in the editor, a held mouse button keeps the mouse even outside the window, so
+// panels can be dragged out onto other monitors and the release still arrives
+static void Win_CaptureForEditor( HWND hWnd, bool down, WPARAM wParam )
+{
+	if( !cvarSystem->GetCVarBool( "editor" ) )
+	{
+		return;
+	}
+	if( down )
+	{
+		if( GetCapture() == NULL )
+		{
+			SetCapture( hWnd );
+		}
+	}
+	else if( ( wParam & ( MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2 ) ) == 0 && GetCapture() == hWnd )
+	{
+		ReleaseCapture();
+	}
+}
+
 LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
 	int key;
@@ -276,6 +297,14 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 
 			fActive = LOWORD( wParam );
 			fMinimized = ( BOOL ) HIWORD( wParam );
+
+			// GrizzTech4: focus moving to one of the editor's own panel windows keeps the app active
+			extern bool Win_IsExtraWindow( HWND hwnd );
+			if( fActive == WA_INACTIVE && Win_IsExtraWindow( ( HWND )lParam ) )
+			{
+				win32.movingWindow = false;
+				break;
+			}
 
 			win32.activeApp = ( fActive != WA_INACTIVE );
 			if( win32.activeApp )
@@ -491,31 +520,37 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 		}
 		case WM_LBUTTONDOWN:
 		{
+			Win_CaptureForEditor( hWnd, true, wParam );
 			Sys_QueEvent( SE_KEY, K_MOUSE1, 1, 0, NULL, 0 );
 			return 0;
 		}
 		case WM_LBUTTONUP:
 		{
+			Win_CaptureForEditor( hWnd, false, wParam );
 			Sys_QueEvent( SE_KEY, K_MOUSE1, 0, 0, NULL, 0 );
 			return 0;
 		}
 		case WM_RBUTTONDOWN:
 		{
+			Win_CaptureForEditor( hWnd, true, wParam );
 			Sys_QueEvent( SE_KEY, K_MOUSE2, 1, 0, NULL, 0 );
 			return 0;
 		}
 		case WM_RBUTTONUP:
 		{
+			Win_CaptureForEditor( hWnd, false, wParam );
 			Sys_QueEvent( SE_KEY, K_MOUSE2, 0, 0, NULL, 0 );
 			return 0;
 		}
 		case WM_MBUTTONDOWN:
 		{
+			Win_CaptureForEditor( hWnd, true, wParam );
 			Sys_QueEvent( SE_KEY, K_MOUSE3, 1, 0, NULL, 0 );
 			return 0;
 		}
 		case WM_MBUTTONUP:
 		{
+			Win_CaptureForEditor( hWnd, false, wParam );
 			Sys_QueEvent( SE_KEY, K_MOUSE3, 0, 0, NULL, 0 );
 			return 0;
 		}

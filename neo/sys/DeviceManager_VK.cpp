@@ -51,6 +51,10 @@
 	idCVar r_mvkUseMTLHeap( "r_mvkUseMTLHeap", "0", CVAR_INTEGER | CVAR_INIT | CVAR_NEW, "Use MoltenVK's MTLHeap option (may cause issues on AMD GPUs).", 0, 2 );
 #endif
 #include <nvrhi/validation.h>
+#if defined( VULKAN_USE_PLATFORM_SDL )
+	#include <SDL.h>
+	#include <SDL_vulkan.h>
+#endif
 #include <libs/optick/optick.h>
 
 #if defined( USE_AMD_ALLOCATOR )
@@ -202,7 +206,19 @@ protected:
 		}
 	}
 
+public:
+	// GrizzTech4: extra windows
+	void* CreateExtraSwapChain( void* windowHandle, int width, int height ) override;
+	void ResizeExtraSwapChain( void* swapChain, int width, int height ) override;
+	void DestroyExtraSwapChain( void* swapChain ) override;
+	nvrhi::IFramebuffer* BeginExtraFrame( void* swapChain ) override;
+	void PresentExtra( void* swapChain ) override;
+
 private:
+	struct ExtraSwapChainVK;
+	bool createExtraSwapChainObjects( ExtraSwapChainVK* sc );
+	void destroyExtraSwapChainObjects( ExtraSwapChainVK* sc );
+
 	bool createInstance();
 	bool createWindowSurface();
 	void installDebugCallback();
@@ -1714,6 +1730,280 @@ void DeviceManager_VK::Present()
 		}
 	}
 #endif
+}
+
+/*
+===============================================================================
+
+	GrizzTech4: swap chains for extra windows (editor panels on other monitors)
+
+===============================================================================
+*/
+
+struct DeviceManager_VK::ExtraSwapChainVK
+{
+	void*								window = nullptr;
+	vk::SurfaceKHR						surface;
+	vk::SwapchainKHR					swapChain;
+	vk::Format							format = vk::Format::eUndefined;
+	nvrhi::Format						rhiFormat = nvrhi::Format::UNKNOWN;
+	std::vector<vk::Image>				images;
+	std::vector<nvrhi::TextureHandle>	textures;
+	std::vector<nvrhi::FramebufferHandle> framebuffers;
+	std::vector<vk::Semaphore>			acquireSemaphores;
+	std::vector<vk::Semaphore>			renderSemaphores;
+	uint32_t							acquireIndex = 0;
+	uint32_t							imageIndex = 0;
+	int									width = 0;
+	int									height = 0;
+	bool								needsRecreate = false;
+};
+
+bool DeviceManager_VK::createExtraSwapChainObjects( ExtraSwapChainVK* sc )
+{
+	const vk::SurfaceCapabilitiesKHR caps = m_VulkanPhysicalDevice.getSurfaceCapabilitiesKHR( sc->surface );
+	if( caps.maxImageExtent.width == 0 || caps.maxImageExtent.height == 0 )
+	{
+		return false;	// minimized
+	}
+	vk::Extent2D extent( idMath::ClampInt( caps.minImageExtent.width, caps.maxImageExtent.width, sc->width ),
+						 idMath::ClampInt( caps.minImageExtent.height, caps.maxImageExtent.height, sc->height ) );
+
+	// the same kind of format as the main window, if the surface has it
+	const std::vector<vk::SurfaceFormatKHR> formats = m_VulkanPhysicalDevice.getSurfaceFormatsKHR( sc->surface );
+	sc->format = vk::Format::eUndefined;
+	const vk::Format wanted[] = { m_SwapChainFormat.format, vk::Format::eR8G8B8A8Unorm, vk::Format::eB8G8R8A8Unorm };
+	for( vk::Format f : wanted )
+	{
+		for( const vk::SurfaceFormatKHR& available : formats )
+		{
+			if( available.format == f && sc->format == vk::Format::eUndefined )
+			{
+				sc->format = f;
+			}
+		}
+	}
+	if( sc->format == vk::Format::eUndefined )
+	{
+		return false;
+	}
+	sc->rhiFormat = sc->format == vk::Format::eB8G8R8A8Unorm ? nvrhi::Format::BGRA8_UNORM : nvrhi::Format::RGBA8_UNORM;
+
+	// don't wait for vsync on panels: they're drawn after the main window every frame
+	const std::vector<vk::PresentModeKHR> modes = m_VulkanPhysicalDevice.getSurfacePresentModesKHR( sc->surface );
+	vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+	for( vk::PresentModeKHR mode : modes )
+	{
+		if( mode == vk::PresentModeKHR::eMailbox )
+		{
+			presentMode = mode;
+		}
+		else if( mode == vk::PresentModeKHR::eImmediate && presentMode == vk::PresentModeKHR::eFifo )
+		{
+			presentMode = mode;
+		}
+	}
+
+	uint32_t imageCount = Max( caps.minImageCount, 2u );
+	if( caps.maxImageCount > 0 )
+	{
+		imageCount = Min( imageCount, caps.maxImageCount );
+	}
+
+	auto desc = vk::SwapchainCreateInfoKHR()
+				.setSurface( sc->surface )
+				.setMinImageCount( imageCount )
+				.setImageFormat( sc->format )
+				.setImageColorSpace( vk::ColorSpaceKHR::eSrgbNonlinear )
+				.setImageExtent( extent )
+				.setImageArrayLayers( 1 )
+				.setImageUsage( vk::ImageUsageFlagBits::eColorAttachment )
+				.setImageSharingMode( vk::SharingMode::eExclusive )
+				.setPreTransform( vk::SurfaceTransformFlagBitsKHR::eIdentity )
+				.setCompositeAlpha( vk::CompositeAlphaFlagBitsKHR::eOpaque )
+				.setPresentMode( presentMode )
+				.setClipped( true );
+	if( m_VulkanDevice.createSwapchainKHR( &desc, nullptr, &sc->swapChain ) != vk::Result::eSuccess )
+	{
+		return false;
+	}
+
+	sc->width = extent.width;
+	sc->height = extent.height;
+	sc->images = m_VulkanDevice.getSwapchainImagesKHR( sc->swapChain );
+	for( vk::Image image : sc->images )
+	{
+		nvrhi::TextureDesc textureDesc;
+		textureDesc.width = extent.width;
+		textureDesc.height = extent.height;
+		textureDesc.format = sc->rhiFormat;
+		textureDesc.debugName = "Panel window image";
+		textureDesc.initialState = nvrhi::ResourceStates::Present;
+		textureDesc.keepInitialState = true;
+		textureDesc.isRenderTarget = true;
+		nvrhi::TextureHandle texture = m_NvrhiDevice->createHandleForNativeTexture( nvrhi::ObjectTypes::VK_Image, nvrhi::Object( image ), textureDesc );
+		sc->textures.push_back( texture );
+		sc->framebuffers.push_back( GetDevice()->createFramebuffer( nvrhi::FramebufferDesc().addColorAttachment( texture ) ) );
+		sc->renderSemaphores.push_back( m_VulkanDevice.createSemaphore( vk::SemaphoreCreateInfo() ) );
+	}
+	for( size_t i = 0; i < sc->images.size() + 1; i++ )
+	{
+		sc->acquireSemaphores.push_back( m_VulkanDevice.createSemaphore( vk::SemaphoreCreateInfo() ) );
+	}
+	sc->acquireIndex = 0;
+	sc->needsRecreate = false;
+	return true;
+}
+
+void DeviceManager_VK::destroyExtraSwapChainObjects( ExtraSwapChainVK* sc )
+{
+	m_VulkanDevice.waitIdle();
+	sc->framebuffers.clear();
+	sc->textures.clear();
+	m_NvrhiDevice->runGarbageCollection();
+	for( vk::Semaphore semaphore : sc->acquireSemaphores )
+	{
+		m_VulkanDevice.destroySemaphore( semaphore );
+	}
+	for( vk::Semaphore semaphore : sc->renderSemaphores )
+	{
+		m_VulkanDevice.destroySemaphore( semaphore );
+	}
+	sc->acquireSemaphores.clear();
+	sc->renderSemaphores.clear();
+	sc->images.clear();
+	if( sc->swapChain )
+	{
+		m_VulkanDevice.destroySwapchainKHR( sc->swapChain );
+		sc->swapChain = nullptr;
+	}
+}
+
+void* DeviceManager_VK::CreateExtraSwapChain( void* windowHandle, int width, int height )
+{
+	ExtraSwapChainVK* sc = new ExtraSwapChainVK();
+	sc->window = windowHandle;
+	sc->width = Max( 1, width );
+	sc->height = Max( 1, height );
+
+	VkSurfaceKHR surface = VK_NULL_HANDLE;
+#if defined( VULKAN_USE_PLATFORM_SDL )
+	if( !SDL_Vulkan_CreateSurface( ( SDL_Window* )windowHandle, ( VkInstance )m_VulkanInstance, &surface ) )
+	{
+		surface = VK_NULL_HANDLE;
+	}
+#elif defined( VK_USE_PLATFORM_WIN32_KHR )
+	auto surfaceInfo = vk::Win32SurfaceCreateInfoKHR().setHinstance( ( HINSTANCE )windowInstance ).setHwnd( ( HWND )windowHandle );
+	vk::SurfaceKHR vkSurface;
+	if( m_VulkanInstance.createWin32SurfaceKHR( &surfaceInfo, nullptr, &vkSurface ) == vk::Result::eSuccess )
+	{
+		surface = vkSurface;
+	}
+#endif
+	if( surface == VK_NULL_HANDLE )
+	{
+		common->Warning( "Couldn't make a Vulkan surface for a panel window" );
+		delete sc;
+		return nullptr;
+	}
+	sc->surface = surface;
+
+	if( !m_VulkanPhysicalDevice.getSurfaceSupportKHR( m_PresentQueueFamily, sc->surface ) )
+	{
+		common->Warning( "The GPU can't present to a panel window" );
+		m_VulkanInstance.destroySurfaceKHR( sc->surface );
+		delete sc;
+		return nullptr;
+	}
+
+	if( !createExtraSwapChainObjects( sc ) )
+	{
+		// e.g. created minimized: try again when it's drawn
+		destroyExtraSwapChainObjects( sc );
+		sc->needsRecreate = true;
+	}
+	return sc;
+}
+
+void DeviceManager_VK::ResizeExtraSwapChain( void* swapChain, int width, int height )
+{
+	ExtraSwapChainVK* sc = ( ExtraSwapChainVK* )swapChain;
+	if( sc == nullptr || width <= 0 || height <= 0 || ( width == sc->width && height == sc->height && !sc->needsRecreate ) )
+	{
+		return;
+	}
+	sc->width = width;
+	sc->height = height;
+	sc->needsRecreate = true;
+}
+
+void DeviceManager_VK::DestroyExtraSwapChain( void* swapChain )
+{
+	ExtraSwapChainVK* sc = ( ExtraSwapChainVK* )swapChain;
+	if( sc == nullptr )
+	{
+		return;
+	}
+	destroyExtraSwapChainObjects( sc );
+	if( sc->surface )
+	{
+		m_VulkanInstance.destroySurfaceKHR( sc->surface );
+	}
+	delete sc;
+}
+
+nvrhi::IFramebuffer* DeviceManager_VK::BeginExtraFrame( void* swapChain )
+{
+	ExtraSwapChainVK* sc = ( ExtraSwapChainVK* )swapChain;
+	if( sc == nullptr )
+	{
+		return nullptr;
+	}
+	for( int attempt = 0; attempt < 2; attempt++ )
+	{
+		if( sc->needsRecreate || !sc->swapChain )
+		{
+			destroyExtraSwapChainObjects( sc );
+			if( !createExtraSwapChainObjects( sc ) )
+			{
+				destroyExtraSwapChainObjects( sc );
+				sc->needsRecreate = true;
+				return nullptr;
+			}
+		}
+		const vk::Result res = m_VulkanDevice.acquireNextImageKHR( sc->swapChain, std::numeric_limits<uint64_t>::max(),
+							   sc->acquireSemaphores[sc->acquireIndex], vk::Fence(), &sc->imageIndex );
+		if( res == vk::Result::eSuccess || res == vk::Result::eSuboptimalKHR )
+		{
+			m_NvrhiDevice->queueWaitForSemaphore( nvrhi::CommandQueue::Graphics, sc->acquireSemaphores[sc->acquireIndex], 0 );
+			m_NvrhiDevice->queueSignalSemaphore( nvrhi::CommandQueue::Graphics, sc->renderSemaphores[sc->imageIndex], 0 );
+			return sc->framebuffers[sc->imageIndex];
+		}
+		// out of date: make it again and retry once
+		sc->needsRecreate = true;
+	}
+	return nullptr;
+}
+
+void DeviceManager_VK::PresentExtra( void* swapChain )
+{
+	ExtraSwapChainVK* sc = ( ExtraSwapChainVK* )swapChain;
+	if( sc == nullptr || !sc->swapChain )
+	{
+		return;
+	}
+	vk::PresentInfoKHR info = vk::PresentInfoKHR()
+							  .setWaitSemaphoreCount( 1 )
+							  .setPWaitSemaphores( &sc->renderSemaphores[sc->imageIndex] )
+							  .setSwapchainCount( 1 )
+							  .setPSwapchains( &sc->swapChain )
+							  .setPImageIndices( &sc->imageIndex );
+	const vk::Result res = m_PresentQueue.presentKHR( &info );
+	if( res == vk::Result::eErrorOutOfDateKHR || res == vk::Result::eSuboptimalKHR )
+	{
+		sc->needsRecreate = true;
+	}
+	sc->acquireIndex = ( sc->acquireIndex + 1 ) % uint32_t( sc->acquireSemaphores.size() );
 }
 
 DeviceManager* DeviceManager::CreateVK()

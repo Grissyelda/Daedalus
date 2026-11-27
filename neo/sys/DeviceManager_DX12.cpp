@@ -105,7 +105,157 @@ protected:
 private:
 	bool CreateRenderTargets();
 	void ReleaseRenderTargets();
+
+public:
+	// GrizzTech4: extra windows
+	void* CreateExtraSwapChain( void* windowHandle, int width, int height ) override;
+	void ResizeExtraSwapChain( void* swapChain, int width, int height ) override;
+	void DestroyExtraSwapChain( void* swapChain ) override;
+	nvrhi::IFramebuffer* BeginExtraFrame( void* swapChain ) override;
+	void PresentExtra( void* swapChain ) override;
 };
+
+/*
+===============================================================================
+
+	GrizzTech4: swap chains for extra windows (editor panels on other monitors)
+
+===============================================================================
+*/
+
+struct ExtraSwapChainDX12
+{
+	HWND										hwnd = NULL;
+	RefCountPtr<IDXGISwapChain3>				swapChain;
+	std::vector<RefCountPtr<ID3D12Resource>>	buffers;
+	std::vector<nvrhi::TextureHandle>			textures;
+	std::vector<nvrhi::FramebufferHandle>		framebuffers;
+	int											width = 0;
+	int											height = 0;
+};
+
+static const UINT EXTRA_BUFFER_COUNT = 2;
+
+static void ReleaseExtraTargets( nvrhi::IDevice* device, ExtraSwapChainDX12* sc )
+{
+	device->waitForIdle();
+	sc->framebuffers.clear();
+	sc->textures.clear();
+	sc->buffers.clear();
+	device->runGarbageCollection();
+}
+
+static bool CreateExtraTargets( nvrhi::IDevice* device, ExtraSwapChainDX12* sc )
+{
+	for( UINT n = 0; n < EXTRA_BUFFER_COUNT; n++ )
+	{
+		RefCountPtr<ID3D12Resource> buffer;
+		if( FAILED( sc->swapChain->GetBuffer( n, IID_PPV_ARGS( &buffer ) ) ) )
+		{
+			return false;
+		}
+		nvrhi::TextureDesc desc;
+		desc.width = sc->width;
+		desc.height = sc->height;
+		desc.format = nvrhi::Format::RGBA8_UNORM;
+		desc.debugName = "PanelWindowBuffer";
+		desc.isRenderTarget = true;
+		desc.initialState = nvrhi::ResourceStates::Present;
+		desc.keepInitialState = true;
+		nvrhi::TextureHandle texture = device->createHandleForNativeTexture( nvrhi::ObjectTypes::D3D12_Resource, nvrhi::Object( buffer ), desc );
+		sc->buffers.push_back( buffer );
+		sc->textures.push_back( texture );
+		sc->framebuffers.push_back( device->createFramebuffer( nvrhi::FramebufferDesc().addColorAttachment( texture ) ) );
+	}
+	return true;
+}
+
+void* DeviceManager_DX12::CreateExtraSwapChain( void* windowHandle, int width, int height )
+{
+	RefCountPtr<IDXGIFactory2> factory;
+	if( FAILED( CreateDXGIFactory2( 0, IID_PPV_ARGS( &factory ) ) ) )
+	{
+		return nullptr;
+	}
+
+	ExtraSwapChainDX12* sc = new ExtraSwapChainDX12();
+	sc->hwnd = ( HWND )windowHandle;
+	sc->width = Max( 1, width );
+	sc->height = Max( 1, height );
+
+	DXGI_SWAP_CHAIN_DESC1 desc = {};
+	desc.Width = sc->width;
+	desc.Height = sc->height;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	desc.BufferCount = EXTRA_BUFFER_COUNT;
+	desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	desc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+
+	RefCountPtr<IDXGISwapChain1> swapChain1;
+	if( FAILED( factory->CreateSwapChainForHwnd( m_GraphicsQueue, sc->hwnd, &desc, nullptr, nullptr, &swapChain1 ) ) ||
+			FAILED( swapChain1->QueryInterface( IID_PPV_ARGS( &sc->swapChain ) ) ) )
+	{
+		common->Warning( "Couldn't make a swap chain for a panel window" );
+		delete sc;
+		return nullptr;
+	}
+	factory->MakeWindowAssociation( sc->hwnd, DXGI_MWA_NO_ALT_ENTER );
+
+	if( !CreateExtraTargets( m_NvrhiDevice, sc ) )
+	{
+		ReleaseExtraTargets( m_NvrhiDevice, sc );
+		delete sc;
+		return nullptr;
+	}
+	return sc;
+}
+
+void DeviceManager_DX12::ResizeExtraSwapChain( void* swapChain, int width, int height )
+{
+	ExtraSwapChainDX12* sc = ( ExtraSwapChainDX12* )swapChain;
+	if( sc == nullptr || width <= 0 || height <= 0 || ( width == sc->width && height == sc->height ) )
+	{
+		return;
+	}
+	ReleaseExtraTargets( m_NvrhiDevice, sc );
+	sc->width = width;
+	sc->height = height;
+	sc->swapChain->ResizeBuffers( EXTRA_BUFFER_COUNT, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, 0 );
+	CreateExtraTargets( m_NvrhiDevice, sc );
+}
+
+void DeviceManager_DX12::DestroyExtraSwapChain( void* swapChain )
+{
+	ExtraSwapChainDX12* sc = ( ExtraSwapChainDX12* )swapChain;
+	if( sc == nullptr )
+	{
+		return;
+	}
+	ReleaseExtraTargets( m_NvrhiDevice, sc );
+	sc->swapChain = nullptr;
+	delete sc;
+}
+
+nvrhi::IFramebuffer* DeviceManager_DX12::BeginExtraFrame( void* swapChain )
+{
+	ExtraSwapChainDX12* sc = ( ExtraSwapChainDX12* )swapChain;
+	if( sc == nullptr || sc->framebuffers.empty() )
+	{
+		return nullptr;
+	}
+	return sc->framebuffers[sc->swapChain->GetCurrentBackBufferIndex()];
+}
+
+void DeviceManager_DX12::PresentExtra( void* swapChain )
+{
+	ExtraSwapChainDX12* sc = ( ExtraSwapChainDX12* )swapChain;
+	if( sc != nullptr && sc->swapChain )
+	{
+		sc->swapChain->Present( 0, 0 );
+	}
+}
 
 // Find an adapter whose name contains the given string.
 static RefCountPtr<IDXGIAdapter> FindAdapter( const std::wstring& targetName )

@@ -924,6 +924,10 @@ void idCommonLocal::Frame()
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
 
+		// GrizzTech4: editor panels in windows of their own are made, moved and drawn here, on the
+		// main thread, now that the game thread's ImGui frame is done and the back end is idle
+		ImGuiHook::RenderPlatformWindows();
+
 		// SRS - Use finishSyncTime_EndFrame to record timing just after gameThread.WaitForThread()
 		frameTiming.finishSyncTime_EndFrame = Sys_Microseconds();
 

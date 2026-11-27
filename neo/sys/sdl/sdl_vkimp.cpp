@@ -81,6 +81,12 @@ VkResult DeviceManager::CreateSDLWindowSurface( VkInstance instance, VkSurfaceKH
 	return VkResult::VK_SUCCESS;
 }
 
+// GrizzTech4: the main window, for the editor's extra panel windows
+void* Sys_MainWindowHandle()
+{
+	return window;
+}
+
 // GrizzTech4: used by the editor's mouse look
 void Sys_WarpMouseInWindow( int x, int y )
 {

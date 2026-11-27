@@ -2531,6 +2531,9 @@ idRenderSystemLocal::ShutdownOpenGL
 */
 void idRenderSystemLocal::ShutdownOpenGL()
 {
+	// GrizzTech4: editor panel windows have swap chains on the device that's about to go
+	ImGuiHook::ShutdownViewports();
+
 	// free the context and close the window
 	R_ShutdownFrameData();
 

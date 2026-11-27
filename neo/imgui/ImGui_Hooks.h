@@ -66,6 +66,13 @@ void	Destroy();
 
 bool	RightMouseActive();
 
+// GrizzTech4: editor panels dragged out of the main window get OS windows of their own.
+// RenderPlatformWindows creates, moves and draws them; call it once per frame on the main
+// thread, after the frame's Render() and outside the render back end.
+bool	ViewportsActive();
+void	RenderPlatformWindows();
+void	ShutdownViewports();		// before the renderer's device goes away
+
 } //namespace ImGuiHook
 
 
