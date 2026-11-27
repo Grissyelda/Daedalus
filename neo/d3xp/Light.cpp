@@ -875,7 +875,8 @@ void idLight::BecomeBroken( idEntity* activator )
 	{
 		StopSound( SND_CHANNEL_ANY, false );
 		const idSoundShader* alternate = refSound.shader ? refSound.shader->GetAltSound() : declManager->FindSound( parm );
-		if( alternate )
+		// GrizzTech4: a light that never played a sound has no emitter
+		if( alternate && refSound.referenceSound != NULL )
 		{
 			// start it with no diversity, so the leadin break sound plays
 			refSound.referenceSound->StartSound( alternate, SND_CHANNEL_ANY, 0.0, 0 );

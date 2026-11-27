@@ -7403,12 +7403,16 @@ void idPlayer::SetCurrentHeartRate()
 
 		if( pct != zeroVol )
 		{
-			StartSound( "snd_heartbeat", SND_CHANNEL_HEART, SSF_PRIVATE_SOUND, false, NULL );
-			// modify just this channel to a custom volume
-			soundShaderParms_t	parms;
-			memset( &parms, 0, sizeof( parms ) );
-			parms.volume = pct;
-			refSound.referenceSound->ModifySound( SND_CHANNEL_HEART, &parms );
+			// GrizzTech4: a player def without "snd_heartbeat" starts nothing and has no
+			// sound emitter yet, so only adjust the volume when the sound really started
+			if( StartSound( "snd_heartbeat", SND_CHANNEL_HEART, SSF_PRIVATE_SOUND, false, NULL ) && refSound.referenceSound != NULL )
+			{
+				// modify just this channel to a custom volume
+				soundShaderParms_t	parms;
+				memset( &parms, 0, sizeof( parms ) );
+				parms.volume = pct;
+				refSound.referenceSound->ModifySound( SND_CHANNEL_HEART, &parms );
+			}
 		}
 
 		lastHeartBeat = gameLocal.time;
