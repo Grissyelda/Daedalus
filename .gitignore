@@ -55,3 +55,7 @@ CLAUDE.local.md
 .vscode/
 *.user
 *.local.*
+
+# Python bytecode
+__pycache__/
+*.pyc
