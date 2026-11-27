@@ -1,15 +1,16 @@
-# GrizzTech4
+# Daedalus
 
-An all-in-one game editor and engine built on id Tech 4: one executable that opens into an editor where you build, light, script and play a level without leaving it.
+An all-in-one game editor and engine built on id Tech 4: one program that opens into an editor where you build, light, script and play a level without ever needing to leave.
 
-GrizzTech4 is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG), the modernised Doom 3 BFG Edition source port. That gives it DX12 and Vulkan through NVRHI, physically based rendering, baked global illumination, soft shadows and glTF 2 model support.
+Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG), a modernized Doom 3 BFG Edition source port. That gives us DX12 and Vulkan through NVRHI, physically based rendering, baked global illumination, soft shadows and glTF 2 model support out of the gates.
 
-> **Status: pre-alpha (milestone 0).** GrizzTech4 now runs standalone, with its own small engine content and no Doom 3 data. It opens into an editor shell whose Play button runs a level in the same window. Level editing, the inspector and the other tools arrive from milestone 1 onward, so it isn't ready to make a game with yet.
+> **Status: pre-alpha (milestone 0).** Daedalus now runs standalone, with its own small engine content and no Doom 3 data. It opens into an editor shell whose Play button runs a level in the same window. Level editing, the inspector and the other tools arrive from milestone 1 onward, so it isn't ready to make a game with yet.
 
 ## Goals
 
 - **One executable.** It starts in the editor, and Play runs the game in the same window. Shipped games are built without the editor.
-- **Approachable tools.** Brush blockout and mesh placement, a property inspector, a content browser, node-graph scripting, a conversation editor and a visual UI editor, with undo everywhere and readable error messages.
+- **Uniquely approachable tools.** Brush blockout and mesh placement, a property inspector, a content browser, node-graph scripting, a conversation editor and a visual UI editor, with undo everywhere and readable error messages. Think Project Spark or Dreams, but with a much higher ceiling. There will be three levels of complexity:
+Create, Understand, and Control. E.G; Block coding into nodes into Doom script. This philosophy will be carried over engine-wide. 
 - **Live iteration.** Changes to maps, scripts, definitions, UI and imported models show up in the running game within seconds.
 - **Standalone.** New projects need no Doom 3 game data.
 - **Two looks.** A stylized material path and a PBR material path, switchable per project and per material.
