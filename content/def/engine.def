@@ -78,6 +78,16 @@ entityDef func_door
 	"triggersize"			"64"
 }
 
+// where a copy of a piece (prefab) sits in a level; the editor's handle on it. The game never spawns these.
+entityDef func_prefab
+{
+	"editor_label"			"Piece"
+	"editor_color"			"0.96 0.58 0.24"
+	"editor_mins"			"-4 -4 -4"
+	"editor_maxs"			"4 4 4"
+	"spawnclass"			"idEntity"
+}
+
 // reflection/ambient light probe; levels get them automatically when lighting is baked
 entityDef env_probe
 {

@@ -153,3 +153,19 @@ editor/floorgrid
 		blue	0.9
 	}
 }
+
+// the rest of the level while a piece is being edited in place: a flat, see-through ghost
+editor/ghost
+{
+	noshadows
+	translucent
+	twoSided
+	{
+		blend	blend
+		map		_white
+		red		0.55
+		green	0.58
+		blue	0.65
+		alpha	0.22
+	}
+}

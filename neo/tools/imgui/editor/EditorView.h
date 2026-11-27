@@ -106,6 +106,7 @@ public:
 	void			Shutdown();
 
 	idList<idVec3>	leakPath;				// the last build's leak, from inside out to the void (drawn in red)
+	idStrList		focusOwners;			// a piece being edited: things not owned by these are drawn as ghosts
 	bool			wireframe = false;		// draw triangle outlines over everything
 	bool			showGrid = true;		// a grid on the floor plane
 	float			gridSize = 8.0f;		// the editor's grid step, set by the shell
@@ -128,6 +129,8 @@ private:
 		idRenderModel* 	model = NULL;
 		qhandle_t		entityDef = -1;
 		qhandle_t		lightDef = -1;
+		idRenderModel* 	ghostModel = NULL;		// the level's brushes outside the piece being edited
+		qhandle_t		ghostDef = -1;
 	};
 
 	void			FreeAll();
@@ -138,12 +141,14 @@ private:
 	qhandle_t		gridEntity = -1;
 	float			gridBuiltStep = 0.0f;
 	float			gridBuiltZ = 0.0f;
-	idRenderModel* 	BuildBrushModel( const idMapEntity* ent, int entityNum );
+	idRenderModel* 	BuildBrushModel( const idMapEntity* ent, int entityNum, int focus = 0 );	// focus: 0 all, 1 in the piece, 2 outside it
+	bool			InFocus( const idDict& dict ) const;
 
 	idRenderWorld* 	world;
 	idList<Built>	built;
 	int				builtRevision;
 	const idMapFile* builtMap;
+	idStr			builtFocus;
 };
 
 extern View view;

@@ -239,6 +239,17 @@ public:
 	// textures keep their place on the surface when brushes move or turn
 	bool				textureLock;
 
+	// called at the end of every change, before views hear of it (pieces keep their links up to date)
+	void				( *afterChange )( Document& doc );
+
+	// old name -> new name of every entity the last Duplicate copied (for the afterChange hook)
+	idDict				duplicateRenames;
+
+	int					UndoDepth() const
+	{
+		return undoStack.Num();
+	}
+
 private:
 	struct State
 	{
@@ -290,11 +301,19 @@ private:
 extern Document document;
 
 // helpers shared by the editor
+// maps read and written the way the document does it (world space in memory)
+idMapFile* 			ReadMapForEditing( const char* mapName );		// NULL if missing
+bool				WriteMapForEditing( const idMapFile* map, const char* mapName );
+idMapPrimitive* 	CopyPrimitive( const idMapPrimitive* prim );
+void				TransformPrimitiveBy( idMapPrimitive* prim, const idMat3& linear, const idVec3& translation, bool lockTexture );
+void				TransformEntityBy( idMapEntity* ent, const idMat3& linear, const idVec3& translation, bool lockTexture );	// keys and primitives
+
 bool				BrushBounds( const idMapBrush* brush, idBounds& bounds );
 bool				BrushSideWinding( const idMapBrush* brush, int side, idWinding& w );
 bool				PrimitiveBounds( const idMapPrimitive* prim, idBounds& bounds );
 bool				EntityBounds( const idMapEntity* ent, idBounds& bounds );
 bool				EntityAxis( const idMapEntity* ent, idMat3& axis );	// from "rotation" or "angle"; false when it has neither
+void				SetEntityAxis( idMapEntity* ent, const idMat3& axis );	// "angle" for a plain turn, else "rotation"
 
 // brush faces and their textures
 void				TextureAxisBase( const idVec3& normal, idVec3& texS, idVec3& texT );

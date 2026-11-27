@@ -4037,6 +4037,12 @@ bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 		}
 	}
 
+	// GrizzTech4: piece (prefab) anchors only tell the editor where a copy of a piece sits
+	if( idStr::Icmp( spawnArgs.GetString( "classname" ), "func_prefab" ) == 0 )
+	{
+		result = true;
+	}
+
 	// RB: TrenchBroom interop skip func_group helper entities
 	{
 		const char* name = spawnArgs.GetString( "classname" );

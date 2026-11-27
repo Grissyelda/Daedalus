@@ -30,6 +30,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "EditorShell.h"
 #include "EditorDocument.h"
+#include "EditorPrefabs.h"
 #include "EditorView.h"
 #include "EditorShapes.h"
 #include "EditorBrushOps.h"
@@ -212,6 +213,17 @@ static const char* WINDOW_CONTENT_BROWSER	= ICON_CONTENT "  Content###Content Br
 static const char* WINDOW_PROBLEMS			= ICON_PROBLEMS "  Problems###Problems";
 
 // quiet, wrapped hint text
+// pieces (see the Pieces section)
+static void SelectHit( const Selection& hit, bool toggle );
+static void SyncPiecesOnOpen();
+static bool IsEditingPiece();
+static int PieceEditingAnchor();
+static void FinishPieceEdit( bool keep );
+static bool DrawPieceInspector();
+static void DrawPartCard();
+static void PlacePiece( const char* name, const idVec3& point );
+static void DrawPieceProblems( bool& any );
+
 static void Hint( const char* text )
 {
 	UI::Hint( text );
@@ -609,6 +621,10 @@ static void PlayDocument( bool fromCamera )
 	{
 		return;
 	}
+	if( IsEditingPiece() )
+	{
+		FinishPieceEdit( true );	// play what's there, piece included
+	}
 	if( document.IsDirty() && !document.Save() )
 	{
 		Status( "Couldn't save the level, so it can't be played" );
@@ -755,6 +771,10 @@ static void LiveCaptureBase()
 	for( int i = 0; i < map->GetNumEntities(); i++ )
 	{
 		const idMapEntity* ent = map->GetEntity( i );
+		if( i > 0 && IsPrefabAnchor( ent ) )
+		{
+			continue;	// editor-only: the game never spawns piece anchors
+		}
 		if( i == 0 )
 		{
 			liveWorldKeys = DictText( ent->epairs );
@@ -836,6 +856,10 @@ static void LiveSync()
 	for( int i = 0; i < map->GetNumEntities(); i++ )
 	{
 		const idMapEntity* ent = map->GetEntity( i );
+		if( i > 0 && IsPrefabAnchor( ent ) )
+		{
+			continue;
+		}
 		const idStr name = i == 0 ? idStr( "worldspawn" ) : idStr( ent->epairs.GetString( "name" ) );
 		const unsigned int geometry = GeometryHash( ent );
 		const int index = FindLive( name );
@@ -1113,6 +1137,10 @@ static void EditorResume_f( const idCmdArgs& args )
 
 static void OpenMap( const char* mapName )
 {
+	if( IsEditingPiece() )
+	{
+		FinishPieceEdit( true );	// keep what was being done to the piece
+	}
 	if( document.IsDirty() && document.IsOpen() )
 	{
 		// never lose work silently: save what's open before switching
@@ -1132,6 +1160,14 @@ static void OpenMap( const char* mapName )
 				break;
 			}
 		}
+		if( idStr::Icmpn( mapName, PREFAB_FOLDER "/", idStr::Length( PREFAB_FOLDER ) + 1 ) == 0 )
+		{
+			// a piece on its own: look at its origin, where copies are placed from
+			view.camera.origin.Set( -224.0f, -224.0f, 176.0f );
+			view.camera.yaw = 45.0f;
+			view.camera.pitch = 25.0f;
+		}
+		SyncPiecesOnOpen();
 		Status( va( "Opened %s", mapName ) );
 	}
 	else
@@ -1442,6 +1478,15 @@ static void EditorNewProject_f( const idCmdArgs& args )
 	}
 }
 
+static void EditorMakePiece_f( const idCmdArgs& args );
+static void EditorPlacePiece_f( const idCmdArgs& args );
+static void EditorSelectPiece_f( const idCmdArgs& args );
+static void EditorEditPiece_f( const idCmdArgs& args );
+static void EditorPiecePart_f( const idCmdArgs& args );
+static void EditorListPieces_f( const idCmdArgs& args );
+static void EditorDelete_f( const idCmdArgs& args );
+static void EditorDuplicate_f( const idCmdArgs& args );
+
 static void RegisterCommands()
 {
 	if( commandsRegistered )
@@ -1477,6 +1522,14 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorCamera", EditorCamera_f, CMD_FL_SYSTEM, "shows or sets the editor camera: editorCamera <x> <y> <z> [yaw] [pitch]" );
 	cmdSystem->AddCommand( "editorWireframe", EditorWireframe_f, CMD_FL_SYSTEM, "toggles brush outlines in the editor view" );
 	cmdSystem->AddCommand( "editorNewProject", EditorNewProject_f, CMD_FL_SYSTEM, "creates a project from the template: editorNewProject <name> <stylized|pbr>" );
+	cmdSystem->AddCommand( "editorMakePiece", EditorMakePiece_f, CMD_FL_SYSTEM, "makes a piece from the selection: editorMakePiece <name>" );
+	cmdSystem->AddCommand( "editorPlacePiece", EditorPlacePiece_f, CMD_FL_SYSTEM, "adds a copy of a piece: editorPlacePiece <name> <x> <y> <z> [yaw]" );
+	cmdSystem->AddCommand( "editorSelectPiece", EditorSelectPiece_f, CMD_FL_SYSTEM, "selects a copy of a piece, or one part: editorSelectPiece <copy> [part]" );
+	cmdSystem->AddCommand( "editorEditPiece", EditorEditPiece_f, CMD_FL_SYSTEM, "edits a piece in place: editorEditPiece <copy> | done | cancel" );
+	cmdSystem->AddCommand( "editorPiecePart", EditorPiecePart_f, CMD_FL_SYSTEM, "the selected part of a copy: editorPiecePart revert | apply" );
+	cmdSystem->AddCommand( "editorListPieces", EditorListPieces_f, CMD_FL_SYSTEM, "lists copies of pieces and their overrides" );
+	cmdSystem->AddCommand( "editorDelete", EditorDelete_f, CMD_FL_SYSTEM, "deletes the selection" );
+	cmdSystem->AddCommand( "editorDuplicate", EditorDuplicate_f, CMD_FL_SYSTEM, "duplicates the selection: editorDuplicate <dx> <dy> <dz>" );
 
 	// F10 always gets back to the editor while playing
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind F10 editorStop\n" );
@@ -1502,6 +1555,10 @@ static void RefreshMapList()
 			idStr name = files->GetFile( i );
 			name.StripLeadingOnce( "maps/" );
 			name.StripFileExtension();
+			if( name.Icmpn( PREFAB_FOLDER "/", idStr::Length( PREFAB_FOLDER ) + 1 ) == 0 )
+			{
+				continue;	// pieces live in Kits > My pieces
+			}
 			mapList.Append( name );
 		}
 		fileSystem->FreeFileList( files );
@@ -2028,14 +2085,7 @@ static void FocusSelection()
 // a click in a list: Ctrl adds or removes, otherwise it replaces the selection
 static void ClickSelect( const Selection& sel )
 {
-	if( ImGui::GetIO().KeyCtrl )
-	{
-		document.selection.Toggle( sel );
-	}
-	else
-	{
-		document.selection.Set( sel );
-	}
+	SelectHit( sel, ImGui::GetIO().KeyCtrl );
 }
 
 // a row's type, right-aligned and quiet
@@ -2099,6 +2149,24 @@ static void DrawOutliner()
 		const idStr label = EntityLabel( ent, i );
 		if( outlinerFilter[0] != '\0' && label.Find( outlinerFilter, false ) < 0 )
 		{
+			continue;
+		}
+		if( FindAnchor( map, ent->epairs.GetString( KEY_OWNER ) ) >= 0 && !( IsEditingPiece() && TopAnchorOf( map, Selection( i ) ) == PieceEditingAnchor() ) )
+		{
+			continue;	// part of a piece copy: the copy has the row (unless it's the piece being edited)
+		}
+		if( IsPrefabAnchor( ent ) )
+		{
+			const bool selected = document.selection.Contains( Selection( i ) );
+			if( ImGui::Selectable( va( ICON_MODE_KITS "  %s##ent%d", ent->epairs.GetString( "name" ), i ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
+			{
+				SelectHit( Selection( i ), ImGui::GetIO().KeyCtrl );
+				if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+				{
+					FocusSelection();
+				}
+			}
+			RowType( va( "Piece: %s", ent->epairs.GetString( KEY_PREFAB ) ) );
 			continue;
 		}
 		const char* classname = ent->epairs.GetString( "classname", "?" );
@@ -2962,6 +3030,11 @@ static void DrawInspector()
 	}
 
 	const int count = document.selection.Num();
+	if( DrawPieceInspector() )
+	{
+		ImGui::End();
+		return;
+	}
 	if( document.selection.IsFaces() )
 	{
 		DrawInspectorHeader( ICON_PAINT, count > 1 ? va( "%d faces", count ) : "Face", "Shift+click more faces to add them", NULL );
@@ -2972,6 +3045,7 @@ static void DrawInspector()
 		const bool isBrush = document.SelectedPrimitive()->GetType() == idMapPrimitive::TYPE_BRUSH;
 		DrawInspectorHeader( isBrush ? ICON_BRUSH : ICON_PATCH, count > 1 ? va( "%d selected", count ) : ( isBrush ? "Brush" : "Patch" ),
 							 document.selection.Primary().entity == 0 ? "Part of the level" : "Part of a brush thing", NULL );
+		DrawPartCard();
 		DrawPrimitiveInspector( document.SelectedPrimitive() );
 	}
 	else
@@ -2993,6 +3067,7 @@ static void DrawInspector()
 				subtitle = va( "%s  -  %d selected, showing the last one picked", typeLabel, count );
 			}
 			DrawInspectorHeader( def != NULL ? ThingIcon( def ) : ICON_ENTITY, name, subtitle.c_str(), def != NULL ? def->dict.GetString( "editor_usage" ) : NULL );
+			DrawPartCard();
 		}
 		DrawEntityInspector( ent );
 	}
@@ -3425,6 +3500,8 @@ static void DrawProblems()
 		}
 	}
 
+	DrawPieceProblems( any );
+
 	// what the last build said, while it's about the open level
 	const bool buildAboutThis = document.IsOpen() && buildHasResult && buildResultMap.Icmp( document.Name() ) == 0 && !BuildRunning();
 	if( buildAboutThis && ( buildFailed || buildProblems.Num() > 0 ) )
@@ -3588,6 +3665,8 @@ static void DrawAbout()
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
 		ImGui::Text( "Playing" );
 		Hint( "F5 plays from the player start (or, with the arrow on Play, from where the camera is; Shift flips it once). Esc pauses and brings the editor back with the game still loaded: what you change goes into the game, and brush changes rebuild when you carry on. F5 carries on, F10 stops." );
+		ImGui::Text( "Pieces" );
+		Hint( "Select things and press Make piece (in the Kits tab, or the bar above the dock) to save them as a piece; place copies from Kits. A click selects a whole copy. Double-click picks one part: change it and only that copy changes (the Inspector marks it, with Revert and Apply to all copies). Edit piece changes the piece where a copy sits, with the rest of the level as ghosts; Done updates every copy. Pieces can hold pieces." );
 		ImGui::Text( "Building" );
 		Hint( "The game doesn't read the level you edit directly: building turns it into what the game loads (it also checks it for leaks). Play builds when it needs to, in the background, with the progress left of Play; Ctrl+B builds without playing. Problems shows what the build said." );
 		ImGui::Text( "Panels" );
@@ -4175,18 +4254,12 @@ static void ClickSelectInView( float x, float y )
 	}
 
 	const Selection hit = view.Pick( document, x, y );
-	if( io.KeyCtrl )
+	if( !io.KeyCtrl && !hit.IsEmpty() && ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) && !IsEditingPiece() && TopAnchorOf( document.Map(), hit ) >= 0 )
 	{
-		document.selection.Toggle( hit );
+		document.selection.Set( hit );	// just this part of the copy
+		return;
 	}
-	else if( hit.IsEmpty() )
-	{
-		document.selection.Clear();
-	}
-	else
-	{
-		document.selection.Set( hit );
-	}
+	SelectHit( hit, io.KeyCtrl );
 }
 
 // true while the tool is using the mouse, so nothing else should act on it
@@ -4700,7 +4773,7 @@ static void DrawPlanView( bool hovered )
 		// grab: select it if it isn't already, then drag to move
 		if( !document.selection.Contains( hit ) )
 		{
-			document.selection.Set( hit );
+			SelectHit( hit, false );
 		}
 		if( document.CanTransformSelection() )
 		{
@@ -4713,7 +4786,7 @@ static void DrawPlanView( bool hovered )
 	}
 	if( io.KeyCtrl )
 	{
-		document.selection.Toggle( hit );
+		SelectHit( hit, true );
 		return;
 	}
 
@@ -5059,6 +5132,933 @@ static void PlaceThing( const char* classname )
 	}
 }
 
+/*
+===============================================================================
+
+	Pieces (prefabs; see EditorPrefabs.h)
+
+	A click on any part of a copy selects the whole copy; a double-click picks
+	just that part, and what changes then is that copy's alone (an override).
+	"Edit piece" changes the piece itself right where a copy sits: the rest of
+	the level turns to ghosts, and Done writes the piece and updates every copy.
+
+===============================================================================
+*/
+
+static idStr		pieceEditing;				// the anchor name of the copy being edited in place, or ""
+static idStr		pieceEditPrefab;
+static int			pieceEditUndoDepth = 0;
+static idStrList	pieceNames;
+static bool			pieceListDirty = true;
+static bool			pieceMakeRequest = false;
+static char			pieceMakeName[64] = "";
+
+static int PieceEditingAnchor()
+{
+	return pieceEditing.Length() > 0 ? FindAnchor( document.Map(), pieceEditing ) : -1;
+}
+
+static bool IsEditingPiece()
+{
+	return PieceEditingAnchor() >= 0;
+}
+
+// the ghosts: everything not in the copy being edited
+static void UpdatePieceFocus()
+{
+	view.focusOwners.Clear();
+	const int anchor = PieceEditingAnchor();
+	if( anchor < 0 )
+	{
+		return;
+	}
+	idList<Selection> items;
+	PieceItems( document.Map(), anchor, items );
+	for( int i = 0; i < items.Num(); i++ )
+	{
+		if( items[i].primitive < 0 && IsPrefabAnchor( document.Map()->GetEntity( items[i].entity ) ) )
+		{
+			view.focusOwners.Append( document.Map()->GetEntity( items[i].entity )->epairs.GetString( "name" ) );
+		}
+	}
+}
+
+static void SelectItems( const idList<Selection>& items, bool toggle )
+{
+	if( toggle )
+	{
+		bool allIn = true;
+		for( int i = 0; i < items.Num(); i++ )
+		{
+			allIn &= document.selection.Contains( items[i] );
+		}
+		for( int i = 0; i < items.Num(); i++ )
+		{
+			if( allIn )
+			{
+				document.selection.Remove( items[i] );
+			}
+			else if( !document.selection.Contains( items[i] ) )
+			{
+				document.selection.Add( items[i] );
+			}
+		}
+		return;
+	}
+	document.selection.Clear();
+	// a copy's own anchor (first in PieceItems) goes last, so the copy is what the Inspector shows
+	const bool anchorFirst = items.Num() > 0 && items[0].primitive < 0 && items[0].entity > 0 && IsPrefabAnchor( document.Map()->GetEntity( items[0].entity ) );
+	for( int i = anchorFirst ? 1 : 0; i < items.Num(); i++ )
+	{
+		document.selection.Add( items[i] );
+	}
+	if( anchorFirst )
+	{
+		document.selection.Add( items[0] );
+	}
+}
+
+// what a click selects: whole copies of pieces, or (while editing one) its parts
+static void SelectHit( const Selection& hit, bool toggle )
+{
+	if( hit.IsEmpty() )
+	{
+		if( !toggle )
+		{
+			document.selection.Clear();
+		}
+		return;
+	}
+	if( document.Map() == NULL )
+	{
+		return;
+	}
+	idList<Selection> items;
+	GrabSelection( document.Map(), hit, PieceEditingAnchor(), items );
+	if( items.Num() == 0 )
+	{
+		if( IsEditingPiece() )
+		{
+			Status( "While you edit a piece only the piece changes. Press Done (or Cancel) above the view to go back to the level." );
+		}
+		return;
+	}
+	SelectItems( items, toggle );
+}
+
+static void StartPieceEdit( int anchor )
+{
+	if( anchor < 0 || document.Map() == NULL )
+	{
+		return;
+	}
+	if( IsEditingPiece() )
+	{
+		FinishPieceEdit( true );
+		anchor = -1;
+		return;
+	}
+	const idMapEntity* ent = document.Map()->GetEntity( anchor );
+	pieceEditing = ent->epairs.GetString( "name" );
+	pieceEditPrefab = ent->epairs.GetString( KEY_PREFAB );
+	pieceEditUndoDepth = document.UndoDepth();
+	document.selection.Clear();
+	UpdatePieceFocus();
+	Status( va( "Editing the piece \"%s\". What you change here changes every copy when you press Done.", pieceEditPrefab.c_str() ) );
+}
+
+static void FinishPieceEdit( bool keep )
+{
+	const int anchor = PieceEditingAnchor();
+	if( pieceEditing.Length() == 0 )
+	{
+		return;
+	}
+	if( keep && anchor >= 0 )
+	{
+		idStr error;
+		document.BeginChange( "Edit piece" );
+		const bool written = WritePrefabFromCopy( document.Map(), anchor, error );
+		pieceEditing.Clear();
+		view.focusOwners.Clear();
+		document.EndChange();
+		document.ValidateSelection();
+		int copies = 0;
+		for( int e = 1; e < document.Map()->GetNumEntities(); e++ )
+		{
+			copies += ( IsPrefabAnchor( document.Map()->GetEntity( e ) ) && pieceEditPrefab.Icmp( document.Map()->GetEntity( e )->epairs.GetString( KEY_PREFAB ) ) == 0 ) ? 1 : 0;
+		}
+		Status( written ? va( "Saved the piece \"%s\"; %d %s in this level updated. Other levels update when they open.", pieceEditPrefab.c_str(), copies, copies == 1 ? "copy" : "copies" ) : error.c_str() );
+	}
+	else
+	{
+		pieceEditing.Clear();
+		view.focusOwners.Clear();
+		while( document.UndoDepth() > pieceEditUndoDepth && document.Undo() )
+		{
+		}
+		Status( "Piece edit cancelled" );
+	}
+	document.selection.Clear();
+	pieceListDirty = true;
+}
+
+// While a piece is edited in place, new things made then (and pieces placed then) become part of it.
+static void AdoptIntoEditedPiece( Document& doc, int anchor )
+{
+	idMapFile* map = doc.Map();
+	const idStr name = map->GetEntity( anchor )->epairs.GetString( "name" );
+	idStrList parts;
+	const idMapEntity* world = map->GetEntity( 0 );
+	for( int p = 0; p < world->GetNumPrimitives(); p++ )
+	{
+		if( name == world->GetPrimitive( p )->epairs.GetString( KEY_OWNER ) )
+		{
+			parts.Append( world->GetPrimitive( p )->epairs.GetString( KEY_PART ) );
+		}
+	}
+
+	for( int i = 0; i < doc.selection.Num(); i++ )
+	{
+		const Selection& sel = doc.selection[i];
+		if( sel.IsFace() || sel.entity == anchor || sel.entity < 0 || sel.entity >= map->GetNumEntities() )
+		{
+			continue;
+		}
+		if( sel.entity == 0 )
+		{
+			if( sel.primitive < 0 || sel.primitive >= map->GetEntity( 0 )->GetNumPrimitives() )
+			{
+				continue;
+			}
+			idDict& dict = map->GetEntity( 0 )->GetPrimitive( sel.primitive )->epairs;
+			if( dict.GetString( KEY_OWNER )[0] != '\0' )
+			{
+				continue;
+			}
+			idStr part;
+			int n = parts.Num();
+			do
+			{
+				part = va( "b%d", n++ );
+			}
+			while( parts.FindIndex( part ) >= 0 );
+			parts.Append( part );
+			dict.Set( KEY_OWNER, name );
+			dict.Set( KEY_PART, part );
+			continue;
+		}
+		idMapEntity* ent = map->GetEntity( sel.entity );
+		if( ent->epairs.GetString( KEY_OWNER )[0] != '\0' )
+		{
+			continue;
+		}
+		if( IsPrefabAnchor( ent ) && pieceEditPrefab.Icmp( ent->epairs.GetString( KEY_PREFAB ) ) == 0 )
+		{
+			Status( "A piece can't contain a copy of itself, so that copy stays outside it." );
+			continue;
+		}
+		if( ent->epairs.GetString( "name" )[0] == '\0' )
+		{
+			ent->epairs.Set( "name", map->GetUniqueEntityName( ent->epairs.GetString( "classname" ) ) );
+		}
+		ent->epairs.Set( KEY_OWNER, name );
+		ent->epairs.Set( KEY_PART, ent->epairs.GetString( "name" ) );
+	}
+}
+
+// after every change: keep copies linked and their overrides recorded
+static void PieceAfterChange( Document& doc )
+{
+	if( doc.Map() == NULL )
+	{
+		return;
+	}
+	const int editing = PieceEditingAnchor();
+	if( editing >= 0 )
+	{
+		AdoptIntoEditedPiece( doc, editing );
+	}
+	TrackPrefabEdits( doc.Map(), editing >= 0 ? pieceEditing.c_str() : NULL, doc.duplicateRenames, doc.selection.items );
+	doc.ValidateSelection();
+	if( editing >= 0 )
+	{
+		UpdatePieceFocus();
+	}
+}
+
+// a level just opened: bring its copies up to date with their pieces
+static void SyncPiecesOnOpen()
+{
+	pieceEditing.Clear();
+	view.focusOwners.Clear();
+	document.afterChange = PieceAfterChange;
+	if( !document.IsOpen() )
+	{
+		return;
+	}
+	document.BeginChange( "Update pieces" );
+	const int changed = SyncPrefabs( document.Map() );
+	if( changed > 0 )
+	{
+		document.EndChange();
+		Status( "Copies of pieces were updated to match their pieces" );
+	}
+	else
+	{
+		document.CancelChange();
+	}
+}
+
+static void PlacePiece( const char* name, const idVec3& point )
+{
+	if( !document.IsOpen() )
+	{
+		return;
+	}
+	document.BeginChange( va( "Add %s", name ) );
+	const int anchor = PlacePrefab( document.Map(), name, point, mat3_identity );
+	if( anchor < 0 )
+	{
+		document.CancelChange();
+		Status( va( "The piece \"%s\" couldn't be read", name ) );
+		return;
+	}
+	idList<Selection> items;
+	PieceItems( document.Map(), anchor, items );
+	SelectItems( items, false );
+	document.EndChange();
+}
+
+static void RefreshPieceList()
+{
+	if( pieceListDirty )
+	{
+		ListPrefabs( pieceNames );
+		pieceListDirty = false;
+	}
+}
+
+static idStr CleanPieceName( const char* text )
+{
+	idStr name;
+	for( const char* c = text; *c != '\0'; c++ )
+	{
+		const char ch = idStr::ToLower( *c );
+		if( ( ch >= 'a' && ch <= 'z' ) || ( ch >= '0' && ch <= '9' ) || ch == '_' || ch == '-' )
+		{
+			name += ch;
+		}
+		else if( ch == ' ' && name.Length() > 0 && name[name.Length() - 1] != '_' )
+		{
+			name += '_';
+		}
+	}
+	name.StripTrailing( '_' );
+	return name;
+}
+
+static void DrawMakePieceDialog()
+{
+	if( pieceMakeRequest )
+	{
+		pieceMakeRequest = false;
+		pieceMakeName[0] = '\0';
+		ImGui::OpenPopup( "Make a piece" );
+	}
+	ImGui::SetNextWindowSize( ImVec2( 420.0f * UI::Scale(), 0.0f ) );
+	if( !ImGui::BeginPopupModal( "Make a piece", NULL, ImGuiWindowFlags_NoResize ) )
+	{
+		return;
+	}
+	UI::Hint( "The selection becomes a piece you can place again and again from Kits > My pieces. Every copy stays linked: change the piece and they all change." );
+	ImGui::Spacing();
+	UI::FieldLabel( "Name" );
+	if( ImGui::IsWindowAppearing() )
+	{
+		ImGui::SetKeyboardFocusHere();
+	}
+	ImGui::SetNextItemWidth( -FLT_MIN );
+	const bool enter = ImGui::InputText( "##piecename", pieceMakeName, sizeof( pieceMakeName ), ImGuiInputTextFlags_EnterReturnsTrue );
+	const idStr name = CleanPieceName( pieceMakeName );
+	RefreshPieceList();
+	const bool taken = name.Length() > 0 && pieceNames.FindIndex( name ) >= 0;
+	if( taken )
+	{
+		ImGui::TextColored( UI::Warn(), ICON_WARNING "  There's already a piece called \"%s\"", name.c_str() );
+	}
+	else if( name.Length() > 0 && name != pieceMakeName )
+	{
+		ImGui::TextDisabled( "Saved as \"%s\"", name.c_str() );
+	}
+	ImGui::Spacing();
+	const bool ok = name.Length() > 0 && !taken;
+	ImGui::BeginDisabled( !ok );
+	if( ( UI::ColorButton( ICON_OK "  Make piece", UI::Accent(), ImVec2( 140.0f * UI::Scale(), 0 ) ) || enter ) && ok )
+	{
+		idBounds bounds;
+		idVec3 origin = PlacementPoint();
+		if( document.SelectionBounds( bounds ) )
+		{
+			origin = SnapToGrid( idVec3( ( bounds[0].x + bounds[1].x ) * 0.5f, ( bounds[0].y + bounds[1].y ) * 0.5f, bounds[0].z ) );
+		}
+		idStr error;
+		document.BeginChange( "Make piece" );
+		const int anchor = MakePrefab( document, name, origin, error );
+		if( anchor >= 0 )
+		{
+			idList<Selection> items;
+			PieceItems( document.Map(), anchor, items );
+			SelectItems( items, false );
+			document.EndChange();
+			Status( va( "Made the piece \"%s\". Place more from Kits > My pieces.", name.c_str() ) );
+		}
+		else
+		{
+			document.CancelChange();
+			Status( error.c_str() );
+		}
+		pieceListDirty = true;
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if( ImGui::Button( "Cancel" ) || ImGui::IsKeyPressed( ImGuiKey_Escape ) )
+	{
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+}
+
+static void DrawPieceTiles()
+{
+	RefreshPieceList();
+	const bool canMake = document.IsOpen() && !document.selection.IsEmpty() && !document.selection.IsFaces() && !IsEditingPiece();
+	if( UI::ToolTile( "makepiece", ICON_PLUS, "Make piece", false, "Make a piece from what's selected: save it to place again and again. Every copy stays linked, so changing the piece changes them all.", canMake, dockTile ) )
+	{
+		pieceMakeRequest = true;
+	}
+	for( int i = 0; i < pieceNames.Num(); i++ )
+	{
+		ImGui::SameLine();
+		idStr label = pieceNames[i];
+		label.StripPath();
+		if( UI::ToolTile( va( "piece:%s", pieceNames[i].c_str() ), ICON_MODE_KITS, label, false, va( "Your piece \"%s\".\nClick to add a copy in the middle of the view, or drag it in.", pieceNames[i].c_str() ), document.IsOpen(), dockTile ) )
+		{
+			PlacePiece( pieceNames[i], PlacementPoint() );
+		}
+		DragOut( -1, va( "piece:%s", pieceNames[i].c_str() ) );
+	}
+}
+
+static int CountCopies( const char* prefab )
+{
+	int copies = 0;
+	const idMapFile* map = document.Map();
+	for( int e = 1; map != NULL && e < map->GetNumEntities(); e++ )
+	{
+		copies += ( IsPrefabAnchor( map->GetEntity( e ) ) && idStr::Icmp( map->GetEntity( e )->epairs.GetString( KEY_PREFAB ), prefab ) == 0 ) ? 1 : 0;
+	}
+	return copies;
+}
+
+static const char* OverrideLabel( const idStr& key )
+{
+	if( key == "brush" )
+	{
+		return "Shape and paint";
+	}
+	if( key == "origin" )
+	{
+		return "Position";
+	}
+	if( key == "angle" || key == "rotation" )
+	{
+		return "Facing";
+	}
+	if( key == KEY_REMOVED )
+	{
+		return "Deleted parts";
+	}
+	if( key == "_color" )
+	{
+		return "Colour";
+	}
+	if( key == "light_radius" )
+	{
+		return "Reach";
+	}
+	return key.c_str();
+}
+
+// the whole copy of a piece is selected: what to do with it. False when it isn't.
+static bool DrawPieceInspector()
+{
+	idMapFile* map = document.Map();
+	if( map == NULL )
+	{
+		return false;
+	}
+	const Selection primary = document.selection.Primary();
+	if( primary.primitive >= 0 || primary.entity <= 0 || !IsPrefabAnchor( map->GetEntity( primary.entity ) ) )
+	{
+		return false;
+	}
+	const int anchor = primary.entity;
+	idList<Selection> items;
+	PieceItems( map, anchor, items );
+	for( int i = 0; i < items.Num(); i++ )
+	{
+		if( !document.selection.Contains( items[i] ) )
+		{
+			return false;
+		}
+	}
+	if( items.Num() != document.selection.Num() )
+	{
+		return false;
+	}
+
+	idMapEntity* ent = map->GetEntity( anchor );
+	const idStr prefab = ent->epairs.GetString( KEY_PREFAB );
+	DrawInspectorHeader( ICON_MODE_KITS, ent->epairs.GetString( "name" ), va( "A copy of the piece \"%s\"", prefab.c_str() ),
+						 "Copies stay linked to their piece: change the piece and every copy changes. Double-click part of it to change that part in this copy only." );
+
+	if( UI::BeginCard( "piececard", ICON_MODE_KITS, "Piece" ) )
+	{
+		const int copies = CountCopies( prefab );
+		ImGui::TextDisabled( copies == 1 ? "The only copy in this level" : "%d copies in this level", copies );
+		ImGui::Spacing();
+		const bool nested = ent->epairs.GetString( KEY_OWNER )[0] != '\0';
+		ImGui::BeginDisabled( nested || IsEditingPiece() );
+		if( UI::ColorButton( ICON_DRAW "  Edit piece", UI::Accent(), ImVec2( -FLT_MIN, 0 ) ) )
+		{
+			StartPieceEdit( anchor );
+			ImGui::EndDisabled();
+			UI::EndCard();
+			return true;
+		}
+		ImGui::EndDisabled();
+		UI::Tip( "Change the piece right here: the rest of the level turns to ghosts, and every copy updates when you press Done." );
+		if( ImGui::Button( ICON_OPEN "  Open on its own", ImVec2( -FLT_MIN, 0 ) ) )
+		{
+			OpenMap( PrefabMapName( prefab ) );
+			UI::EndCard();
+			return true;
+		}
+		UI::Tip( "Open the piece by itself, like a small level. Copies everywhere update the next time their level opens." );
+
+		// what this copy does differently
+		int changed = 0;
+		for( int i = 0; i < items.Num(); i++ )
+		{
+			idStrList keys;
+			GetOverrides( map, items[i], keys );
+			changed += keys.Num() > 0 ? 1 : 0;
+		}
+		idStrList removed;
+		{
+			idStr word;
+			const char* list = ent->epairs.GetString( KEY_REMOVED );
+			for( const char* c = list; ; c++ )
+			{
+				if( *c == ' ' || *c == '\0' )
+				{
+					if( word.Length() > 0 )
+					{
+						removed.Append( word );
+						word.Clear();
+					}
+					if( *c == '\0' )
+					{
+						break;
+					}
+					continue;
+				}
+				word += *c;
+			}
+		}
+		ImGui::Spacing();
+		if( changed > 0 || removed.Num() > 0 )
+		{
+			ImGui::TextColored( UI::Accent(), "\xe2\x97\x8f" );
+			ImGui::SameLine();
+			ImGui::TextWrapped( "This copy differs from its piece: %d %s changed%s.", changed, changed == 1 ? "thing" : "things",
+								removed.Num() > 0 ? va( ", %d %s deleted", removed.Num(), removed.Num() == 1 ? "part" : "parts" ) : "" );
+			if( ImGui::Button( ICON_UNDO "  Revert all" ) )
+			{
+				document.BeginChange( "Revert copy" );
+				for( int i = 0; i < items.Num(); i++ )
+				{
+					GetOverrides( map, items[i], removed );
+					if( removed.Num() > 0 && !( items[i].entity == anchor && items[i].primitive < 0 ) )
+					{
+						RevertOverrides( map, items[i] );
+						PieceItems( map, anchor, items );
+					}
+				}
+				RevertOverrides( map, Selection( anchor ) );
+				document.EndChange();
+				PieceItems( map, FindAnchor( map, ent->epairs.GetString( "name" ) ), items );
+				SelectItems( items, false );
+				Status( "This copy matches its piece again" );
+				UI::EndCard();
+				return true;
+			}
+			UI::Tip( "Throw away this copy's own changes, so it matches the piece" );
+			ImGui::SameLine();
+			ImGui::BeginDisabled( nested );
+			if( ImGui::Button( ICON_SPARKLES "  Apply to all copies" ) )
+			{
+				idStr error;
+				document.BeginChange( "Apply to piece" );
+				const bool ok = WritePrefabFromCopy( map, anchor, error );
+				document.EndChange();
+				document.ValidateSelection();
+				Status( ok ? va( "The piece \"%s\" now looks like this copy, and so do the others", prefab.c_str() ) : error.c_str() );
+				pieceListDirty = true;
+				ImGui::EndDisabled();
+				UI::EndCard();
+				return true;
+			}
+			ImGui::EndDisabled();
+			UI::Tip( "Make the piece itself look like this copy, so every copy changes to match" );
+		}
+		else
+		{
+			ImGui::TextDisabled( ICON_OK "  Matches its piece" );
+		}
+		ImGui::Spacing();
+		ImGui::BeginDisabled( nested );
+		if( ImGui::Button( ICON_UNGROUP "  Unlink" ) )
+		{
+			document.BeginChange( "Unlink piece" );
+			UnlinkPiece( map, anchor );
+			document.selection.Clear();
+			document.EndChange();
+			Status( "That copy is ordinary level things now, no longer linked to its piece" );
+			ImGui::EndDisabled();
+			UI::EndCard();
+			return true;
+		}
+		ImGui::EndDisabled();
+		UI::Tip( "Turn this copy into ordinary things, no longer linked to the piece" );
+	}
+	UI::EndCard();
+
+	DrawPlacementCard();
+	return true;
+}
+
+// one part of a copy is selected: say so, and what this copy changes about it
+static void DrawPartCard()
+{
+	idMapFile* map = document.Map();
+	const Selection primary = document.selection.Primary();
+	if( map == NULL || primary.IsEmpty() || primary.IsFace() )
+	{
+		return;
+	}
+	const Selection item = primary.entity > 0 ? Selection( primary.entity ) : primary;
+	idList<int> chain;
+	AnchorChain( map, item, chain );
+	if( chain.Num() == 0 )
+	{
+		return;
+	}
+	const idMapEntity* owner = map->GetEntity( chain[0] );
+	const idStr prefab = owner->epairs.GetString( KEY_PREFAB );
+	const bool editingThis = IsEditingPiece() && chain.FindIndex( PieceEditingAnchor() ) >= 0;
+
+	if( UI::BeginCard( "partcard", ICON_MODE_KITS, "Piece" ) )
+	{
+		if( editingThis )
+		{
+			ImGui::TextWrapped( "Part of the piece \"%s\" you're editing: changes go to every copy when you press Done.", pieceEditPrefab.c_str() );
+			UI::EndCard();
+			return;
+		}
+		ImGui::TextWrapped( "Part of %s, a copy of the piece \"%s\".", owner->epairs.GetString( "name" ), prefab.c_str() );
+		idStrList keys;
+		GetOverrides( map, item, keys );
+		if( keys.Num() == 0 )
+		{
+			UI::Hint( "Change it and the change is this copy's alone; it's then marked here, with a way to undo it or give it to every copy." );
+		}
+		else
+		{
+			ImGui::Spacing();
+			ImGui::TextDisabled( "Changed in this copy only:" );
+			for( int i = 0; i < keys.Num(); i++ )
+			{
+				ImGui::TextColored( UI::Accent(), "\xe2\x97\x8f" );
+				ImGui::SameLine();
+				ImGui::TextUnformatted( OverrideLabel( keys[i] ) );
+			}
+			if( ImGui::Button( ICON_UNDO "  Revert" ) )
+			{
+				const idStr name = item.entity > 0 ? map->GetEntity( item.entity )->epairs.GetString( "name" ) : "";
+				document.BeginChange( "Revert part" );
+				RevertOverrides( map, item );
+				document.EndChange();
+				document.ValidateSelection();
+				Status( "Back to the piece's version" );
+			}
+			UI::Tip( "Back to how the piece has it" );
+			ImGui::SameLine();
+			if( ImGui::Button( ICON_SPARKLES "  Apply to all copies" ) )
+			{
+				idStr error;
+				document.BeginChange( "Apply to piece" );
+				const bool ok = ApplyOverridesToPiece( map, item, error );
+				document.EndChange();
+				document.ValidateSelection();
+				Status( ok ? va( "Every copy of \"%s\" has this change now", prefab.c_str() ) : error.c_str() );
+			}
+			UI::Tip( "Put this change into the piece itself, so every copy gets it" );
+		}
+	}
+	UI::EndCard();
+}
+
+// copies whose piece file has gone
+static void DrawPieceProblems( bool& any )
+{
+	idMapFile* map = document.Map();
+	if( map == NULL )
+	{
+		return;
+	}
+	for( int e = 1; e < map->GetNumEntities(); e++ )
+	{
+		const idMapEntity* ent = map->GetEntity( e );
+		if( !IsPrefabAnchor( ent ) || PrefabExists( ent->epairs.GetString( KEY_PREFAB ) ) )
+		{
+			continue;
+		}
+		any = true;
+		ImGui::PushID( e + 200000 );
+		if( ImGui::SmallButton( ICON_UNGROUP " Unlink" ) )
+		{
+			document.BeginChange( "Unlink piece" );
+			UnlinkPiece( map, e );
+			document.selection.Clear();
+			document.EndChange();
+			ImGui::PopID();
+			return;
+		}
+		ImGui::SameLine();
+		ProblemRow( va( "\"%s\" is a copy of the piece \"%s\", which is missing (maps/prefabs/%s.map), so it can't be updated. Unlink keeps what's there as ordinary things.",
+						ent->epairs.GetString( "name" ), ent->epairs.GetString( KEY_PREFAB ), ent->epairs.GetString( KEY_PREFAB ) ) );
+		ImGui::PopID();
+	}
+}
+
+// while editing a piece in place: what's going on, and the way out
+static void DrawPieceEditBanner( const ImGuiDockNode* central )
+{
+	if( pieceEditing.Length() > 0 && !IsEditingPiece() )
+	{
+		// its copy went (undone past the start, say)
+		pieceEditing.Clear();
+		view.focusOwners.Clear();
+	}
+	if( !IsEditingPiece() )
+	{
+		return;
+	}
+	const float pad = 10.0f * UI::Scale();
+	// below the view bar, so the two never overlap however narrow the view
+	if( BeginOverlay( "##piece_banner", ImVec2( central->Pos.x + central->Size.x * 0.5f, central->Pos.y + pad + ImGui::GetFrameHeight() + 34.0f * UI::Scale() ), ImVec2( 0.5f, 0.0f ), 10.0f * UI::Scale() ) )
+	{
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextColored( UI::Accent(), ICON_MODE_KITS );
+		ImGui::SameLine();
+		ImGui::Text( "Editing the piece \"%s\"", pieceEditPrefab.c_str() );
+		ImGui::SameLine();
+		ImGui::TextDisabled( "- every copy changes when you're done" );
+		ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
+		if( UI::ColorButton( ICON_OK "  Done", UI::Good() ) )
+		{
+			FinishPieceEdit( true );
+		}
+		UI::Tip( "Save the piece and update every copy" );
+		ImGui::SameLine();
+		if( ImGui::Button( ICON_CLOSE "  Cancel" ) )
+		{
+			FinishPieceEdit( false );
+		}
+		UI::Tip( "Undo what you changed and leave the piece as it was" );
+	}
+	EndOverlay();
+}
+
+/*
+-------------------------------------------------------------------------------
+	piece console commands (for tests and scripting)
+-------------------------------------------------------------------------------
+*/
+
+static void StartPieceEdit( int anchor );
+
+static void EditorMakePiece_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 || document.selection.IsEmpty() )
+	{
+		common->Printf( "usage: editorMakePiece <name> (makes a piece from the selection)\n" );
+		return;
+	}
+	idBounds bounds;
+	idVec3 origin = vec3_origin;
+	if( document.SelectionBounds( bounds ) )
+	{
+		origin = SnapToGrid( idVec3( ( bounds[0].x + bounds[1].x ) * 0.5f, ( bounds[0].y + bounds[1].y ) * 0.5f, bounds[0].z ) );
+	}
+	idStr error;
+	document.BeginChange( "Make piece" );
+	const int anchor = MakePrefab( document, args.Argv( 1 ), origin, error );
+	if( anchor < 0 )
+	{
+		document.CancelChange();
+		common->Printf( "editorMakePiece: %s\n", error.c_str() );
+		return;
+	}
+	idList<Selection> items;
+	PieceItems( document.Map(), anchor, items );
+	SelectItems( items, false );
+	document.EndChange();
+	pieceListDirty = true;
+	common->Printf( "made piece %s around %s: %d things\n", args.Argv( 1 ), origin.ToString( 0 ), items.Num() );
+}
+
+static void EditorPlacePiece_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 5 )
+	{
+		common->Printf( "usage: editorPlacePiece <name> <x> <y> <z> [yaw]\n" );
+		return;
+	}
+	document.BeginChange( "Add piece" );
+	const idMat3 axis = idAngles( 0.0f, args.Argc() > 5 ? atof( args.Argv( 5 ) ) : 0.0f, 0.0f ).ToMat3();
+	const int anchor = PlacePrefab( document.Map(), args.Argv( 1 ), idVec3( atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ) ), axis );
+	if( anchor < 0 )
+	{
+		document.CancelChange();
+		common->Printf( "editorPlacePiece: no piece %s\n", args.Argv( 1 ) );
+		return;
+	}
+	idList<Selection> items;
+	PieceItems( document.Map(), anchor, items );
+	SelectItems( items, false );
+	document.EndChange();
+	common->Printf( "placed %s: %d things\n", document.Map()->GetEntity( FindAnchor( document.Map(), document.Map()->GetEntity( document.selection.Primary().entity )->epairs.GetString( "name" ) ) )->epairs.GetString( "name" ), items.Num() );
+}
+
+// editorSelectPiece <anchor> [part]: a whole copy, or one part of it (a brush part as b<n>)
+static void EditorSelectPiece_f( const idCmdArgs& args )
+{
+	const int anchor = FindAnchor( document.Map(), args.Argv( 1 ) );
+	if( anchor < 0 )
+	{
+		common->Printf( "usage: editorSelectPiece <copy> [part]\n" );
+		return;
+	}
+	idList<Selection> items;
+	PieceItems( document.Map(), anchor, items );
+	if( args.Argc() < 3 )
+	{
+		SelectItems( items, false );
+		return;
+	}
+	for( int i = 0; i < items.Num(); i++ )
+	{
+		const idDict& dict = items[i].primitive >= 0 ? document.Map()->GetEntity( 0 )->GetPrimitive( items[i].primitive )->epairs : document.Map()->GetEntity( items[i].entity )->epairs;
+		if( idStr::Cmp( dict.GetString( KEY_OWNER ), args.Argv( 1 ) ) == 0 && idStr::Cmp( dict.GetString( KEY_PART ), args.Argv( 2 ) ) == 0 )
+		{
+			document.selection.Set( items[i] );
+			return;
+		}
+	}
+	common->Printf( "no part %s in %s\n", args.Argv( 2 ), args.Argv( 1 ) );
+}
+
+static void EditorEditPiece_f( const idCmdArgs& args )
+{
+	if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "done" ) == 0 )
+	{
+		FinishPieceEdit( true );
+	}
+	else if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "cancel" ) == 0 )
+	{
+		FinishPieceEdit( false );
+	}
+	else
+	{
+		StartPieceEdit( FindAnchor( document.Map(), args.Argv( 1 ) ) );
+	}
+}
+
+// editorPiecePart <revert|apply>: on the selected part of a copy
+static void EditorPiecePart_f( const idCmdArgs& args )
+{
+	const Selection sel = document.selection.Primary();
+	idStr error;
+	document.BeginChange( "Piece part" );
+	bool ok = true;
+	if( idStr::Icmp( args.Argv( 1 ), "apply" ) == 0 )
+	{
+		ok = ApplyOverridesToPiece( document.Map(), sel, error );
+	}
+	else
+	{
+		RevertOverrides( document.Map(), sel );
+	}
+	document.EndChange();
+	document.ValidateSelection();
+	common->Printf( ok ? "done\n" : "%s\n", error.c_str() );
+}
+
+static void EditorDelete_f( const idCmdArgs& args )
+{
+	document.DeleteSelection();
+}
+
+static void EditorDuplicate_f( const idCmdArgs& args )
+{
+	document.DuplicateSelection( idVec3( atof( args.Argv( 1 ) ), atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ) ) );
+}
+
+// lists the copies of pieces and what each overrides
+static void EditorListPieces_f( const idCmdArgs& args )
+{
+	const idMapFile* map = document.Map();
+	for( int e = 1; map != NULL && e < map->GetNumEntities(); e++ )
+	{
+		const idMapEntity* ent = map->GetEntity( e );
+		if( IsPrefabAnchor( ent ) )
+		{
+			common->Printf( "copy %s of %s at %s owner '%s' removed '%s'\n", ent->epairs.GetString( "name" ), ent->epairs.GetString( KEY_PREFAB ), ent->epairs.GetString( "origin" ),
+							ent->epairs.GetString( KEY_OWNER ), ent->epairs.GetString( KEY_REMOVED ) );
+		}
+		else if( ent->epairs.GetString( KEY_OWNER )[0] != '\0' )
+		{
+			common->Printf( "  entity %s (%s|%s) at %s overrides '%s'\n", ent->epairs.GetString( "name" ), ent->epairs.GetString( KEY_OWNER ), ent->epairs.GetString( KEY_PART ),
+							ent->epairs.GetString( "origin" ), ent->epairs.GetString( KEY_OVERRIDES ) );
+		}
+	}
+	const idMapEntity* world = map != NULL ? map->GetEntity( 0 ) : NULL;
+	for( int p = 0; world != NULL && p < world->GetNumPrimitives(); p++ )
+	{
+		const idMapPrimitive* prim = world->GetPrimitive( p );
+		if( prim->epairs.GetString( KEY_OWNER )[0] != '\0' )
+		{
+			idBounds b;
+			PrimitiveBounds( prim, b );
+			common->Printf( "  brush %d (%s|%s) %s - %s overrides '%s'\n", p, prim->epairs.GetString( KEY_OWNER ), prim->epairs.GetString( KEY_PART ), b[0].ToString( 0 ), b[1].ToString( 0 ), prim->epairs.GetString( KEY_OVERRIDES ) );
+		}
+	}
+}
+
 struct lightPreset_t
 {
 	const char* 	label;
@@ -5267,7 +6267,7 @@ static void DrawKitTiles()
 		DragOut( -1, def->GetName() );
 	}
 	TileDivider();
-	UI::ToolTile( "mine", ICON_MODE_KITS, "My pieces", false, "Save your own builds, behaviour included, as pieces to reuse. Coming in Phase 2.", false, dockTile );
+	DrawPieceTiles();
 }
 
 static ImVec2 dockTopCenter( 0, 0 );
@@ -5422,6 +6422,11 @@ static void DrawSelectionActions()
 	{
 		const int pieces = document.SubtractSelection();
 		Status( pieces > 0 ? va( "Carved out; %d pieces left around it.", pieces ) : "Nothing to carve: the selection doesn't overlap any other brush." );
+	}
+	ImGui::SameLine();
+	if( UI::IconButton( "makepiece", ICON_MODE_KITS, "Make a piece: save the selection to place again and again, with every copy linked", false, !IsEditingPiece() ) )
+	{
+		pieceMakeRequest = true;
 	}
 	ImGui::SameLine();
 	if( UI::IconButton( "dup", ICON_DUPLICATE, "Duplicate (Ctrl+D)" ) )
@@ -5686,6 +6691,10 @@ static void HandleShapeDrag()
 	{
 		label = "Light";
 	}
+	else if( draggingThing.Cmpn( "piece:", 6 ) == 0 )
+	{
+		label = draggingThing.c_str() + 6;
+	}
 	else
 	{
 		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, draggingThing, false ) );
@@ -5741,6 +6750,10 @@ static void HandleShapeDrag()
 				const int preset = idMath::ClampInt( 0, ( int )( sizeof( lightPresets ) / sizeof( lightPresets[0] ) ) - 1, atoi( draggingThing.c_str() + 6 ) );
 				PlaceLight( lightPresets[preset], point );
 			}
+			else if( draggingThing.Cmpn( "piece:", 6 ) == 0 )
+			{
+				PlacePiece( draggingThing.c_str() + 6, point );
+			}
 			else
 			{
 				document.AddEntity( draggingThing, point );
@@ -5767,6 +6780,7 @@ static void DrawViewOverlay()
 	DrawViewBar( central );
 	DrawToolDock( central );
 	DrawContextBar();
+	DrawPieceEditBanner( central );
 }
 
 static void HandleShortcuts()
@@ -5798,6 +6812,10 @@ static void HandleShortcuts()
 	}
 	else if( io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_S, false ) )
 	{
+		if( IsEditingPiece() )
+		{
+			FinishPieceEdit( true );	// saving keeps the piece too
+		}
 		if( document.Save() )
 		{
 			Status( "Saved" );
@@ -6049,17 +7067,14 @@ static void HandleViewport()
 		else
 		{
 			const Selection hit = view.Pick( document, io.MousePos.x, io.MousePos.y );
-			if( io.KeyCtrl )
+			if( !io.KeyCtrl && !hit.IsEmpty() && ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) && !IsEditingPiece() && TopAnchorOf( document.Map(), hit ) >= 0 )
 			{
-				document.selection.Toggle( hit );
-			}
-			else if( hit.IsEmpty() )
-			{
-				document.selection.Clear();
+				document.selection.Set( hit );	// just this part of the copy
+				Status( "Just this part: what you change now is this copy's alone" );
 			}
 			else
 			{
-				document.selection.Set( hit );
+				SelectHit( hit, io.KeyCtrl );
 			}
 		}
 	}
@@ -6146,6 +7161,10 @@ void DrawMainMenuBar()
 		}
 		if( ImGui::MenuItem( ICON_SAVE "  Save", "Ctrl+S", false, document.IsOpen() ) )
 		{
+			if( IsEditingPiece() )
+			{
+				FinishPieceEdit( true );
+			}
 			if( document.Save() )
 			{
 				Status( "Saved" );
@@ -6478,6 +7497,7 @@ void Draw( unsigned int mainDockSpaceId )
 
 	RegisterCommands();
 	BuildUpdate();
+	document.afterChange = PieceAfterChange;
 
 	// reloading: wait for the old level to go before treating the game as the new one
 	const bool inGame = session != NULL && session->GetState() == idSession::INGAME && game != NULL && game->IsInGame();
@@ -6576,6 +7596,7 @@ void Draw( unsigned int mainDockSpaceId )
 	DrawAbout();
 	DrawWelcome();
 	DrawNewProjectDialog();
+	DrawMakePieceDialog();
 	DrawOpenProjectDialog();
 	DrawMapNameDialog( "Save Map As", openSaveAsPopup, false );
 	DrawMapNameDialog( "New Map", openNewMapPopup, true );

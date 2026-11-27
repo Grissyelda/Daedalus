@@ -112,6 +112,14 @@ void View::FreeAll()
 		{
 			renderModelManager->FreeModel( built[i].model );
 		}
+		if( world != NULL && built[i].ghostDef >= 0 )
+		{
+			world->FreeEntityDef( built[i].ghostDef );
+		}
+		if( built[i].ghostModel != NULL )
+		{
+			renderModelManager->FreeModel( built[i].ghostModel );
+		}
 	}
 	built.Clear();
 }
@@ -137,7 +145,12 @@ static void MergedArgs( const idMapEntity* ent, idDict& args )
 	}
 }
 
-idRenderModel* View::BuildBrushModel( const idMapEntity* ent, int entityNum )
+bool View::InFocus( const idDict& dict ) const
+{
+	return focusOwners.FindIndex( dict.GetString( "prefab_owner" ) ) >= 0;
+}
+
+idRenderModel* View::BuildBrushModel( const idMapEntity* ent, int entityNum, int focus )
 {
 	struct Bucket
 	{
@@ -157,6 +170,10 @@ idRenderModel* View::BuildBrushModel( const idMapEntity* ent, int entityNum )
 			continue;
 		}
 		const idMapBrush* brush = static_cast<const idMapBrush*>( prim );
+		if( focus != 0 && InFocus( brush->epairs ) != ( focus == 1 ) )
+		{
+			continue;
+		}
 
 		for( int s = 0; s < brush->GetNumSides(); s++ )
 		{
@@ -241,7 +258,7 @@ idRenderModel* View::BuildBrushModel( const idMapEntity* ent, int entityNum )
 	}
 
 	idRenderModel* model = renderModelManager->AllocModel();
-	model->InitEmpty( va( "_gt4editor_entity%d", entityNum ) );
+	model->InitEmpty( va( focus == 2 ? "_gt4editor_ghost%d" : "_gt4editor_entity%d", entityNum ) );
 
 	for( int b = 0; b < buckets.Num(); b++ )
 	{
@@ -279,10 +296,16 @@ void View::Sync( const Document& doc )
 		world->InitFromMap( NULL );
 	}
 
-	if( doc.Map() == builtMap && doc.Revision() == builtRevision )
+	idStr focus;
+	for( int i = 0; i < focusOwners.Num(); i++ )
+	{
+		focus += focusOwners[i] + " ";
+	}
+	if( doc.Map() == builtMap && doc.Revision() == builtRevision && focus == builtFocus )
 	{
 		return;
 	}
+	builtFocus = focus;
 
 	FreeAll();
 	FreeGrid();		// the world is cleared below; the grid goes back in on the next draw
@@ -304,9 +327,12 @@ void View::Sync( const Document& doc )
 		const idMapEntity* ent = map->GetEntity( i );
 		Built& b = built[i];
 
+		// while a piece is edited in place, everything outside it is a ghost
+		const bool focusing = focusOwners.Num() > 0;
+		const bool ghost = focusing && i > 0 && !InFocus( ent->epairs );
 		if( ent->GetNumPrimitives() > 0 )
 		{
-			b.model = BuildBrushModel( ent, i );
+			b.model = BuildBrushModel( ent, i, ( focusing && i == 0 ) ? 1 : 0 );
 			if( b.model != NULL )
 			{
 				renderEntity_t re;
@@ -319,7 +345,30 @@ void View::Sync( const Document& doc )
 				re.shaderParms[ SHADERPARM_GREEN ] = 1.0f;
 				re.shaderParms[ SHADERPARM_BLUE ] = 1.0f;
 				re.shaderParms[ SHADERPARM_ALPHA ] = 1.0f;
+				if( ghost )
+				{
+					re.customShader = declManager->FindMaterial( "editor/ghost" );
+				}
 				b.entityDef = world->AddEntityDef( &re );
+			}
+			if( focusing && i == 0 )
+			{
+				b.ghostModel = BuildBrushModel( ent, i, 2 );
+				if( b.ghostModel != NULL )
+				{
+					renderEntity_t re;
+					memset( &re, 0, sizeof( re ) );
+					re.hModel = b.ghostModel;
+					re.axis = mat3_identity;
+					re.bounds = b.ghostModel->Bounds();
+					re.entityNum = i;
+					re.shaderParms[ SHADERPARM_RED ] = 1.0f;
+					re.shaderParms[ SHADERPARM_GREEN ] = 1.0f;
+					re.shaderParms[ SHADERPARM_BLUE ] = 1.0f;
+					re.shaderParms[ SHADERPARM_ALPHA ] = 1.0f;
+					re.customShader = declManager->FindMaterial( "editor/ghost" );
+					b.ghostDef = world->AddEntityDef( &re );
+				}
 			}
 			continue;
 		}
@@ -344,6 +393,10 @@ void View::Sync( const Document& doc )
 			if( re.hModel != NULL )
 			{
 				re.entityNum = i;
+				if( ghost )
+				{
+					re.customShader = declManager->FindMaterial( "editor/ghost" );
+				}
 				b.entityDef = world->AddEntityDef( &re );
 			}
 		}
@@ -569,9 +622,9 @@ Selection View::Pick( const Document& doc, float x, float y, bool faces ) const
 
 		if( ent->GetNumPrimitives() == 0 )
 		{
-			if( faces )
+			if( faces || ( focusOwners.Num() > 0 && !InFocus( ent->epairs ) ) )
 			{
-				continue;
+				continue;	// ghosts can't be picked
 			}
 			idBounds bounds;
 			EntityBounds( ent, bounds );
@@ -587,6 +640,10 @@ Selection View::Pick( const Document& doc, float x, float y, bool faces ) const
 		for( int p = 0; p < ent->GetNumPrimitives(); p++ )
 		{
 			const idMapPrimitive* prim = ent->GetPrimitive( p );
+			if( focusOwners.Num() > 0 && !InFocus( i == 0 ? prim->epairs : ent->epairs ) )
+			{
+				continue;
+			}
 			float dist = -1.0f;
 			int side = -1;
 			if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )

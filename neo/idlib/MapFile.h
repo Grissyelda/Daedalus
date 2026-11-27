@@ -491,6 +491,11 @@ public:
 		delete primitives[i];
 		primitives.RemoveIndex( i );
 	}
+	void					ReplacePrimitive( int i, idMapPrimitive* p )
+	{
+		delete primitives[i];
+		primitives[i] = p;
+	}
 	idMapPrimitive* 		DetachPrimitive( int i )
 	{
 		idMapPrimitive* p = primitives[i];

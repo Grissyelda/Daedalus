@@ -412,7 +412,7 @@ bool EntityAxis( const idMapEntity* ent, idMat3& axis )
 	return false;
 }
 
-static void SetEntityAxis( idMapEntity* ent, const idMat3& axis )
+void SetEntityAxis( idMapEntity* ent, const idMat3& axis )
 {
 	// a plain turn about the vertical is written as "angle", which every tool understands
 	const idVec3& forward = axis[0];
@@ -593,6 +593,94 @@ static void WriteMapText( const idMapFile* map, idFile* fp )
 	}
 }
 
+// Shared with the prefab code: maps it reads and writes the same way the document does
+
+void TransformPrimitiveBy( idMapPrimitive* prim, const idMat3& linear, const idVec3& translation, bool lockTexture )
+{
+	idMat3 normalMatrix = linear;
+	if( !normalMatrix.InverseSelf() )
+	{
+		return;
+	}
+	normalMatrix.TransposeSelf();
+	TransformPrimitive( prim, linear, normalMatrix, translation, lockTexture );
+}
+
+void TransformEntityBy( idMapEntity* ent, const idMat3& linear, const idVec3& translation, bool lockTexture )
+{
+	TransformEntityKeys( ent, linear, translation );
+	for( int p = 0; p < ent->GetNumPrimitives(); p++ )
+	{
+		TransformPrimitiveBy( ent->GetPrimitive( p ), linear, translation, lockTexture );
+	}
+}
+
+idMapPrimitive* CopyPrimitive( const idMapPrimitive* prim )
+{
+	if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+	{
+		const idMapBrush* brush = static_cast<const idMapBrush*>( prim );
+		idMapBrush* copy = new( TAG_SYSTEM ) idMapBrush();
+		copy->epairs = brush->epairs;
+		for( int i = 0; i < brush->GetNumSides(); i++ )
+		{
+			idMapBrushSide* side = brush->GetSide( i );
+			idMapBrushSide* newSide = new( TAG_SYSTEM ) idMapBrushSide();
+			newSide->SetMaterial( side->GetMaterial() );
+			newSide->SetPlane( side->GetPlane() );
+			idVec3 mat[2];
+			side->GetTextureMatrix( mat[0], mat[1] );
+			newSide->SetTextureMatrix( mat );
+			newSide->projection = side->projection;
+			copy->AddSide( newSide );
+		}
+		return copy;
+	}
+
+	// anything else: round-trip through text, which copies every kind exactly
+	idFile_Memory file( "editor_copy" );
+	idMapEntity* holder = new( TAG_SYSTEM ) idMapEntity();
+	holder->epairs.Set( "classname", "worldspawn" );
+	holder->AddPrimitive( const_cast<idMapPrimitive*>( prim ) );
+	holder->Write( &file, 0, false );
+	holder->DetachPrimitive( 0 );
+	delete holder;
+
+	idStr text = "Version 3\n";
+	text.Append( file.GetDataPtr(), file.Length() );
+	idMapFile scratch;
+	if( !scratch.ParseFromMemory( text.c_str(), text.Length(), "copy" ) || scratch.GetNumEntities() != 1 || scratch.GetEntity( 0 )->GetNumPrimitives() != 1 )
+	{
+		return NULL;
+	}
+	return scratch.GetEntity( 0 )->DetachPrimitive( 0 );
+}
+
+idMapFile* ReadMapForEditing( const char* mapName )
+{
+	idMapFile* loaded = new( TAG_SYSTEM ) idMapFile();
+	if( !loaded->Parse( va( "maps/%s", mapName ), true, false, true ) || loaded->GetNumEntities() == 0 )
+	{
+		delete loaded;
+		return NULL;
+	}
+	MapToWorldSpace( loaded );
+	return loaded;
+}
+
+bool WriteMapForEditing( const idMapFile* map, const char* mapName )
+{
+	idFile* fp = fileSystem->OpenFileWrite( va( "maps/%s.map", mapName ), "fs_basepath" );
+	if( fp == NULL )
+	{
+		common->Warning( "Editor: couldn't save maps/%s.map", mapName );
+		return false;
+	}
+	WriteMapText( map, fp );
+	fileSystem->CloseFile( fp );
+	return true;
+}
+
 /*
 ===============================================================================
 
@@ -609,6 +697,7 @@ Document::Document()
 	changeOpen = false;
 	transforming = false;
 	textureLock = true;
+	afterChange = NULL;
 }
 
 Document::~Document()
@@ -836,6 +925,7 @@ void Document::BeginChange( const char* label )
 	}
 
 	changeOpen = true;
+	duplicateRenames.Clear();
 	pendingLabel = label;
 	pendingSelection = selection;
 	Snapshot( pendingText );
@@ -846,11 +936,19 @@ void Document::EndChange()
 	if( !changeOpen )
 	{
 		// a live edit (like a drag) that already recorded its undo step
+		if( afterChange != NULL )
+		{
+			afterChange( *this );
+		}
 		dirty = true;
 		revision++;
 		return;
 	}
 
+	if( afterChange != NULL )
+	{
+		afterChange( *this );
+	}
 	changeOpen = false;
 
 	State& state = undoStack.Alloc();
@@ -1514,7 +1612,12 @@ void Document::DuplicateSelection( const idVec3& offset )
 			{
 				newEnt->AddPrimitive( copy->DetachPrimitive( 0 ) );
 			}
+			const idStr oldName = newEnt->epairs.GetString( "name" );
 			newEnt->epairs.Set( "name", map->GetUniqueEntityName( newEnt->epairs.GetString( "classname" ) ) );
+			if( oldName.Length() > 0 )
+			{
+				duplicateRenames.Set( oldName, newEnt->epairs.GetString( "name" ) );
+			}
 			copies.Add( Selection( map->AddEntity( newEnt ) ) );
 		}
 	}
