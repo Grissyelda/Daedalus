@@ -787,7 +787,8 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain( const glimpParms_t& parms, c
 
 	::SetTimer( win32.hWnd, 0, 100, NULL );
 
-	ShowWindow( win32.hWnd, SW_SHOW );
+	// GrizzTech4: the editor opens maximized, like other editors
+	ShowWindow( win32.hWnd, ( parms.fullScreen == 0 && cvarSystem->GetCVarBool( "editor" ) ) ? SW_MAXIMIZE : SW_SHOW );
 	UpdateWindow( win32.hWnd );
 	common->Printf( "...created window @ %d,%d (%dx%d)\n", x, y, w, h );
 

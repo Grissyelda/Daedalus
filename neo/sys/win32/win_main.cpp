@@ -40,6 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>  // for PathMatchSpecW
+#include <dbghelp.h>  // GrizzTech4: crash reports
+#pragma comment( lib, "dbghelp.lib" )
 
 #ifndef __MRC__
 	#include <sys/types.h>
@@ -2203,8 +2205,156 @@ EXCEPTION_DISPOSITION __cdecl _except_handler( struct _EXCEPTION_RECORD* Excepti
 WinMain
 ==================
 */
+/*
+==============
+GrizzTech4 crash reports
+
+When the program crashes, writes two files to <Saved Games>\GrizzTech4\crashes:
+a minidump for a debugger, and a text report with the call stack (function
+names come from GrizzTech4.pdb when it sits next to the exe). Then tells the
+person where they are.
+==============
+*/
+static char crashFolder[ MAX_PATH ];
+
+static void CrashWriteStack( FILE* f, EXCEPTION_POINTERS* ep )
+{
+	HANDLE process = GetCurrentProcess();
+	HANDLE thread = GetCurrentThread();
+
+	char exeDir[ MAX_PATH ];
+	GetModuleFileNameA( NULL, exeDir, sizeof( exeDir ) );
+	char* slash = strrchr( exeDir, '\\' );
+	if( slash != NULL )
+	{
+		*slash = '\0';
+	}
+	SymSetOptions( SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES );
+	const bool haveSymbols = SymInitialize( process, exeDir, TRUE ) != FALSE;
+
+	CONTEXT context = *ep->ContextRecord;
+	STACKFRAME64 frame;
+	memset( &frame, 0, sizeof( frame ) );
+#if defined( _M_X64 )
+	const DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+	frame.AddrPC.Offset = context.Rip;
+	frame.AddrFrame.Offset = context.Rbp;
+	frame.AddrStack.Offset = context.Rsp;
+#else
+	const DWORD machine = IMAGE_FILE_MACHINE_I386;
+	frame.AddrPC.Offset = context.Eip;
+	frame.AddrFrame.Offset = context.Ebp;
+	frame.AddrStack.Offset = context.Esp;
+#endif
+	frame.AddrPC.Mode = AddrModeFlat;
+	frame.AddrFrame.Mode = AddrModeFlat;
+	frame.AddrStack.Mode = AddrModeFlat;
+
+	fprintf( f, "\nCall stack:\n" );
+	for( int i = 0; i < 64; i++ )
+	{
+		if( !StackWalk64( machine, process, thread, &frame, &context, NULL, SymFunctionTableAccess64, SymGetModuleBase64, NULL ) || frame.AddrPC.Offset == 0 )
+		{
+			break;
+		}
+		const DWORD64 address = frame.AddrPC.Offset;
+
+		char moduleName[ MAX_PATH ] = "?";
+		const DWORD64 moduleBase = SymGetModuleBase64( process, address );
+		if( moduleBase != 0 )
+		{
+			GetModuleFileNameA( ( HMODULE )moduleBase, moduleName, sizeof( moduleName ) );
+			char* name = strrchr( moduleName, '\\' );
+			if( name != NULL )
+			{
+				memmove( moduleName, name + 1, strlen( name + 1 ) + 1 );
+			}
+		}
+
+		char symbolBuffer[ sizeof( SYMBOL_INFO ) + 256 ];
+		SYMBOL_INFO* symbol = ( SYMBOL_INFO* )symbolBuffer;
+		memset( symbolBuffer, 0, sizeof( symbolBuffer ) );
+		symbol->SizeOfStruct = sizeof( SYMBOL_INFO );
+		symbol->MaxNameLen = 255;
+		DWORD64 displacement = 0;
+
+		fprintf( f, "  %2d  %s+0x%llx", i, moduleName, ( unsigned long long )( address - moduleBase ) );
+		if( haveSymbols && SymFromAddr( process, address, &displacement, symbol ) )
+		{
+			fprintf( f, "  %s+0x%llx", symbol->Name, ( unsigned long long )displacement );
+			IMAGEHLP_LINE64 line;
+			memset( &line, 0, sizeof( line ) );
+			line.SizeOfStruct = sizeof( line );
+			DWORD lineDisplacement = 0;
+			if( SymGetLineFromAddr64( process, address, &lineDisplacement, &line ) )
+			{
+				fprintf( f, "  (%s:%lu)", line.FileName, line.LineNumber );
+			}
+		}
+		fprintf( f, "\n" );
+	}
+
+	if( haveSymbols )
+	{
+		SymCleanup( process );
+	}
+}
+
+static LONG WINAPI CrashHandler( EXCEPTION_POINTERS* ep )
+{
+	static volatile LONG entered = 0;
+	if( InterlockedExchange( &entered, 1 ) != 0 )
+	{
+		return EXCEPTION_CONTINUE_SEARCH;	// crashed while reporting a crash
+	}
+
+	CreateDirectoryA( Sys_DefaultSavePath(), NULL );
+	CreateDirectoryA( crashFolder, NULL );
+	SYSTEMTIME t;
+	GetLocalTime( &t );
+	char stamp[ 64 ];
+	sprintf( stamp, "%04d-%02d-%02d_%02d-%02d-%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond );
+
+	char dumpPath[ MAX_PATH ], reportPath[ MAX_PATH ];
+	_snprintf( dumpPath, sizeof( dumpPath ), "%s\\crash_%s.dmp", crashFolder, stamp );
+	_snprintf( reportPath, sizeof( reportPath ), "%s\\crash_%s.txt", crashFolder, stamp );
+
+	HANDLE dumpFile = CreateFileA( dumpPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+	if( dumpFile != INVALID_HANDLE_VALUE )
+	{
+		MINIDUMP_EXCEPTION_INFORMATION info;
+		info.ThreadId = GetCurrentThreadId();
+		info.ExceptionPointers = ep;
+		info.ClientPointers = FALSE;
+		MiniDumpWriteDump( GetCurrentProcess(), GetCurrentProcessId(), dumpFile, ( MINIDUMP_TYPE )( MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory ), &info, NULL, NULL );
+		CloseHandle( dumpFile );
+	}
+
+	FILE* f = fopen( reportPath, "w" );
+	if( f != NULL )
+	{
+		fprintf( f, "%s crash report\n", ENGINE_VERSION );
+		fprintf( f, "Exception 0x%08lx at address %p\n", ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress );
+		if( ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2 )
+		{
+			fprintf( f, "Tried to %s address 0x%llx\n", ep->ExceptionRecord->ExceptionInformation[0] ? "write" : "read", ( unsigned long long )ep->ExceptionRecord->ExceptionInformation[1] );
+		}
+		CrashWriteStack( f, ep );
+		fclose( f );
+	}
+
+	char message[ 1024 ];
+	_snprintf( message, sizeof( message ), "GrizzTech4 crashed. A report was saved to:\n\n%s\n\nPlease send that file (and the .dmp next to it) along with what you were doing.", reportPath );
+	MessageBoxA( NULL, message, "GrizzTech4 crashed", MB_OK | MB_ICONERROR | MB_TOPMOST );
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow )
 {
+	// GrizzTech4: crash reports go to <Saved Games>\GrizzTech4\crashes
+	_snprintf( crashFolder, sizeof( crashFolder ), "%s\\crashes", Sys_DefaultSavePath() );
+	SetUnhandledExceptionFilter( CrashHandler );
+
 
 	const HCURSOR hcurSave = ::SetCursor( LoadCursor( 0, IDC_WAIT ) );
 

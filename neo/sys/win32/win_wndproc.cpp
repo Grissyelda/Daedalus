@@ -103,6 +103,12 @@ void WIN_Sizing( WORD side, RECT* rect )
 		return;
 	}
 
+	// GrizzTech4: the editor's panels work at any shape, so only the game keeps the aspect limits
+	if( cvarSystem->GetCVarBool( "editor" ) )
+	{
+		return;
+	}
+
 	// restrict to a standard aspect ratio
 	int width = rect->right - rect->left;
 	int height = rect->bottom - rect->top;

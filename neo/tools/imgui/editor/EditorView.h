@@ -73,8 +73,16 @@ public:
 	// render the 3D view (fills the screen behind the editor panels)
 	void			Draw( const Document& doc );
 
-	// camera movement; call once per frame with ImGui's input state
-	void			UpdateCamera( bool viewportHovered );
+	// camera movement; call once per frame with ImGui's input state. True while a mouse
+	// drag is moving the camera, when clicks mustn't select or edit anything.
+	bool			UpdateCamera( bool viewportHovered );
+	bool			IsNavigating() const
+	{
+		return navMode != NAV_NONE;
+	}
+
+	// what Alt + left drag orbits around; the shell sets it when an orbit starts
+	idVec3			orbitPivot = vec3_origin;
 
 	// what's under the screen position (pixels), or an empty selection;
 	// with faces set, the brush face itself
@@ -95,8 +103,21 @@ public:
 	void			Shutdown();
 
 	bool			wireframe = false;		// draw triangle outlines over everything
+	bool			showGrid = true;		// a grid on the floor plane
+	float			gridSize = 8.0f;		// the editor's grid step, set by the shell
+	float			gridZ = 0.0f;			// height of the floor grid
 
 private:
+	enum navMode_t
+	{
+		NAV_NONE,
+		NAV_LOOK,
+		NAV_PAN,
+		NAV_ORBIT
+	};
+	navMode_t		navMode = NAV_NONE;
+	idVec2			navAnchor;
+
 	struct Built
 	{
 		idRenderModel* 	model = NULL;
@@ -105,6 +126,13 @@ private:
 	};
 
 	void			FreeAll();
+	void			FreeGrid();
+	void			UpdateGrid();
+
+	idRenderModel* 	gridModel = NULL;
+	qhandle_t		gridEntity = -1;
+	float			gridBuiltStep = 0.0f;
+	float			gridBuiltZ = 0.0f;
 	idRenderModel* 	BuildBrushModel( const idMapEntity* ent, int entityNum );
 
 	idRenderWorld* 	world;

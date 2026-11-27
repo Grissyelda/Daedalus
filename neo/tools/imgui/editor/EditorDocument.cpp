@@ -397,7 +397,7 @@ static void TransformPrimitive( idMapPrimitive* prim, const idMat3& linear, cons
 	}
 }
 
-static bool EntityAxis( const idMapEntity* ent, idMat3& axis )
+bool EntityAxis( const idMapEntity* ent, idMat3& axis )
 {
 	if( ent->epairs.GetMatrix( "rotation", "1 0 0 0 1 0 0 0 1", axis ) )
 	{

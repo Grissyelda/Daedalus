@@ -114,6 +114,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package/GrizzTech4 | Out-Null
           Copy-Item build/${{ matrix.preset }}/Release/GrizzTech4.exe package/GrizzTech4/
+          # editor builds carry the symbols, so crash reports name the functions involved
+          if ( "${{ matrix.preset }}" -eq "windows-vs2022" ) { Copy-Item build/${{ matrix.preset }}/Release/GrizzTech4.pdb package/GrizzTech4/ }
           Copy-Item -Recurse content, template package/GrizzTech4/
           Copy-Item README.md, LICENSE.md, LICENSE_EXCEPTIONS.md package/GrizzTech4/
 

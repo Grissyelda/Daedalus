@@ -31,6 +31,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorView.h"
 
 #include "../../imgui/BFGimgui.h"
+#include "../../imgui/ImGui_Hooks.h"
 #include "renderer/RenderCommon.h"
 
 namespace GrizzEditor
@@ -85,6 +86,7 @@ View::View()
 void View::Shutdown()
 {
 	FreeAll();
+	FreeGrid();
 	if( world != NULL )
 	{
 		renderSystem->FreeRenderWorld( world );
@@ -281,6 +283,7 @@ void View::Sync( const Document& doc )
 	}
 
 	FreeAll();
+	FreeGrid();		// the world is cleared below; the grid goes back in on the next draw
 	builtMap = doc.Map();
 	builtRevision = doc.Revision();
 
@@ -388,6 +391,89 @@ void View::ScreenRay( float x, float y, idVec3& start, idVec3& dir ) const
 		  - rv.viewaxis[1] * ( nx * tanf( DEG2RAD( rv.fov_x * 0.5f ) ) )
 		  + rv.viewaxis[2] * ( ny * tanf( DEG2RAD( rv.fov_y * 0.5f ) ) );
 	dir.Normalize();
+}
+
+// The floor grid is a real surface: a big translucent quad with a grid texture, so walls
+// and floors hide it the way they hide everything else. One texture repeat is 8 grid steps.
+static const char* GRID_MATERIAL = "editor/floorgrid";
+static const float GRID_EXTENT = 32768.0f;
+
+void View::FreeGrid()
+{
+	if( world != NULL && gridEntity >= 0 )
+	{
+		world->FreeEntityDef( gridEntity );
+	}
+	gridEntity = -1;
+	if( gridModel != NULL )
+	{
+		renderModelManager->FreeModel( gridModel );
+		gridModel = NULL;
+	}
+}
+
+void View::UpdateGrid()
+{
+	const float step = idMath::ClampFloat( 1.0f, 4096.0f, gridSize );
+	if( !showGrid )
+	{
+		FreeGrid();
+		return;
+	}
+	if( gridEntity >= 0 && gridBuiltStep == step && gridBuiltZ == gridZ )
+	{
+		return;
+	}
+	FreeGrid();
+	gridBuiltStep = step;
+	gridBuiltZ = gridZ;
+
+	const float repeat = step * 8.0f;
+	const float z = gridZ + 0.1f;		// a hair above, so floors built on it don't flicker through
+	const idVec2 corners[4] = { idVec2( -GRID_EXTENT, -GRID_EXTENT ), idVec2( GRID_EXTENT, -GRID_EXTENT ), idVec2( GRID_EXTENT, GRID_EXTENT ), idVec2( -GRID_EXTENT, GRID_EXTENT ) };
+
+	srfTriangles_t* tri = R_AllocStaticTriSurf();
+	R_AllocStaticTriSurfVerts( tri, 4 );
+	R_AllocStaticTriSurfIndexes( tri, 6 );
+	tri->numVerts = 4;
+	tri->numIndexes = 6;
+	for( int i = 0; i < 4; i++ )
+	{
+		idDrawVert& v = tri->verts[i];
+		v.Clear();
+		v.xyz.Set( corners[i].x, corners[i].y, z );
+		v.SetTexCoord( corners[i].x / repeat, -corners[i].y / repeat );
+		v.SetNormal( idVec3( 0, 0, 1 ) );
+		v.SetTangent( idVec3( 1, 0, 0 ) );
+		v.SetBiTangent( idVec3( 0, -1, 0 ) );
+		v.SetColor( 0xffffffff );
+	}
+	// facing up: (c - a) x (b - a) points along +Z
+	const triIndex_t indexes[6] = { 0, 2, 1, 0, 3, 2 };
+	memcpy( tri->indexes, indexes, sizeof( indexes ) );
+	tri->tangentsCalculated = true;
+	R_BoundTriSurf( tri );
+
+	gridModel = renderModelManager->AllocModel();
+	gridModel->InitEmpty( "_gt4editor_floorgrid" );
+	modelSurface_t surf;
+	surf.id = 0;
+	surf.shader = declManager->FindMaterial( GRID_MATERIAL );
+	surf.geometry = tri;
+	gridModel->AddSurface( surf );
+	gridModel->FinishSurfaces( false );
+
+	renderEntity_t re;
+	memset( &re, 0, sizeof( re ) );
+	re.hModel = gridModel;
+	re.axis = mat3_identity;
+	re.bounds = gridModel->Bounds();
+	re.noShadow = true;
+	re.shaderParms[ SHADERPARM_RED ] = 1.0f;
+	re.shaderParms[ SHADERPARM_GREEN ] = 1.0f;
+	re.shaderParms[ SHADERPARM_BLUE ] = 1.0f;
+	re.shaderParms[ SHADERPARM_ALPHA ] = 1.0f;
+	gridEntity = world->AddEntityDef( &re );
 }
 
 bool View::WorldToScreen( const idVec3& point, idVec2& screen ) const
@@ -555,66 +641,139 @@ bool View::Trace( const Document& doc, float x, float y, idVec3& point, idVec3& 
 	return true;
 }
 
-void View::UpdateCamera( bool viewportHovered )
+/*
+====================
+View::UpdateCamera
+
+Unreal-style navigation:
+	right mouse held		look around; WASD fly, Q/E down/up, Shift faster, wheel sets speed
+	middle mouse held		pan
+	Alt + left mouse held	orbit around orbitPivot
+	wheel					move forward and back
+
+While a button is held the pointer is hidden and kept in place, so it can't run
+into the edge of the screen.
+====================
+*/
+bool View::UpdateCamera( bool viewportHovered )
 {
 	ImGuiIO& io = ImGui::GetIO();
 	const float dt = idMath::ClampFloat( 0.0f, 0.1f, io.DeltaTime );
 
-	static bool looking = false;
-	if( viewportHovered && ImGui::IsMouseClicked( ImGuiMouseButton_Right ) )
+	// which drag, if any, is moving the camera
+	if( navMode == NAV_NONE && viewportHovered )
 	{
-		looking = true;
+		if( ImGui::IsMouseClicked( ImGuiMouseButton_Right ) )
+		{
+			navMode = NAV_LOOK;
+		}
+		else if( ImGui::IsMouseClicked( ImGuiMouseButton_Middle ) )
+		{
+			navMode = NAV_PAN;
+		}
+		else if( io.KeyAlt && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+		{
+			navMode = NAV_ORBIT;
+		}
+		if( navMode != NAV_NONE )
+		{
+			navAnchor.Set( io.MousePos.x, io.MousePos.y );
+		}
 	}
-	if( !ImGui::IsMouseDown( ImGuiMouseButton_Right ) )
+	if( ( navMode == NAV_LOOK && !ImGui::IsMouseDown( ImGuiMouseButton_Right ) ) ||
+			( navMode == NAV_PAN && !ImGui::IsMouseDown( ImGuiMouseButton_Middle ) ) ||
+			( navMode == NAV_ORBIT && !ImGui::IsMouseDown( ImGuiMouseButton_Left ) ) )
 	{
-		looking = false;
+		navMode = NAV_NONE;
+	}
+
+	idVec2 delta( 0, 0 );
+	if( navMode != NAV_NONE )
+	{
+		// how far the pointer moved, then put it back where the drag started
+		delta.Set( io.MousePos.x - navAnchor.x, io.MousePos.y - navAnchor.y );
+		Sys_WarpMouseInWindow( ( int )navAnchor.x, ( int )navAnchor.y );
+		ImGuiHook::SetMousePos( navAnchor.x, navAnchor.y );
+		ImGui::SetMouseCursor( ImGuiMouseCursor_None );
 	}
 
 	const idMat3 axis = camera.Axis();
 
-	if( looking )
+	switch( navMode )
 	{
-		camera.yaw -= io.MouseDelta.x * 0.2f;
-		camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + io.MouseDelta.y * 0.2f );
+		case NAV_LOOK:
+		{
+			camera.yaw -= delta.x * 0.2f;
+			camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + delta.y * 0.2f );
 
-		float speed = camera.speed * ( ImGui::IsKeyDown( ImGuiKey_LeftShift ) ? 3.0f : 1.0f );
-		idVec3 move = vec3_zero;
-		if( ImGui::IsKeyDown( ImGuiKey_W ) )
-		{
-			move += axis[0];
-		}
-		if( ImGui::IsKeyDown( ImGuiKey_S ) )
-		{
-			move -= axis[0];
-		}
-		if( ImGui::IsKeyDown( ImGuiKey_A ) )
-		{
-			move += axis[1];
-		}
-		if( ImGui::IsKeyDown( ImGuiKey_D ) )
-		{
-			move -= axis[1];
-		}
-		if( ImGui::IsKeyDown( ImGuiKey_E ) )
-		{
-			move += idVec3( 0, 0, 1 );
-		}
-		if( ImGui::IsKeyDown( ImGuiKey_Q ) )
-		{
-			move -= idVec3( 0, 0, 1 );
-		}
-		camera.origin += move * speed * dt;
+			float speed = camera.speed * ( io.KeyShift ? 3.0f : 1.0f );
+			idVec3 move = vec3_zero;
+			if( ImGui::IsKeyDown( ImGuiKey_W ) )
+			{
+				move += axis[0];
+			}
+			if( ImGui::IsKeyDown( ImGuiKey_S ) )
+			{
+				move -= axis[0];
+			}
+			if( ImGui::IsKeyDown( ImGuiKey_A ) )
+			{
+				move += axis[1];
+			}
+			if( ImGui::IsKeyDown( ImGuiKey_D ) )
+			{
+				move -= axis[1];
+			}
+			if( ImGui::IsKeyDown( ImGuiKey_E ) )
+			{
+				move += idVec3( 0, 0, 1 );
+			}
+			if( ImGui::IsKeyDown( ImGuiKey_Q ) )
+			{
+				move -= idVec3( 0, 0, 1 );
+			}
+			camera.origin += move * speed * dt;
 
-		// the wheel changes flying speed while looking around
-		if( io.MouseWheel != 0.0f )
+			// the wheel changes flying speed while looking around
+			if( io.MouseWheel != 0.0f )
+			{
+				camera.speed = idMath::ClampFloat( 32.0f, 4096.0f, camera.speed * ( io.MouseWheel > 0.0f ? 1.25f : 0.8f ) );
+			}
+			break;
+		}
+
+		case NAV_PAN:
 		{
-			camera.speed = idMath::ClampFloat( 32.0f, 4096.0f, camera.speed * ( io.MouseWheel > 0.0f ? 1.25f : 0.8f ) );
+			// faster when far from what's in front, like dragging the world by hand
+			const float scale = Max( 0.25f, camera.speed / 384.0f ) * 1.5f;
+			camera.origin += axis[1] * delta.x * scale;
+			camera.origin += axis[2] * delta.y * scale;
+			break;
+		}
+
+		case NAV_ORBIT:
+		{
+			const float distance = Max( 16.0f, ( orbitPivot - camera.origin ).Length() );
+			camera.yaw -= delta.x * 0.3f;
+			camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + delta.y * 0.3f );
+			camera.origin = orbitPivot - camera.Axis()[0] * distance;
+			break;
+		}
+
+		default:
+		{
+			if( viewportHovered && io.MouseWheel != 0.0f )
+			{
+				// toward or away from what's under the pointer
+				idVec3 start, dir;
+				ScreenRay( io.MousePos.x, io.MousePos.y, start, dir );
+				camera.origin += dir * io.MouseWheel * Max( 32.0f, camera.speed * 0.25f );
+			}
+			break;
 		}
 	}
-	else if( viewportHovered && io.MouseWheel != 0.0f )
-	{
-		camera.origin += axis[0] * io.MouseWheel * 64.0f;
-	}
+
+	return navMode != NAV_NONE;
 }
 
 void View::Draw( const Document& doc )
@@ -650,8 +809,22 @@ void View::Draw( const Document& doc )
 				def->dict.GetVector( "editor_color", "0.5 0.5 1", color );
 			}
 			const bool selected = doc.selection.Contains( Selection( i ) );
-			world->DebugBounds( selected ? COLOR_SELECTED : idVec4( color.x, color.y, color.z, 1.0f ), bounds );
+			const idVec4 boxColor = selected ? COLOR_SELECTED : idVec4( color.x, color.y, color.z, 1.0f );
+
+			// turned with the entity, with an arrow for the way it faces
+			idMat3 axis;
+			const bool turned = EntityAxis( ent, axis );
+			const idVec3 origin = ent->epairs.GetVector( "origin" );
+			world->DebugBox( boxColor, idBox( idBounds( bounds[0] - origin, bounds[1] - origin ), origin, axis ) );
+			if( turned || idStr::Icmp( ent->epairs.GetString( "classname" ), "info_player_start" ) == 0 )
+			{
+				const float length = Max( 24.0f, ( bounds[1].x - bounds[0].x ) * 1.25f );
+				const idVec3 center = bounds.GetCenter();
+				world->DebugArrow( boxColor, center, center + axis[0] * length, 6 );
+			}
 		}
+
+
 
 		// brush outlines: all of them in wireframe mode, otherwise just the selection
 		for( int i = 0; i < map->GetNumEntities(); i++ )
@@ -769,6 +942,8 @@ void View::Draw( const Document& doc )
 			world->DebugWinding( COLOR_FACE, w, vec3_origin, mat3_identity );
 		}
 	}
+
+	UpdateGrid();
 
 	renderView_t rv;
 	BuildRenderView( rv );

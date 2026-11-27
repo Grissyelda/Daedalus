@@ -81,6 +81,15 @@ VkResult DeviceManager::CreateSDLWindowSurface( VkInstance instance, VkSurfaceKH
 	return VkResult::VK_SUCCESS;
 }
 
+// GrizzTech4: used by the editor's mouse look
+void Sys_WarpMouseInWindow( int x, int y )
+{
+	if( window != nullptr )
+	{
+		SDL_WarpMouseInWindow( window, x, y );
+	}
+}
+
 bool DeviceManager::CreateWindowDeviceAndSwapChain( const glimpParms_t& parms, const char* windowTitle )
 {
 	Uint32 flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;

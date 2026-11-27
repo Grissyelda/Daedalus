@@ -130,9 +130,10 @@ bool HandleKeyEvent( const sysEvent_t& keyEvent )
 		return true;
 	}
 
-	if( g_MousePressed[1] )
+	if( g_MousePressed[1] && !GrizzEditor::IsEditing() )
 	{
 		// RB: ignore everything as long right mouse button is pressed
+		// GrizzTech4: except in the editor, which flies its camera with WASD while it's held
 		return false;
 	}
 
@@ -182,6 +183,17 @@ void FillCharKeys( int* keyMap )
 	keyMap[ImGuiKey_Space] = K_SPACE;
 	keyMap[ImGuiKey_LeftBracket] = K_LBRACKET;
 	keyMap[ImGuiKey_RightBracket] = K_RBRACKET;
+	keyMap[ImGuiKey_Comma] = K_COMMA;
+	keyMap[ImGuiKey_Period] = K_PERIOD;
+	keyMap[ImGuiKey_Slash] = K_SLASH;
+	keyMap[ImGuiKey_Minus] = K_MINUS;
+	keyMap[ImGuiKey_Equal] = K_EQUALS;
+	keyMap[ImGuiKey_GraveAccent] = K_GRAVE;
+	keyMap[ImGuiKey_0] = K_0;
+	for( int i = 0; i < 9; i++ )
+	{
+		keyMap[ImGuiKey_1 + i] = K_1 + i;
+	}
 	for( int i = 0; i < 12; i++ )
 	{
 		keyMap[ImGuiKey_F1 + i] = ( i < 10 ) ? K_F1 + i : ( i == 10 ? K_F11 : K_F12 );
@@ -731,6 +743,11 @@ bool Init( int windowWidth, int windowHeight )
 	g_IsInit = true;
 
 	return true;
+}
+
+void SetMousePos( float x, float y )
+{
+	g_MousePos = ImVec2( x, y );
 }
 
 void NotifyDisplaySizeChanged( int width, int height )

@@ -42,6 +42,9 @@ bool	IsInitialized();
 // tell imgui that the (game) window size has changed
 void	NotifyDisplaySizeChanged( int width, int height );
 
+// GrizzTech4: moves ImGui's idea of the mouse, after the editor has moved the real one
+void	SetMousePos( float x, float y );
+
 // inject a sys event (keyboard, mouse, unicode character)
 bool	InjectSysEvent( const sysEvent_t* keyEvent );
 

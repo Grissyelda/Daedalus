@@ -294,6 +294,7 @@ bool				BrushBounds( const idMapBrush* brush, idBounds& bounds );
 bool				BrushSideWinding( const idMapBrush* brush, int side, idWinding& w );
 bool				PrimitiveBounds( const idMapPrimitive* prim, idBounds& bounds );
 bool				EntityBounds( const idMapEntity* ent, idBounds& bounds );
+bool				EntityAxis( const idMapEntity* ent, idMat3& axis );	// from "rotation" or "angle"; false when it has neither
 
 // brush faces and their textures
 void				TextureAxisBase( const idVec3& normal, idVec3& texS, idVec3& texT );

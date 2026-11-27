@@ -616,6 +616,8 @@ void			Sys_EndJoystickInputEvents();
 // operation like map loading, the system can release the mouse cursor
 // when in windowed mode
 void			Sys_GrabMouseCursor( bool grabIt );
+// GrizzTech4: puts the mouse pointer at a position in the window (pixels from its top left)
+void			Sys_WarpMouseInWindow( int x, int y );
 
 void			Sys_ShowWindow( bool show );
 bool			Sys_IsWindowVisible();

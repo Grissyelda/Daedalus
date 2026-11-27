@@ -42,6 +42,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 idCVar editor( "editor", "1", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "start in the GrizzTech4 editor (0 = run as the game)" );
 idCVar editor_startMap( "editor_startMap", "testmaps/gt4_test_room", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_NOCHEAT, "map the editor opens at startup" );
 idCVar editor_gridSize( "editor_gridSize", "8", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "editor grid size in units" );
+idCVar editor_showWelcome( "editor_showWelcome", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "show the Getting started window when the editor opens" );
 idCVar editor_snap( "editor_snap", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "snap moves to the editor grid" );
 
 extern idCVar r_materialPath;
@@ -92,6 +93,7 @@ enum gizmoMode_t
 	GIZMO_RESIZE,
 	GIZMO_CLIP,			// cut brushes along a plane through clicked points
 	GIZMO_VERTEX,		// drag brush corners
+	GIZMO_BRUSH,		// draw new brushes by dragging
 	GIZMO_COUNT
 };
 static gizmoMode_t	gizmoMode = GIZMO_MOVE;
@@ -101,6 +103,39 @@ static idMat4		gizmoStart;			// the handle's matrix when the drag began
 static idMat4		gizmoMatrix;		// and now
 
 static ShapeSettings	shapeSettings;
+
+// what new brushes are made of and look like
+static int			drawShape = SHAPE_BOX;
+static idStr		currentMaterial = "textures/dev/grid_wall";
+static float		drawHeight = 128.0f;
+
+// brush tool: drag a footprint, then set the height
+enum drawStage_t
+{
+	DRAW_NONE,
+	DRAW_FOOTPRINT,
+	DRAW_HEIGHT
+};
+static drawStage_t	drawStage = DRAW_NONE;
+static idVec3		drawStart;
+static idVec3		drawEnd;
+static float		drawBaseZ = 0.0f;
+static float		drawAnchorY = 0.0f;
+static float		drawAnchorHeight = 128.0f;
+static float		drawUnitsPerPixel = 1.0f;
+static idVec2		drawPressPos;
+
+// a shape being dragged out of the toolbar into the view
+static int			draggingShape = -1;
+
+// top-down plan view
+static bool			planView = false;
+static idVec2		planCenter( 0, 0 );
+static float		planZoom = 0.5f;		// pixels per unit
+static bool			planPanning = false;
+static bool			planMoving = false;
+static idVec2		planMoveStart;
+static idVec2		planLastMouse;
 
 // clip tool
 static idList<idVec3>	clipPoints;
@@ -145,9 +180,11 @@ static bool			newProjectSucceeded = false;
 
 static void ResizeSelection( const idBounds& bounds, const idVec3& size );
 static void PlaceShape( shapeType_t type );
+static void TurnSelection( float degrees );
 static void FitSelectedFaces();
 
 static void SwitchProject( const char* name );
+static void CenterPlanOnCamera();
 static void BeginCornerMove();
 static void MoveCorners( const idVec3& delta );
 
@@ -363,13 +400,7 @@ static void EditorRotate_f( const idCmdArgs& args )
 		common->Printf( "usage: editorRotate <degrees> (turns the selection about its centre)\n" );
 		return;
 	}
-	const idVec3 pivot = bounds.GetCenter();
-	const float angle = DEG2RAD( atof( args.Argv( 1 ) ) );
-	idMat3 turn( cos( angle ), -sin( angle ), 0, sin( angle ), cos( angle ), 0, 0, 0, 1 );
-	idVec3 turned( turn[0] * pivot, turn[1] * pivot, turn[2] * pivot );
-	document.BeginChange( "Rotate" );
-	document.TransformSelection( turn, pivot - turned );
-	document.EndChange();
+	TurnSelection( atof( args.Argv( 1 ) ) );
 }
 
 static void EditorResize_f( const idCmdArgs& args )
@@ -493,6 +524,27 @@ static void EditorMoveCorner_f( const idCmdArgs& args )
 	document.EndChange();
 }
 
+// editorTool <brush|move|rotate|resize|clip|corners> [top|3d]
+static void EditorTool_f( const idCmdArgs& args )
+{
+	static const char* names[GIZMO_COUNT] = { "move", "rotate", "resize", "clip", "corners", "brush" };
+	for( int i = 0; i < GIZMO_COUNT && args.Argc() > 1; i++ )
+	{
+		if( idStr::Icmp( args.Argv( 1 ), names[i] ) == 0 )
+		{
+			gizmoMode = ( gizmoMode_t )i;
+		}
+	}
+	if( args.Argc() > 2 )
+	{
+		planView = idStr::Icmp( args.Argv( 2 ), "top" ) == 0;
+		if( planView )
+		{
+			CenterPlanOnCamera();
+		}
+	}
+}
+
 static void EditorOpenProject_f( const idCmdArgs& args )
 {
 	SwitchProject( args.Argc() > 1 ? args.Argv( 1 ) : "" );
@@ -590,6 +642,7 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorGroup", EditorGroup_f, CMD_FL_SYSTEM, "selected level brushes become an entity: editorGroup <classname>" );
 	cmdSystem->AddCommand( "editorUngroup", EditorUngroup_f, CMD_FL_SYSTEM, "a brush entity's brushes go back to the level" );
 	cmdSystem->AddCommand( "editorMoveCorner", EditorMoveCorner_f, CMD_FL_SYSTEM, "moves a brush corner: editorMoveCorner <entity> <primitive> <x y z> <dx dy dz>" );
+	cmdSystem->AddCommand( "editorTool", EditorTool_f, CMD_FL_SYSTEM, "picks a tool and view: editorTool <brush|move|rotate|resize|clip|corners> [top|3d]" );
 	cmdSystem->AddCommand( "editorOpenProject", EditorOpenProject_f, CMD_FL_SYSTEM, "restarts into a project: editorOpenProject [name]" );
 	cmdSystem->AddCommand( "editorCamera", EditorCamera_f, CMD_FL_SYSTEM, "shows or sets the editor camera: editorCamera <x> <y> <z> [yaw] [pitch]" );
 	cmdSystem->AddCommand( "editorWireframe", EditorWireframe_f, CMD_FL_SYSTEM, "toggles brush outlines in the editor view" );
@@ -1369,6 +1422,27 @@ static void DrawEntityInspector( idMapEntity* ent )
 	{
 		DrawDoorPanel( ent, def );
 	}
+
+	// which way a point entity faces, as a compass angle
+	if( ent->GetNumPrimitives() == 0 && document.selection.Primary().entity != 0 )
+	{
+		idMat3 axis;
+		EntityAxis( ent, axis );
+		float yaw = RAD2DEG( atan2( axis[0].y, axis[0].x ) );
+		ImGui::SetNextItemWidth( 140.0f );
+		if( ImGui::DragFloat( "Facing", &yaw, 1.0f, -360.0f, 360.0f, "%.0f deg" ) )
+		{
+			yaw = idMath::AngleNormalize360( idMath::Rint( yaw ) );
+			ent->epairs.Delete( "rotation" );
+			ent->epairs.SetFloat( "angle", yaw );
+			document.EndChange();
+		}
+		UndoBracket( "Facing" );
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "0 faces +X (east), 90 faces +Y (north). The arrow in the view shows it." );
+		}
+	}
 	ImGui::Separator();
 
 	int deleteIndex = -1;
@@ -1970,13 +2044,30 @@ static void DrawInspector()
 	ImGui::End();
 }
 
-// where new things go: on whatever surface is in the middle of the view,
-// or a little in front of the camera when it looks at nothing
-static idVec3 PlacementPoint( idVec3* surfaceNormal = NULL )
+// the point where a screen ray crosses the horizontal plane at height z
+static bool RayToHeight( float x, float y, float z, idVec3& point )
 {
-	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	idVec3 start, dir;
+	view.ScreenRay( x, y, start, dir );
+	if( idMath::Fabs( dir.z ) < 1e-4f )
+	{
+		return false;
+	}
+	const float t = ( z - start.z ) / dir.z;
+	if( t <= 0.0f || t > 65536.0f )
+	{
+		return false;
+	}
+	point = start + dir * t;
+	return true;
+}
+
+// where something dropped at a screen position goes: on the surface under it, else on the
+// floor grid, else a little in front of the camera
+static idVec3 PlacementPointAt( float x, float y, idVec3* surfaceNormal = NULL )
+{
 	idVec3 point, normal;
-	if( view.Trace( document, size.x * 0.5f, size.y * 0.5f, point, normal ) && ( point - view.camera.origin ).LengthSqr() < Square( 4096.0f ) )
+	if( view.Trace( document, x, y, point, normal ) && ( point - view.camera.origin ).LengthSqr() < Square( 8192.0f ) )
 	{
 		if( surfaceNormal != NULL )
 		{
@@ -1989,20 +2080,43 @@ static idVec3 PlacementPoint( idVec3* surfaceNormal = NULL )
 	{
 		surfaceNormal->Set( 0, 0, 1 );
 	}
-	const idMat3 axis = view.camera.Axis();
-	return SnapToGrid( view.camera.origin + axis[0] * 256.0f );
+	if( RayToHeight( x, y, view.gridZ, point ) && ( point - view.camera.origin ).LengthSqr() < Square( 8192.0f ) )
+	{
+		return SnapToGrid( point );
+	}
+	idVec3 start, dir;
+	view.ScreenRay( x, y, start, dir );
+	return SnapToGrid( start + dir * 256.0f );
 }
 
-static void PlaceShape( shapeType_t type )
+static idVec3 PlacementPoint( idVec3* surfaceNormal = NULL )
+{
+	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	return PlacementPointAt( size.x * 0.5f, size.y * 0.5f, surfaceNormal );
+}
+
+static bool MakeAndAddShape( shapeType_t type, const idBounds& box )
+{
+	idList<idMapBrush*> brushes;
+	if( !MakeShape( type, shapeSettings, box, currentMaterial, brushes ) )
+	{
+		Status( va( "Couldn't make a %s that size with these settings.", ShapeName( type ) ) );
+		return false;
+	}
+	document.AddBrushes( brushes, va( "Add %s", ShapeName( type ) ) );
+	return true;
+}
+
+// a shape at its usual size, sitting on floors, standing out from walls, hanging from ceilings
+static void PlaceShapeAt( shapeType_t type, float x, float y )
 {
 	if( !document.IsOpen() )
 	{
 		return;
 	}
 
-	// sit on floors, stand out from walls, hang from ceilings
 	idVec3 normal;
-	const idVec3 point = PlacementPoint( &normal );
+	const idVec3 point = PlacementPointAt( x, y, &normal );
 	const idVec3 size = ShapeDefaultSize( type );
 	idVec3 center = point;
 	if( normal.z > 0.7f )
@@ -2019,14 +2133,37 @@ static void PlaceShape( shapeType_t type )
 	}
 	center = SnapToGrid( center - size * 0.5f ) + size * 0.5f;
 
-	idList<idMapBrush*> brushes;
-	if( !MakeShape( type, shapeSettings, idBounds( center - size * 0.5f, center + size * 0.5f ), "textures/dev/grid_wall", brushes ) )
+	if( MakeAndAddShape( type, idBounds( center - size * 0.5f, center + size * 0.5f ) ) )
 	{
-		Status( va( "Couldn't make a %s with those settings.", ShapeName( type ) ) );
+		Status( va( "Added a %s.", ShapeName( type ) ) );
+	}
+}
+
+static void PlaceShape( shapeType_t type )
+{
+	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	PlaceShapeAt( type, size.x * 0.5f, size.y * 0.5f );
+}
+
+// turns the selection about its centre, around the vertical
+static void TurnSelection( float degrees )
+{
+	idBounds bounds;
+	if( !document.CanTransformSelection() || !document.SelectionBounds( bounds ) )
+	{
 		return;
 	}
-	document.AddBrushes( brushes, va( "Add %s", ShapeName( type ) ) );
-	Status( va( "Added a %s.", ShapeName( type ) ) );
+	idVec3 pivot = bounds.GetCenter();
+	if( document.selection.Num() == 1 && document.selection.Primary().primitive < 0 && document.SelectedEntity()->GetNumPrimitives() == 0 )
+	{
+		pivot = document.SelectedEntity()->epairs.GetVector( "origin" );
+	}
+	const float angle = DEG2RAD( degrees );
+	const idMat3 turn( cos( angle ), -sin( angle ), 0, sin( angle ), cos( angle ), 0, 0, 0, 1 );
+	const idVec3 turned( turn[0] * pivot, turn[1] * pivot, turn[2] * pivot );
+	document.BeginChange( "Turn" );
+	document.TransformSelection( turn, pivot - turned );
+	document.EndChange();
 }
 
 static void DrawContentBrowser()
@@ -2084,7 +2221,7 @@ static void DrawContentBrowser()
 			ImGui::SetNextItemWidth( 240.0f );
 			ImGui::InputTextWithHint( "##matfilter", "Filter", materialFilter, sizeof( materialFilter ) );
 			ImGui::SameLine();
-			Hint( !document.selection.IsEmpty() ? "Click a material to put it on the selection." : "Select brushes or faces, then click a material to apply it." );
+			Hint( !document.selection.IsEmpty() ? "Click a material to put it on the selection; new brushes will use it too." : "Click a material to use it for new brushes, or select brushes or faces first to change them." );
 			ImGui::Separator();
 
 			ImGui::BeginChild( "materials" );
@@ -2100,10 +2237,19 @@ static void DrawContentBrowser()
 				{
 					continue;
 				}
-				if( ImGui::Selectable( decl->GetName() ) && !document.selection.IsEmpty() )
+				if( ImGui::Selectable( decl->GetName(), currentMaterial.Icmp( decl->GetName() ) == 0 ) )
 				{
-					document.SetMaterial( decl->GetName() );
-					idStr::Copynz( brushMaterialBuffer, decl->GetName(), sizeof( brushMaterialBuffer ) );
+					// new brushes use it from now on; selected ones get it straight away
+					currentMaterial = decl->GetName();
+					if( !document.selection.IsEmpty() )
+					{
+						document.SetMaterial( decl->GetName() );
+						idStr::Copynz( brushMaterialBuffer, decl->GetName(), sizeof( brushMaterialBuffer ) );
+					}
+					else
+					{
+						Status( va( "New brushes will use %s.", decl->GetName() ) );
+					}
 				}
 			}
 			ImGui::EndChild();
@@ -2263,6 +2409,53 @@ static void DrawProblems()
 	ImGui::End();
 }
 
+static bool showWelcome = false;
+static bool welcomeChecked = false;
+
+// a short first lesson, shown the first time and from Help > Getting started
+static void DrawWelcome()
+{
+	if( !welcomeChecked )
+	{
+		welcomeChecked = true;
+		showWelcome = editor_showWelcome.GetBool();
+	}
+	if( !showWelcome )
+	{
+		return;
+	}
+
+	ImGui::SetNextWindowSize( ImVec2( 520, 0 ), ImGuiCond_Appearing );
+	ImGui::SetNextWindowPos( ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2( 0.5f, 0.5f ) );
+	if( ImGui::Begin( "Getting started", &showWelcome, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse ) )
+	{
+		ImGui::TextWrapped( "Welcome to GrizzTech4. Building a level takes five steps:" );
+		ImGui::Spacing();
+		ImGui::Text( "1. Look around" );
+		Hint( "Hold the right mouse button and move the mouse to look; while holding it, WASD flies and Q/E go down and up. Middle button pans, Alt + left button orbits, the wheel moves forward and back." );
+		ImGui::Text( "2. Draw rooms and walls" );
+		Hint( "Press B (Brush) and drag on the floor to draw a footprint, let go, move the mouse up for height, click. Press T for a top-down plan; drawing works there too. The Add row in the toolbar has ready-made shapes: click one to draw it, or drag it into the view." );
+		ImGui::Text( "3. Shape them" );
+		Hint( "Click to select, then W moves, E turns, R resizes. The Turn buttons (or , and .) turn by 90 degrees. Carve in the Inspector cuts doorways and windows." );
+		ImGui::Text( "4. Dress them" );
+		Hint( "Pick a material in the Content Browser's Materials tab: selected brushes take it, and new ones use it. Shift+click a single face to texture just that face. Add lights and a player start from the toolbar." );
+		ImGui::Text( "5. Play" );
+		Hint( "Press Play at the top. F10 brings you back." );
+		ImGui::Spacing();
+		bool again = editor_showWelcome.GetBool();
+		if( ImGui::Checkbox( "Show this when the editor opens", &again ) )
+		{
+			editor_showWelcome.SetBool( again );
+		}
+		ImGui::SameLine( ImGui::GetWindowWidth() - 90.0f );
+		if( ImGui::Button( "Let's go" ) )
+		{
+			showWelcome = false;
+		}
+	}
+	ImGui::End();
+}
+
 static void DrawAbout()
 {
 	if( !showAbout )
@@ -2280,7 +2473,7 @@ static void DrawAbout()
 		ImGui::TextWrapped( "Material path: %s", r_materialPath.GetString() );
 		ImGui::Separator();
 		ImGui::Text( "Moving around" );
-		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Without the right button, the wheel moves forward and back." );
+		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
 		ImGui::Text( "Editing" );
 		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces for texturing. W, E and R switch between moving, turning and resizing; C clips brushes and V drags their corners; [ and ] change the grid. Carve (in the Inspector) cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
 	}
@@ -2793,6 +2986,691 @@ static bool CornerToolClick( float x, float y, bool add )
 	return true;
 }
 
+/*
+===============================================================================
+
+	Brush tool: press on a floor (or the grid) and drag out a footprint;
+	release, move the mouse up or down to set the height, and click to finish.
+	A click without a drag selects, as with the other tools.
+
+===============================================================================
+*/
+
+static idBounds DrawBounds()
+{
+	idBounds box;
+	box.Clear();
+	box.AddPoint( idVec3( drawStart.x, drawStart.y, drawBaseZ ) );
+	box.AddPoint( idVec3( drawEnd.x, drawEnd.y, drawBaseZ + drawHeight ) );
+	return box;
+}
+
+static void DrawScreenBox( const idBounds& box, ImU32 color, float thickness )
+{
+	idVec3 corners[8];
+	for( int i = 0; i < 8; i++ )
+	{
+		corners[i].Set( box[( i >> 0 ) & 1].x, box[( i >> 1 ) & 1].y, box[( i >> 2 ) & 1].z );
+	}
+	static const int edges[12][2] = { {0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7} };
+	for( int i = 0; i < 12; i++ )
+	{
+		DrawScreenLine( corners[edges[i][0]], corners[edges[i][1]], color, thickness );
+	}
+}
+
+static void CancelBrushDraw()
+{
+	drawStage = DRAW_NONE;
+}
+
+static void FinishBrushDraw()
+{
+	const idBounds box = DrawBounds();
+	drawStage = DRAW_NONE;
+	if( MakeAndAddShape( ( shapeType_t )drawShape, box ) )
+	{
+		const idVec3 size = box[1] - box[0];
+		Status( va( "Added a %s, %.0f x %.0f x %.0f.", ShapeName( ( shapeType_t )drawShape ), size.x, size.y, size.z ) );
+	}
+}
+
+// selects what's under the pointer the usual way: Ctrl adds, Shift picks faces
+static void ClickSelectInView( float x, float y )
+{
+	ImGuiIO& io = ImGui::GetIO();
+	if( io.KeyShift )
+	{
+		const Selection face = view.Pick( document, x, y, true );
+		if( face.IsFace() )
+		{
+			if( document.selection.IsFaces() )
+			{
+				document.selection.Toggle( face );
+			}
+			else
+			{
+				document.selection.Set( face );
+			}
+		}
+		return;
+	}
+
+	const Selection hit = view.Pick( document, x, y );
+	if( io.KeyCtrl )
+	{
+		document.selection.Toggle( hit );
+	}
+	else if( hit.IsEmpty() )
+	{
+		document.selection.Clear();
+	}
+	else
+	{
+		document.selection.Set( hit );
+	}
+}
+
+// true while the tool is using the mouse, so nothing else should act on it
+static bool HandleBrushTool( bool hovered )
+{
+	ImGuiIO& io = ImGui::GetIO();
+	const float grid = GridSize();
+
+	switch( drawStage )
+	{
+		case DRAW_NONE:
+		{
+			if( !hovered || !ImGui::IsMouseClicked( ImGuiMouseButton_Left ) || io.KeyAlt || !document.IsOpen() )
+			{
+				return false;
+			}
+
+			// start on the surface under the pointer if it's a floor, else on the grid
+			idVec3 point, normal;
+			drawBaseZ = view.gridZ;
+			if( view.Trace( document, io.MousePos.x, io.MousePos.y, point, normal ) && normal.z > 0.7f )
+			{
+				drawBaseZ = SnapToGrid( point ).z;
+			}
+			if( !RayToHeight( io.MousePos.x, io.MousePos.y, drawBaseZ, point ) )
+			{
+				return false;
+			}
+			drawStart = SnapToGrid( point );
+			drawEnd = drawStart;
+			drawPressPos.Set( io.MousePos.x, io.MousePos.y );
+			drawStage = DRAW_FOOTPRINT;
+			return true;
+		}
+
+		case DRAW_FOOTPRINT:
+		{
+			idVec3 point;
+			if( RayToHeight( io.MousePos.x, io.MousePos.y, drawBaseZ, point ) )
+			{
+				drawEnd = SnapToGrid( point );
+			}
+
+			if( !ImGui::IsMouseDown( ImGuiMouseButton_Left ) )
+			{
+				const bool dragged = ( idVec2( io.MousePos.x, io.MousePos.y ) - drawPressPos ).Length() > 4.0f;
+				if( !dragged || idMath::Fabs( drawEnd.x - drawStart.x ) < grid * 0.5f || idMath::Fabs( drawEnd.y - drawStart.y ) < grid * 0.5f )
+				{
+					// a click, or too thin to be a brush: select instead
+					drawStage = DRAW_NONE;
+					if( !dragged )
+					{
+						ClickSelectInView( drawPressPos.x, drawPressPos.y );
+					}
+					return true;
+				}
+
+				// now the height: about one grid step per few pixels at this distance
+				drawStage = DRAW_HEIGHT;
+				drawAnchorY = io.MousePos.y;
+				drawAnchorHeight = drawHeight;
+				renderView_t rv;
+				view.BuildRenderView( rv );
+				const float distance = Max( 64.0f, ( DrawBounds().GetCenter() - view.camera.origin ).Length() );
+				drawUnitsPerPixel = 2.0f * distance * tanf( DEG2RAD( rv.fov_y * 0.5f ) ) / Max( 1.0f, ImGui::GetIO().DisplaySize.y );
+			}
+			return true;
+		}
+
+		case DRAW_HEIGHT:
+		{
+			float height = drawAnchorHeight + ( drawAnchorY - io.MousePos.y ) * drawUnitsPerPixel;
+			if( editor_snap.GetBool() )
+			{
+				height = idMath::Rint( height / grid ) * grid;
+			}
+			drawHeight = Max( grid, height );
+
+			if( ImGui::IsMouseClicked( ImGuiMouseButton_Left ) || ImGui::IsKeyPressed( ImGuiKey_Enter, false ) )
+			{
+				FinishBrushDraw();
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+static void DrawBrushToolPreview()
+{
+	if( drawStage == DRAW_NONE )
+	{
+		return;
+	}
+	const idBounds box = DrawBounds();
+	DrawScreenBox( box, IM_COL32( 80, 220, 255, 255 ), 2.0f );
+
+	const idVec3 size = box[1] - box[0];
+	const ImVec2 mouse = ImGui::GetIO().MousePos;
+	const char* text = ( drawStage == DRAW_FOOTPRINT ) ? va( "%.0f x %.0f", size.x, size.y ) : va( "%.0f x %.0f x %.0f   click to finish, Esc cancels", size.x, size.y, size.z );
+	ImGui::GetBackgroundDrawList()->AddText( ImVec2( mouse.x + 16.0f, mouse.y + 12.0f ), IM_COL32( 255, 255, 255, 255 ), text );
+}
+
+/*
+===============================================================================
+
+	Plan view: the level from above, flat. Drag things to move them; with the
+	Brush tool, drag on empty space to draw. Wheel zooms, right or middle
+	drag pans.
+
+===============================================================================
+*/
+
+static bool PlanViewRect( ImVec2& mins, ImVec2& maxs )
+{
+	ImGuiDockNode* central = ( dockspaceId != 0 ) ? ImGui::DockBuilderGetCentralNode( dockspaceId ) : NULL;
+	if( central == NULL )
+	{
+		return false;
+	}
+	mins = central->Pos;
+	maxs = ImVec2( central->Pos.x + central->Size.x, central->Pos.y + central->Size.y );
+	return true;
+}
+
+static ImVec2 PlanToScreen( const idVec2& p, const ImVec2& mins, const ImVec2& maxs )
+{
+	const ImVec2 center( ( mins.x + maxs.x ) * 0.5f, ( mins.y + maxs.y ) * 0.5f );
+	return ImVec2( center.x + ( p.x - planCenter.x ) * planZoom, center.y - ( p.y - planCenter.y ) * planZoom );
+}
+
+static idVec2 ScreenToPlan( const ImVec2& s, const ImVec2& mins, const ImVec2& maxs )
+{
+	const ImVec2 center( ( mins.x + maxs.x ) * 0.5f, ( mins.y + maxs.y ) * 0.5f );
+	return idVec2( planCenter.x + ( s.x - center.x ) / planZoom, planCenter.y - ( s.y - center.y ) / planZoom );
+}
+
+// the outline of a brush seen from above: the convex hull of its corners
+static void PlanOutline( const idMapPrimitive* prim, idList<idVec2>& hull, float& top )
+{
+	hull.Clear();
+	idList<idVec2> points;
+	top = -idMath::INFINITUM;
+	if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+	{
+		idList<idVec3> corners;
+		BrushVertices( static_cast<const idMapBrush*>( prim ), corners );
+		for( int i = 0; i < corners.Num(); i++ )
+		{
+			points.Append( corners[i].ToVec2() );
+			top = Max( top, corners[i].z );
+		}
+	}
+	else
+	{
+		idBounds b;
+		if( PrimitiveBounds( prim, b ) )
+		{
+			points.Append( idVec2( b[0].x, b[0].y ) );
+			points.Append( idVec2( b[1].x, b[0].y ) );
+			points.Append( idVec2( b[1].x, b[1].y ) );
+			points.Append( idVec2( b[0].x, b[1].y ) );
+			top = b[1].z;
+		}
+	}
+	if( points.Num() < 3 )
+	{
+		return;
+	}
+
+	// gift wrapping; brushes have few corners
+	int start = 0;
+	for( int i = 1; i < points.Num(); i++ )
+	{
+		if( points[i].x < points[start].x || ( points[i].x == points[start].x && points[i].y < points[start].y ) )
+		{
+			start = i;
+		}
+	}
+	int current = start;
+	for( int guard = 0; guard < 128; guard++ )
+	{
+		hull.Append( points[current] );
+		int next = ( current + 1 ) % points.Num();
+		for( int i = 0; i < points.Num(); i++ )
+		{
+			const idVec2 a = points[next] - points[current];
+			const idVec2 b = points[i] - points[current];
+			const float cross = a.x * b.y - a.y * b.x;
+			if( cross < -0.001f || ( idMath::Fabs( cross ) <= 0.001f && b.LengthSqr() > a.LengthSqr() ) )
+			{
+				next = i;
+			}
+		}
+		current = next;
+		if( current == start )
+		{
+			break;
+		}
+	}
+}
+
+static bool PointInHull( const idList<idVec2>& hull, const idVec2& p )
+{
+	if( hull.Num() < 3 )
+	{
+		return false;
+	}
+	for( int i = 0; i < hull.Num(); i++ )
+	{
+		const idVec2 a = hull[i];
+		const idVec2 b = hull[( i + 1 ) % hull.Num()];
+		// the hull runs counterclockwise, so inside is on the left of every edge
+		const float cross = ( b.x - a.x ) * ( p.y - a.y ) - ( b.y - a.y ) * ( p.x - a.x );
+		if( cross < -0.001f )
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static float HullArea( const idList<idVec2>& hull )
+{
+	float area = 0.0f;
+	for( int i = 0; i < hull.Num(); i++ )
+	{
+		const idVec2& a = hull[i];
+		const idVec2& b = hull[( i + 1 ) % hull.Num()];
+		area += a.x * b.y - b.x * a.y;
+	}
+	return idMath::Fabs( area ) * 0.5f;
+}
+
+// the thing under a plan position: point entities first, then the smallest brush there,
+// so clicking inside a room picks what's in it rather than the ceiling over it
+static Selection PlanPick( const idVec2& p )
+{
+	Selection best;
+	const idMapFile* map = document.Map();
+	if( map == NULL )
+	{
+		return best;
+	}
+
+	float bestArea = idMath::INFINITUM;
+	for( int e = 0; e < map->GetNumEntities(); e++ )
+	{
+		const idMapEntity* ent = map->GetEntity( e );
+		if( ent->GetNumPrimitives() == 0 )
+		{
+			idBounds b;
+			EntityBounds( ent, b );
+			if( p.x >= b[0].x && p.x <= b[1].x && p.y >= b[0].y && p.y <= b[1].y )
+			{
+				return Selection( e );
+			}
+			continue;
+		}
+		for( int i = 0; i < ent->GetNumPrimitives(); i++ )
+		{
+			idList<idVec2> hull;
+			float top;
+			PlanOutline( ent->GetPrimitive( i ), hull, top );
+			const float area = HullArea( hull );
+			if( area < bestArea && PointInHull( hull, p ) )
+			{
+				bestArea = area;
+				best = Selection( e, ( e == 0 ) ? i : -1 );
+			}
+		}
+	}
+	return best;
+}
+
+static void CenterPlanOnCamera()
+{
+	planCenter = view.camera.origin.ToVec2();
+}
+
+static void DrawPlanView( bool hovered )
+{
+	ImVec2 mins, maxs;
+	if( !PlanViewRect( mins, maxs ) )
+	{
+		return;
+	}
+	ImGuiIO& io = ImGui::GetIO();
+	ImDrawList* draw = ImGui::GetBackgroundDrawList();
+	draw->AddRectFilled( mins, maxs, IM_COL32( 24, 26, 30, 255 ) );
+	draw->PushClipRect( mins, maxs, true );
+
+	// grid, thinned out when zoomed out
+	float step = GridSize();
+	while( step * planZoom < 8.0f )
+	{
+		step *= 2.0f;
+	}
+	const float major = step * 8.0f;
+	const idVec2 w0 = ScreenToPlan( ImVec2( mins.x, maxs.y ), mins, maxs );
+	const idVec2 w1 = ScreenToPlan( ImVec2( maxs.x, mins.y ), mins, maxs );
+	for( float x = idMath::Floor( w0.x / step ) * step; x <= w1.x; x += step )
+	{
+		const bool isMajor = idMath::Fabs( x - idMath::Rint( x / major ) * major ) < 0.01f;
+		const float sx = PlanToScreen( idVec2( x, 0 ), mins, maxs ).x;
+		draw->AddLine( ImVec2( sx, mins.y ), ImVec2( sx, maxs.y ), idMath::Fabs( x ) < 0.01f ? IM_COL32( 120, 60, 60, 255 ) : ( isMajor ? IM_COL32( 64, 68, 78, 255 ) : IM_COL32( 40, 43, 50, 255 ) ) );
+	}
+	for( float y = idMath::Floor( w0.y / step ) * step; y <= w1.y; y += step )
+	{
+		const bool isMajor = idMath::Fabs( y - idMath::Rint( y / major ) * major ) < 0.01f;
+		const float sy = PlanToScreen( idVec2( 0, y ), mins, maxs ).y;
+		draw->AddLine( ImVec2( mins.x, sy ), ImVec2( maxs.x, sy ), idMath::Fabs( y ) < 0.01f ? IM_COL32( 60, 120, 60, 255 ) : ( isMajor ? IM_COL32( 64, 68, 78, 255 ) : IM_COL32( 40, 43, 50, 255 ) ) );
+	}
+
+	// brushes, lowest first so higher ones draw on top
+	const idMapFile* map = document.Map();
+	if( map != NULL )
+	{
+		struct Item
+		{
+			int			entity;
+			int			primitive;
+			float		top;
+		};
+		idList<Item> items;
+		for( int e = 0; e < map->GetNumEntities(); e++ )
+		{
+			const idMapEntity* ent = map->GetEntity( e );
+			for( int i = 0; i < ent->GetNumPrimitives(); i++ )
+			{
+				idList<idVec2> hull;
+				Item item = { e, i, 0.0f };
+				PlanOutline( ent->GetPrimitive( i ), hull, item.top );
+				items.Append( item );
+			}
+		}
+		for( int i = 1; i < items.Num(); i++ )
+		{
+			for( int j = i; j > 0 && items[j - 1].top > items[j].top; j-- )
+			{
+				const Item swap = items[j - 1];
+				items[j - 1] = items[j];
+				items[j] = swap;
+			}
+		}
+
+		for( int i = 0; i < items.Num(); i++ )
+		{
+			const Item& item = items[i];
+			idList<idVec2> hull;
+			float top;
+			PlanOutline( map->GetEntity( item.entity )->GetPrimitive( item.primitive ), hull, top );
+			if( hull.Num() < 3 )
+			{
+				continue;
+			}
+			const bool selected = document.selection.Contains( Selection( item.entity, item.primitive ) ) || ( item.entity != 0 && document.selection.Contains( Selection( item.entity ) ) );
+			idList<ImVec2> pts;
+			for( int k = 0; k < hull.Num(); k++ )
+			{
+				pts.Append( PlanToScreen( hull[k], mins, maxs ) );
+			}
+			const ImU32 fill = item.entity == 0 ? IM_COL32( 120, 130, 150, 60 ) : IM_COL32( 60, 160, 220, 70 );
+			draw->AddConvexPolyFilled( pts.Ptr(), pts.Num(), selected ? IM_COL32( 255, 200, 40, 70 ) : fill );
+			draw->AddPolyline( pts.Ptr(), pts.Num(), selected ? IM_COL32( 255, 200, 40, 255 ) : IM_COL32( 200, 205, 215, 255 ), ImDrawFlags_Closed, selected ? 2.0f : 1.0f );
+		}
+
+		// point entities, with the way they face
+		for( int e = 1; e < map->GetNumEntities(); e++ )
+		{
+			const idMapEntity* ent = map->GetEntity( e );
+			if( ent->GetNumPrimitives() > 0 )
+			{
+				continue;
+			}
+			idBounds b;
+			EntityBounds( ent, b );
+			idVec3 color( 0.5f, 0.5f, 1.0f );
+			const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, ent->epairs.GetString( "classname" ), false ) );
+			if( def != NULL )
+			{
+				def->dict.GetVector( "editor_color", "0.5 0.5 1", color );
+			}
+			const bool selected = document.selection.Contains( Selection( e ) );
+			const ImU32 col = selected ? IM_COL32( 255, 200, 40, 255 ) : IM_COL32( ( int )( color.x * 255 ), ( int )( color.y * 255 ), ( int )( color.z * 255 ), 255 );
+			const ImVec2 a = PlanToScreen( idVec2( b[0].x, b[1].y ), mins, maxs );
+			const ImVec2 c = PlanToScreen( idVec2( b[1].x, b[0].y ), mins, maxs );
+			draw->AddRect( a, ImVec2( Max( c.x, a.x + 6.0f ), Max( c.y, a.y + 6.0f ) ), col, 0.0f, 0, selected ? 2.0f : 1.0f );
+
+			idMat3 axis;
+			if( EntityAxis( ent, axis ) || idStr::Icmp( ent->epairs.GetString( "classname" ), "info_player_start" ) == 0 )
+			{
+				const idVec2 o = b.GetCenter().ToVec2();
+				const float len = Max( 24.0f, ( b[1].x - b[0].x ) );
+				const ImVec2 so = PlanToScreen( o, mins, maxs );
+				const ImVec2 st = PlanToScreen( o + axis[0].ToVec2() * len, mins, maxs );
+				draw->AddLine( so, st, col, 2.0f );
+				draw->AddCircleFilled( st, 3.0f, col );
+			}
+		}
+	}
+
+	// where the 3D camera is and which way it looks
+	{
+		const ImVec2 c = PlanToScreen( view.camera.origin.ToVec2(), mins, maxs );
+		const float yaw = DEG2RAD( view.camera.yaw );
+		const ImVec2 f( cosf( yaw ) * 14.0f, -sinf( yaw ) * 14.0f );
+		const ImVec2 l( -sinf( yaw ) * 7.0f, -cosf( yaw ) * 7.0f );
+		draw->AddTriangleFilled( ImVec2( c.x + f.x, c.y + f.y ), ImVec2( c.x + l.x, c.y + l.y ), ImVec2( c.x - l.x, c.y - l.y ), IM_COL32( 255, 255, 255, 160 ) );
+	}
+
+	// a box being drawn
+	if( drawStage != DRAW_NONE )
+	{
+		const ImVec2 a = PlanToScreen( drawStart.ToVec2(), mins, maxs );
+		const ImVec2 b = PlanToScreen( drawEnd.ToVec2(), mins, maxs );
+		draw->AddRect( ImVec2( Min( a.x, b.x ), Min( a.y, b.y ) ), ImVec2( Max( a.x, b.x ), Max( a.y, b.y ) ), IM_COL32( 80, 220, 255, 255 ), 0.0f, 0, 2.0f );
+		draw->AddText( ImVec2( io.MousePos.x + 16.0f, io.MousePos.y + 12.0f ), IM_COL32( 255, 255, 255, 255 ),
+					   va( "%.0f x %.0f, %.0f high", idMath::Fabs( drawEnd.x - drawStart.x ), idMath::Fabs( drawEnd.y - drawStart.y ), drawHeight ) );
+	}
+
+	draw->PopClipRect();
+
+	// ---- input ----
+	const ImVec2 mouse = io.MousePos;
+	const idVec2 world = ScreenToPlan( mouse, mins, maxs );
+
+	// zoom around the pointer
+	if( hovered && io.MouseWheel != 0.0f )
+	{
+		const float factor = io.MouseWheel > 0.0f ? 1.25f : 0.8f;
+		planZoom = idMath::ClampFloat( 0.01f, 16.0f, planZoom * factor );
+		const idVec2 after = ScreenToPlan( mouse, mins, maxs );
+		planCenter += world - after;
+	}
+
+	// pan with the right or middle button
+	if( hovered && ( ImGui::IsMouseClicked( ImGuiMouseButton_Right ) || ImGui::IsMouseClicked( ImGuiMouseButton_Middle ) ) )
+	{
+		planPanning = true;
+		planLastMouse.Set( mouse.x, mouse.y );
+	}
+	if( planPanning )
+	{
+		if( !ImGui::IsMouseDown( ImGuiMouseButton_Right ) && !ImGui::IsMouseDown( ImGuiMouseButton_Middle ) )
+		{
+			planPanning = false;
+		}
+		else
+		{
+			planCenter.x -= ( mouse.x - planLastMouse.x ) / planZoom;
+			planCenter.y += ( mouse.y - planLastMouse.y ) / planZoom;
+			planLastMouse.Set( mouse.x, mouse.y );
+			return;
+		}
+	}
+
+	const float grid = GridSize();
+	auto snap = [&]( float v )
+	{
+		return editor_snap.GetBool() ? idMath::Rint( v / grid ) * grid : v;
+	};
+
+	// moving the selection
+	if( planMoving )
+	{
+		const idVec3 delta( snap( world.x - planMoveStart.x ), snap( world.y - planMoveStart.y ), 0.0f );
+		document.UpdateTransform( mat3_identity, delta );
+		if( !ImGui::IsMouseDown( ImGuiMouseButton_Left ) )
+		{
+			planMoving = false;
+			document.EndTransform();
+			if( delta.LengthSqr() > 0.0f )
+			{
+				document.EndChange();
+			}
+			else
+			{
+				document.CancelChange();
+			}
+		}
+		return;
+	}
+
+	// drawing a box from above: height from the toolbar, standing on the grid
+	if( drawStage == DRAW_FOOTPRINT )
+	{
+		drawEnd.Set( snap( world.x ), snap( world.y ), drawBaseZ );
+		if( !ImGui::IsMouseDown( ImGuiMouseButton_Left ) )
+		{
+			if( idMath::Fabs( drawEnd.x - drawStart.x ) >= grid * 0.5f && idMath::Fabs( drawEnd.y - drawStart.y ) >= grid * 0.5f )
+			{
+				FinishBrushDraw();
+			}
+			else
+			{
+				CancelBrushDraw();
+			}
+		}
+		return;
+	}
+
+	if( !hovered || !ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+	{
+		return;
+	}
+
+	const Selection hit = PlanPick( world );
+	if( !hit.IsEmpty() && !io.KeyCtrl )
+	{
+		// grab: select it if it isn't already, then drag to move
+		if( !document.selection.Contains( hit ) )
+		{
+			document.selection.Set( hit );
+		}
+		if( document.CanTransformSelection() )
+		{
+			planMoving = true;
+			planMoveStart = world;
+			document.BeginChange( "Move" );
+			document.BeginTransform();
+		}
+		return;
+	}
+	if( io.KeyCtrl )
+	{
+		document.selection.Toggle( hit );
+		return;
+	}
+
+	// empty space
+	if( gizmoMode == GIZMO_BRUSH && document.IsOpen() )
+	{
+		drawBaseZ = view.gridZ;
+		drawStart.Set( snap( world.x ), snap( world.y ), drawBaseZ );
+		drawEnd = drawStart;
+		drawStage = DRAW_FOOTPRINT;
+	}
+	else
+	{
+		document.selection.Clear();
+	}
+}
+
+/*
+===============================================================================
+
+	Shapes dragged from the toolbar into the view
+
+===============================================================================
+*/
+
+static void HandleShapeDrag()
+{
+	if( draggingShape < 0 )
+	{
+		return;
+	}
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::GetForegroundDrawList()->AddText( ImVec2( io.MousePos.x + 14.0f, io.MousePos.y + 10.0f ), IM_COL32( 255, 255, 255, 255 ), ShapeName( ( shapeType_t )draggingShape ) );
+
+	if( ImGui::IsMouseDown( ImGuiMouseButton_Left ) )
+	{
+		return;
+	}
+
+	// dropped: over the view (not over a panel) places it there
+	const bool overPanel = ImGui::IsWindowHovered( ImGuiHoveredFlags_AnyWindow | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem );
+	if( !overPanel )
+	{
+		if( planView )
+		{
+			ImVec2 mins, maxs;
+			if( PlanViewRect( mins, maxs ) )
+			{
+				const idVec2 p = ScreenToPlan( io.MousePos, mins, maxs );
+				const idVec3 size = ShapeDefaultSize( ( shapeType_t )draggingShape );
+				const idVec3 corner = SnapToGrid( idVec3( p.x - size.x * 0.5f, p.y - size.y * 0.5f, view.gridZ ) );
+				MakeAndAddShape( ( shapeType_t )draggingShape, idBounds( corner, corner + size ) );
+			}
+		}
+		else
+		{
+			PlaceShapeAt( ( shapeType_t )draggingShape, io.MousePos.x, io.MousePos.y );
+		}
+	}
+	draggingShape = -1;
+}
+
+// lays toolbar items out left to right, starting a new line when the next one won't fit
+static float toolbarMaxWidth = 800.0f;
+static void Flow( const char* label, float extra = 0.0f )
+{
+	const ImGuiStyle& style = ImGui::GetStyle();
+	const float width = ImGui::CalcTextSize( label, NULL, true ).x + style.FramePadding.x * 2.0f + extra;
+	const float lineEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+	if( lineEnd + style.ItemSpacing.x + width <= toolbarMaxWidth )
+	{
+		ImGui::SameLine();
+	}
+}
+
 // the strip of tool buttons across the top of the 3D view
 static void DrawViewportToolbar()
 {
@@ -2804,22 +3682,28 @@ static void DrawViewportToolbar()
 
 	ImGui::SetNextWindowPos( ImVec2( central->Pos.x + 8.0f, central->Pos.y + 8.0f ) );
 	ImGui::SetNextWindowBgAlpha( 0.75f );
+	toolbarMaxWidth = Max( 200.0f, central->Size.x - 16.0f - ImGui::GetStyle().WindowPadding.x * 2.0f );
+	ImGui::SetNextWindowSizeConstraints( ImVec2( 0, 0 ), ImVec2( central->Size.x - 16.0f, central->Size.y - 16.0f ) );
 	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
 								   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
 	if( ImGui::Begin( "##viewport_toolbar", NULL, flags ) )
 	{
-		const char* modes[] = { "Move (W)", "Rotate (E)", "Resize (R)", "Clip (C)", "Corners (V)" };
-		const char* tips[] =
+		// tools, in the order people reach for them
+		static const gizmoMode_t order[] = { GIZMO_BRUSH, GIZMO_MOVE, GIZMO_ROTATE, GIZMO_RESIZE, GIZMO_CLIP, GIZMO_VERTEX };
+		const char* modes[GIZMO_COUNT] = { "Move (W)", "Rotate (E)", "Resize (R)", "Clip (C)", "Corners (V)", "Brush (B)" };
+		const char* tips[GIZMO_COUNT] =
 		{
 			"Drag the arrows to move the selection",
-			"Drag the rings to turn the selection; snaps to 15 degrees",
+			"Drag the rings to turn the selection; snaps to 15 degrees. The Turn buttons (, and .) turn by 90",
 			"Drag the dots on the box edges to resize",
 			"Cut the selected brushes: click two or three points on surfaces, then press Enter",
-			"Drag the corners of the selected brushes: click a dot (Ctrl+click for more), then drag the arrows"
+			"Drag the corners of the selected brushes: click a dot (Ctrl+click for more), then drag the arrows",
+			"Draw new brushes: drag a footprint on the floor, release, move the mouse to set the height, click to finish"
 		};
-		for( int i = 0; i < GIZMO_COUNT; i++ )
+		for( int k = 0; k < GIZMO_COUNT; k++ )
 		{
-			if( i > 0 )
+			const int i = order[k];
+			if( k > 0 )
 			{
 				ImGui::SameLine();
 			}
@@ -2842,9 +3726,7 @@ static void DrawViewportToolbar()
 			}
 		}
 
-		ImGui::SameLine();
-		ImGui::TextDisabled( "|" );
-		ImGui::SameLine();
+		Flow( "", 64.0f );
 		ImGui::SetNextItemWidth( 64.0f );
 		static const int gridSizes[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
 		if( ImGui::BeginCombo( "##grid", va( "Grid %d", editor_gridSize.GetInteger() ) ) )
@@ -2863,20 +3745,131 @@ static void DrawViewportToolbar()
 			ImGui::SetTooltip( "Grid size. [ and ] make it smaller and bigger." );
 		}
 
-		ImGui::SameLine();
+		Flow( "Snap", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
 		bool snap = editor_snap.GetBool();
 		if( ImGui::Checkbox( "Snap", &snap ) )
 		{
 			editor_snap.SetBool( snap );
 		}
-		ImGui::SameLine();
+		Flow( "Texture lock", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
 		ImGui::Checkbox( "Texture lock", &document.textureLock );
 		if( ImGui::IsItemHovered() )
 		{
 			ImGui::SetTooltip( "Keep textures in place on surfaces when you move, turn or resize brushes" );
 		}
-		ImGui::SameLine();
+		Flow( "Wireframe", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
 		ImGui::Checkbox( "Wireframe", &view.wireframe );
+		Flow( "Floor grid", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
+		ImGui::Checkbox( "Floor grid", &view.showGrid );
+
+		// second row: quick turns, the view, and things to add
+		ImGui::BeginDisabled( !document.CanTransformSelection() );
+		if( ImGui::Button( "Turn left" ) )
+		{
+			TurnSelection( 90.0f );
+		}
+		if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
+		{
+			ImGui::SetTooltip( "Turn the selection 90 degrees to the left (,)" );
+		}
+		Flow( "Turn right" );
+		if( ImGui::Button( "Turn right" ) )
+		{
+			TurnSelection( -90.0f );
+		}
+		if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
+		{
+			ImGui::SetTooltip( "Turn the selection 90 degrees to the right (.)" );
+		}
+		ImGui::EndDisabled();
+		Flow( "Top view (T)" );
+		if( ImGui::Button( planView ? "3D view (T)" : "Top view (T)" ) )
+		{
+			planView = !planView;
+			if( planView )
+			{
+				CenterPlanOnCamera();
+			}
+		}
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( planView ? "Back to the 3D view" : "Look at the level from above, flat, to lay out rooms" );
+		}
+		Flow( "Add:" );
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled( "Add:" );
+		for( int i = 0; i < SHAPE_COUNT; i++ )
+		{
+			Flow( ShapeName( ( shapeType_t )i ) );
+			const bool active = ( drawShape == i && gizmoMode == GIZMO_BRUSH );
+			if( active )
+			{
+				ImGui::PushStyleColor( ImGuiCol_Button, ImGui::GetStyleColorVec4( ImGuiCol_ButtonActive ) );
+			}
+			if( ImGui::Button( ShapeName( ( shapeType_t )i ) ) )
+			{
+				// a click picks the shape to draw with the Brush tool
+				drawShape = i;
+				gizmoMode = GIZMO_BRUSH;
+			}
+			if( active )
+			{
+				ImGui::PopStyleColor();
+			}
+			if( ImGui::IsItemActive() && ImGui::IsMouseDragging( ImGuiMouseButton_Left, 6.0f ) )
+			{
+				draggingShape = i;
+			}
+			if( ImGui::IsItemHovered() && draggingShape < 0 )
+			{
+				ImGui::SetTooltip( "%s\nClick, then drag in the view to draw one any size.\nOr drag this button into the view to drop one at its usual size.", ShapeHelp( ( shapeType_t )i ) );
+			}
+		}
+		Flow( "Light" );
+		if( ImGui::Button( "Light" ) )
+		{
+			document.AddEntity( "light", PlacementPoint() + idVec3( 0, 0, 64 ) );
+		}
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "Add a light where the view is pointing" );
+		}
+		Flow( "Player start" );
+		if( ImGui::Button( "Player start" ) )
+		{
+			document.AddEntity( "info_player_start", PlacementPoint() );
+		}
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "Add a place for the player to start" );
+		}
+		Flow( va( "Material: %s", currentMaterial.c_str() ) );
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled( "Material: %s", currentMaterial.c_str() );
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "New brushes use this. Pick another in the Content Browser's Materials tab." );
+		}
+
+		ImGui::PushTextWrapPos( toolbarMaxWidth );
+		if( planView )
+		{
+			Hint( va( "Top view: drag things to move them. Wheel zooms, right or middle drag pans.%s", gizmoMode == GIZMO_BRUSH ? " Drag on empty space to draw." : "" ) );
+			if( gizmoMode == GIZMO_BRUSH )
+			{
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth( 120.0f );
+				ImGui::DragFloat( "##height", &drawHeight, 1.0f, 1.0f, 4096.0f, "height %.0f" );
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth( 120.0f );
+				ImGui::DragFloat( "##floor", &view.gridZ, 1.0f, -65536.0f, 65536.0f, "floor at %.0f" );
+			}
+		}
+		else if( gizmoMode == GIZMO_BRUSH )
+		{
+			Hint( "Brush: drag a footprint on the floor, release, move the mouse up or down for height, click to finish. Esc cancels." );
+		}
+		ImGui::PopTextWrapPos();
 
 		// what the clip and corner tools need from you right now
 		if( gizmoMode == GIZMO_CLIP )
@@ -2972,7 +3965,11 @@ static void HandleShortcuts()
 	}
 	else if( ImGui::IsKeyPressed( ImGuiKey_Escape, false ) )
 	{
-		if( gizmoMode == GIZMO_CLIP && clipPoints.Num() > 0 )
+		if( drawStage != DRAW_NONE )
+		{
+			CancelBrushDraw();
+		}
+		else if( gizmoMode == GIZMO_CLIP && clipPoints.Num() > 0 )
 		{
 			clipPoints.Clear();
 		}
@@ -2996,6 +3993,26 @@ static void HandleShortcuts()
 	else if( gizmoMode == GIZMO_CLIP && ImGui::IsKeyPressed( ImGuiKey_Backspace, false ) && clipPoints.Num() > 0 )
 	{
 		clipPoints.RemoveIndex( clipPoints.Num() - 1 );
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_B, false ) )
+	{
+		gizmoMode = GIZMO_BRUSH;
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_T, false ) )
+	{
+		planView = !planView;
+		if( planView )
+		{
+			CenterPlanOnCamera();
+		}
+	}
+	else if( ImGui::IsKeyPressed( ImGuiKey_Comma, false ) )
+	{
+		TurnSelection( 90.0f );
+	}
+	else if( ImGui::IsKeyPressed( ImGuiKey_Period, false ) )
+	{
+		TurnSelection( -90.0f );
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_C, false ) )
 	{
@@ -3031,12 +4048,46 @@ static void HandleShortcuts()
 	}
 }
 
+// what Alt + left drag orbits: the selection, else what's in the middle of the view
+static idVec3 OrbitPivot()
+{
+	idBounds bounds;
+	if( document.SelectionBounds( bounds ) )
+	{
+		return bounds.GetCenter();
+	}
+	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	idVec3 point, normal;
+	if( view.Trace( document, size.x * 0.5f, size.y * 0.5f, point, normal ) )
+	{
+		return point;
+	}
+	return view.camera.origin + view.camera.Axis()[0] * 512.0f;
+}
+
 static void HandleViewport()
 {
 	ImGuiIO& io = ImGui::GetIO();
 	const bool hovered = !io.WantCaptureMouse;
+	view.gridSize = GridSize();
 
-	view.UpdateCamera( hovered );
+	if( planView )
+	{
+		EndGizmoDrag();
+		EndCornerDrag( true );
+		DrawPlanView( hovered && draggingShape < 0 );
+		DrawViewportToolbar();
+		HandleShapeDrag();
+		HandleShortcuts();
+		return;
+	}
+
+	if( hovered && io.KeyAlt && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+	{
+		view.orbitPivot = OrbitPivot();
+	}
+	const bool navigating = view.UpdateCamera( hovered && draggingShape < 0 );
+
 	if( gizmoMode == GIZMO_CLIP )
 	{
 		EndGizmoDrag();
@@ -3047,12 +4098,32 @@ static void HandleViewport()
 		EndGizmoDrag();
 		DrawCornerTool();
 	}
+	else if( gizmoMode == GIZMO_BRUSH )
+	{
+		EndGizmoDrag();
+		EndCornerDrag( true );
+		DrawBrushToolPreview();
+	}
 	else
 	{
 		EndCornerDrag( true );
 		DrawGizmo();
 	}
 	DrawViewportToolbar();
+	HandleShapeDrag();
+
+	if( navigating || io.KeyAlt || draggingShape >= 0 )
+	{
+		HandleShortcuts();
+		return;
+	}
+
+	if( gizmoMode == GIZMO_BRUSH )
+	{
+		HandleBrushTool( hovered );
+		HandleShortcuts();
+		return;
+	}
 
 	// click selects, Ctrl+click adds or removes, Shift+click picks faces
 	if( hovered && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() )
@@ -3237,6 +4308,18 @@ void DrawMainMenuBar()
 		{
 			gizmoMode = GIZMO_RESIZE;
 		}
+		if( ImGui::MenuItem( "Brush tool", "B", gizmoMode == GIZMO_BRUSH ) )
+		{
+			gizmoMode = GIZMO_BRUSH;
+		}
+		if( ImGui::MenuItem( "Turn left 90", ",", false, document.CanTransformSelection() ) )
+		{
+			TurnSelection( 90.0f );
+		}
+		if( ImGui::MenuItem( "Turn right 90", ".", false, document.CanTransformSelection() ) )
+		{
+			TurnSelection( -90.0f );
+		}
 		if( ImGui::MenuItem( "Clip tool", "C", gizmoMode == GIZMO_CLIP ) )
 		{
 			gizmoMode = GIZMO_CLIP;
@@ -3285,6 +4368,15 @@ void DrawMainMenuBar()
 		ImGui::MenuItem( WINDOW_PROBLEMS, NULL, &showProblems );
 		ImGui::Separator();
 		ImGui::MenuItem( "Brush outlines", NULL, &view.wireframe );
+		ImGui::MenuItem( "Floor grid", NULL, &view.showGrid );
+		if( ImGui::MenuItem( "Top view", "T", planView ) )
+		{
+			planView = !planView;
+			if( planView )
+			{
+				CenterPlanOnCamera();
+			}
+		}
 		ImGui::Separator();
 		if( ImGui::MenuItem( "Reset layout" ) )
 		{
@@ -3296,6 +4388,10 @@ void DrawMainMenuBar()
 
 	if( ImGui::BeginMenu( "Help" ) )
 	{
+		if( ImGui::MenuItem( "Getting started" ) )
+		{
+			showWelcome = true;
+		}
 		if( ImGui::MenuItem( "About GrizzTech4 and controls" ) )
 		{
 			showAbout = true;
@@ -3398,6 +4494,7 @@ void Draw( unsigned int mainDockSpaceId )
 	}
 
 	DrawAbout();
+	DrawWelcome();
 	DrawNewProjectDialog();
 	DrawOpenProjectDialog();
 	DrawMapNameDialog( "Save Map As", openSaveAsPopup, false );

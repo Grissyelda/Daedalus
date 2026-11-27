@@ -3,6 +3,7 @@
 
 Writes, under the given content folder:
   textures/dev/*.tga                 grid textures for blocking out levels
+  textures/editor/floorgrid.tga      the editor's floor grid
   materials/dev.mtr                  materials for those textures
   maps/testmaps/gt4_test_room.map    a lit room with a player start
 
@@ -41,6 +42,21 @@ def make_texture(path, base, line):
     draw.rectangle([0, 0, SIZE - 1, SIZE - 1], outline=major, width=3)
     draw.line([(SIZE // 2, 0), (SIZE // 2, SIZE)], fill=major, width=2)
     draw.line([(0, SIZE // 2), (SIZE, SIZE // 2)], fill=major, width=2)
+    img.save(path)
+
+
+def make_floorgrid(path):
+    """The editor's floor grid: transparent, with faint lines every grid step and a
+    stronger line every 8 steps (one texture repeat)."""
+    size = 256
+    img = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+    step = size // 8
+    for i in range(0, size, step):
+        draw.line([(i, 0), (i, size)], fill=(255, 255, 255, 70), width=1)
+        draw.line([(0, i), (size, i)], fill=(255, 255, 255, 70), width=1)
+    draw.line([(0, 0), (0, size)], fill=(255, 255, 255, 160), width=2)
+    draw.line([(0, 0), (size, 0)], fill=(255, 255, 255, 160), width=2)
     img.save(path)
 
 
@@ -145,6 +161,10 @@ def main():
     os.makedirs(tex_dir, exist_ok=True)
     for name, (base, line) in DEV_TEXTURES.items():
         make_texture(os.path.join(tex_dir, f"{name}.tga"), base, line)
+
+    editor_dir = os.path.join(args.out, "textures", "editor")
+    os.makedirs(editor_dir, exist_ok=True)
+    make_floorgrid(os.path.join(editor_dir, "floorgrid.tga"))
 
     os.makedirs(os.path.join(args.out, "materials"), exist_ok=True)
     write_materials(os.path.join(args.out, "materials", "dev.mtr"))

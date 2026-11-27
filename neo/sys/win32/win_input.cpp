@@ -293,6 +293,20 @@ bool IN_InitDIMouse()
 IN_ActivateMouse
 ==========================
 */
+/*
+===========
+Sys_WarpMouseInWindow
+===========
+*/
+void Sys_WarpMouseInWindow( int x, int y )
+{
+	POINT p = { x, y };
+	if( win32.hWnd != NULL && ClientToScreen( win32.hWnd, &p ) )
+	{
+		SetCursorPos( p.x, p.y );
+	}
+}
+
 void IN_ActivateMouse()
 {
 	int i;

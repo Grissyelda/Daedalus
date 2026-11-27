@@ -138,3 +138,18 @@ editor/toolsurface
 		alpha	0.35
 	}
 }
+
+// the editor's floor grid (textures/editor/floorgrid.tga, from scripts/content/make_dev_content.py)
+editor/floorgrid
+{
+	noshadows
+	translucent
+	twoSided
+	{
+		blend	blend
+		map		textures/editor/floorgrid.tga
+		red		0.75
+		green	0.8
+		blue	0.9
+	}
+}
