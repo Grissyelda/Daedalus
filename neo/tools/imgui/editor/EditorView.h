@@ -76,8 +76,12 @@ public:
 	// camera movement; call once per frame with ImGui's input state
 	void			UpdateCamera( bool viewportHovered );
 
-	// what's under the screen position (pixels), or an empty selection
-	Selection		Pick( const Document& doc, float x, float y ) const;
+	// what's under the screen position (pixels), or an empty selection;
+	// with faces set, the brush face itself
+	Selection		Pick( const Document& doc, float x, float y, bool faces = false ) const;
+
+	// the first brush surface under the screen position; false when the ray hits nothing
+	bool			Trace( const Document& doc, float x, float y, idVec3& point, idVec3& normal ) const;
 
 	// a ray through the screen position (pixels)
 	void			ScreenRay( float x, float y, idVec3& start, idVec3& dir ) const;

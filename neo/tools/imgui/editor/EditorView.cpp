@@ -40,6 +40,7 @@ View view;
 
 static const idVec4 COLOR_SELECTED( 1.0f, 0.78f, 0.15f, 1.0f );
 static const idVec4 COLOR_WIRE( 0.75f, 0.78f, 0.82f, 1.0f );
+static const idVec4 COLOR_FACE( 0.2f, 0.9f, 1.0f, 1.0f );
 static const char* TOOL_MATERIAL = "editor/toolsurface";
 
 /*
@@ -388,11 +389,13 @@ void View::ScreenRay( float x, float y, idVec3& start, idVec3& dir ) const
 	dir.Normalize();
 }
 
-// distance along the ray to a convex brush, or -1 when it misses
-static float RayBrush( const idMapBrush* brush, const idVec3& start, const idVec3& dir )
+// distance along the ray to a convex brush, or -1 when it misses; hitSide is the face it enters
+static float RayBrush( const idMapBrush* brush, const idVec3& start, const idVec3& dir, int* hitSide = NULL )
 {
 	float enter = 0.0f;
 	float leave = idMath::INFINITUM;
+	float lastEnter = -idMath::INFINITUM;
+	int enterSide = -1;
 
 	for( int i = 0; i < brush->GetNumSides(); i++ )
 	{
@@ -412,6 +415,11 @@ static float RayBrush( const idMapBrush* brush, const idVec3& start, const idVec
 		const float t = -d / facing;
 		if( facing < 0.0f )
 		{
+			if( t > lastEnter )
+			{
+				lastEnter = t;
+				enterSide = i;
+			}
 			enter = Max( enter, t );
 		}
 		else
@@ -424,10 +432,15 @@ static float RayBrush( const idMapBrush* brush, const idVec3& start, const idVec
 			return -1.0f;
 		}
 	}
+
+	if( hitSide != NULL )
+	{
+		*hitSide = enterSide;
+	}
 	return enter;
 }
 
-Selection View::Pick( const Document& doc, float x, float y ) const
+Selection View::Pick( const Document& doc, float x, float y, bool faces ) const
 {
 	Selection best;
 	const idMapFile* map = doc.Map();
@@ -447,14 +460,17 @@ Selection View::Pick( const Document& doc, float x, float y ) const
 
 		if( ent->GetNumPrimitives() == 0 )
 		{
+			if( faces )
+			{
+				continue;
+			}
 			idBounds bounds;
 			EntityBounds( ent, bounds );
 			float scale;
 			if( bounds.RayIntersection( start, dir, scale ) && scale >= 0.0f && scale < bestDist )
 			{
 				bestDist = scale;
-				best.entity = i;
-				best.primitive = -1;
+				best = Selection( i );
 			}
 			continue;
 		}
@@ -463,11 +479,12 @@ Selection View::Pick( const Document& doc, float x, float y ) const
 		{
 			const idMapPrimitive* prim = ent->GetPrimitive( p );
 			float dist = -1.0f;
+			int side = -1;
 			if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
 			{
-				dist = RayBrush( static_cast<const idMapBrush*>( prim ), start, dir );
+				dist = RayBrush( static_cast<const idMapBrush*>( prim ), start, dir, &side );
 			}
-			else
+			else if( !faces )
 			{
 				idBounds bounds;
 				float scale;
@@ -477,17 +494,44 @@ Selection View::Pick( const Document& doc, float x, float y ) const
 				}
 			}
 
-			if( dist >= 0.0f && dist < bestDist )
+			if( dist >= 0.0f && dist < bestDist && ( !faces || side >= 0 ) )
 			{
 				bestDist = dist;
-				best.entity = i;
-				// level brushes are picked one at a time; an entity's brushes pick the whole entity
-				best.primitive = ( i == 0 ) ? p : -1;
+				if( faces )
+				{
+					best = Selection( i, p, side );
+				}
+				else
+				{
+					// level brushes are picked one at a time; an entity's brushes pick the whole entity
+					best = Selection( i, ( i == 0 ) ? p : -1 );
+				}
 			}
 		}
 	}
 
 	return best;
+}
+
+bool View::Trace( const Document& doc, float x, float y, idVec3& point, idVec3& normal ) const
+{
+	const Selection hit = Pick( doc, x, y, true );
+	if( !hit.IsFace() )
+	{
+		return false;
+	}
+
+	idVec3 start, dir;
+	ScreenRay( x, y, start, dir );
+	const idMapBrush* brush = static_cast<const idMapBrush*>( doc.Map()->GetEntity( hit.entity )->GetPrimitive( hit.primitive ) );
+	const float dist = RayBrush( brush, start, dir );
+	if( dist < 0.0f )
+	{
+		return false;
+	}
+	point = start + dir * dist;
+	normal = brush->GetSide( hit.side )->GetPlane().Normal();
+	return true;
 }
 
 void View::UpdateCamera( bool viewportHovered )
@@ -561,6 +605,10 @@ void View::Draw( const Document& doc )
 		return;
 	}
 
+	// Outlines are debug lines, which the game clears every frame. Nothing else does
+	// while editing, so clear them here or they pile up until the buffer is full.
+	world->DebugClearLines( 0 );
+
 	const idMapFile* map = doc.Map();
 	if( map != NULL )
 	{
@@ -580,7 +628,7 @@ void View::Draw( const Document& doc )
 			{
 				def->dict.GetVector( "editor_color", "0.5 0.5 1", color );
 			}
-			const bool selected = ( doc.selection.entity == i );
+			const bool selected = doc.selection.Contains( Selection( i ) );
 			world->DebugBounds( selected ? COLOR_SELECTED : idVec4( color.x, color.y, color.z, 1.0f ), bounds );
 		}
 
@@ -590,8 +638,8 @@ void View::Draw( const Document& doc )
 			const idMapEntity* ent = map->GetEntity( i );
 			for( int p = 0; p < ent->GetNumPrimitives(); p++ )
 			{
-				const bool selected = ( doc.selection.entity == i ) && ( doc.selection.primitive == p || doc.selection.primitive < 0 ) && i != 0;
-				const bool selectedWorldBrush = ( i == 0 && doc.selection.entity == 0 && doc.selection.primitive == p );
+				const bool selected = ( i != 0 && doc.selection.Contains( Selection( i ) ) ) || doc.selection.Contains( Selection( i, p ) );
+				const bool selectedWorldBrush = false;
 				if( !wireframe && !selected && !selectedWorldBrush )
 				{
 					continue;
@@ -618,6 +666,38 @@ void View::Draw( const Document& doc )
 					}
 				}
 			}
+		}
+	}
+
+	// selected faces: their outline, plus a slightly smaller one inside so they stand out
+	if( map != NULL && doc.selection.IsFaces() )
+	{
+		for( int i = 0; i < doc.selection.Num(); i++ )
+		{
+			const Selection& sel = doc.selection[i];
+			if( sel.entity >= map->GetNumEntities() || sel.primitive >= map->GetEntity( sel.entity )->GetNumPrimitives() )
+			{
+				continue;
+			}
+			const idMapPrimitive* prim = map->GetEntity( sel.entity )->GetPrimitive( sel.primitive );
+			if( prim->GetType() != idMapPrimitive::TYPE_BRUSH )
+			{
+				continue;
+			}
+			idWinding w;
+			if( !BrushSideWinding( static_cast<const idMapBrush*>( prim ), sel.side, w ) )
+			{
+				continue;
+			}
+			world->DebugWinding( COLOR_FACE, w, vec3_origin, mat3_identity );
+
+			const idVec3 center = w.GetCenter();
+			const idVec3 lift = static_cast<const idMapBrush*>( prim )->GetSide( sel.side )->GetPlane().Normal() * 0.5f;
+			for( int j = 0; j < w.GetNumPoints(); j++ )
+			{
+				w[j].ToVec3() = center + ( w[j].ToVec3() - center ) * 0.92f + lift;
+			}
+			world->DebugWinding( COLOR_FACE, w, vec3_origin, mat3_identity );
 		}
 	}
 

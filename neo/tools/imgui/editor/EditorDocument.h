@@ -47,10 +47,15 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 namespace GrizzEditor
 {
 
+// one selected thing: an entity, one brush or patch of it, or one face of a brush
 struct Selection
 {
 	int			entity = -1;		// index into the map's entities, -1 = nothing
 	int			primitive = -1;		// brush or patch within that entity, -1 = the whole entity
+	int			side = -1;			// face of that brush, -1 = the whole brush
+
+	Selection() {}
+	Selection( int e, int p = -1, int s = -1 ) : entity( e ), primitive( p ), side( s ) {}
 
 	bool		IsEmpty() const
 	{
@@ -60,15 +65,72 @@ struct Selection
 	{
 		return entity >= 0 && primitive >= 0;
 	}
+	bool		IsFace() const
+	{
+		return entity >= 0 && primitive >= 0 && side >= 0;
+	}
 	void		Clear()
 	{
 		entity = -1;
 		primitive = -1;
+		side = -1;
 	}
 	bool		operator==( const Selection& other ) const
 	{
-		return entity == other.entity && primitive == other.primitive;
+		return entity == other.entity && primitive == other.primitive && side == other.side;
 	}
+	bool		operator!=( const Selection& other ) const
+	{
+		return !( *this == other );
+	}
+};
+
+// Everything selected. Either objects (entities and brushes) or faces, never a mix.
+// The last item added is the "primary" one the Inspector shows.
+class SelectionSet
+{
+public:
+	int					Num() const
+	{
+		return items.Num();
+	}
+	bool				IsEmpty() const
+	{
+		return items.Num() == 0;
+	}
+	const Selection& 	operator[]( int i ) const
+	{
+		return items[i];
+	}
+	Selection			Primary() const
+	{
+		return items.Num() > 0 ? items[ items.Num() - 1 ] : Selection();
+	}
+	bool				IsFaces() const
+	{
+		return items.Num() > 0 && items[0].IsFace();
+	}
+	bool				Contains( const Selection& s ) const
+	{
+		return items.FindIndex( s ) >= 0;
+	}
+	void				Clear()
+	{
+		items.Clear();
+	}
+	void				Set( const Selection& s )
+	{
+		items.Clear();
+		Add( s );
+	}
+	void				Add( const Selection& s );		// keeps objects and faces apart
+	void				Toggle( const Selection& s );
+	void				Remove( const Selection& s )
+	{
+		items.Remove( s );
+	}
+
+	idList<Selection>	items;
 };
 
 class Document
@@ -131,27 +193,69 @@ public:
 	bool				Undo();
 	bool				Redo();
 
-	Selection			selection;
+	SelectionSet		selection;
 
-	// selection helpers
+	// selection helpers; these look at the primary selection
 	idMapEntity* 		SelectedEntity() const;
 	idMapPrimitive* 	SelectedPrimitive() const;
-	bool				SelectionIsValid() const;
+	idMapBrushSide* 	SelectedFace() const;
+	bool				SelectionIsValid() const;		// the primary selection still exists
+	void				ValidateSelection();			// drops anything that no longer exists
+	bool				CanTransformSelection() const;	// something movable is selected
+	bool				SelectionBounds( idBounds& bounds ) const;
 
 	// common edits (each records its own undo step)
 	void				DeleteSelection();
 	void				DuplicateSelection( const idVec3& offset );
-	void				TranslateSelection( const idVec3& delta );	// no undo step: callers wrap it
-	int					AddEntity( const char* classname, const idVec3& origin );	// records an undo step
-	int					AddBoxBrush( const idVec3& mins, const idVec3& maxs, const char* material );	// into the level; records an undo step
+	int					AddEntity( const char* classname, const idVec3& origin );
+	int					AddBrushes( idList<idMapBrush*>& brushes, const char* label );	// into the level, selected
+	void				SetMaterial( const char* material );	// on selected faces, or every face of selected brushes
+
+	// Moving, turning and resizing. Point p goes to linear * p + translation.
+	// No undo step of their own: callers wrap them in BeginChange/EndChange.
+	void				TranslateSelection( const idVec3& delta );
+	void				TransformSelection( const idMat3& linear, const idVec3& translation );
+
+	// Live drags (the gizmo): the start state is kept so every frame applies the whole
+	// transform to the original, which keeps snapping exact and stops errors building up.
+	void				BeginTransform();
+	void				UpdateTransform( const idMat3& linear, const idVec3& translation );
+	void				EndTransform();
+	bool				IsTransforming() const
+	{
+		return transforming;
+	}
+
+	// textures keep their place on the surface when brushes move or turn
+	bool				textureLock;
 
 private:
 	struct State
 	{
 		idStr			label;
 		idStr			text;
-		Selection		selection;
+		SelectionSet	selection;
 	};
+
+	struct SavedSide
+	{
+		idPlane			plane;
+		idVec3			texMat[2];
+	};
+	struct SavedItem
+	{
+		int				entity;
+		int				primitive;			// -1: the entity's own keys
+		idList<SavedSide> sides;			// brushes
+		idList<idVec3>	points;				// patches
+		idVec3			origin;
+		idMat3			axis;
+		bool			hasOrigin;
+		bool			hasAxis;
+	};
+
+	void				SaveTransformStart();
+	void				ConvertValveSides();
 
 	void				Snapshot( idStr& text ) const;
 	bool				Restore( const idStr& text );
@@ -166,8 +270,11 @@ private:
 	idList<State>		redoStack;
 	idStr				pendingLabel;
 	idStr				pendingText;
-	Selection			pendingSelection;
+	SelectionSet		pendingSelection;
 	bool				changeOpen;
+
+	bool				transforming;
+	idList<SavedItem>	transformStart;
 };
 
 extern Document document;
@@ -177,6 +284,22 @@ bool				BrushBounds( const idMapBrush* brush, idBounds& bounds );
 bool				BrushSideWinding( const idMapBrush* brush, int side, idWinding& w );
 bool				PrimitiveBounds( const idMapPrimitive* prim, idBounds& bounds );
 bool				EntityBounds( const idMapEntity* ent, idBounds& bounds );
+
+// brush faces and their textures
+void				TextureAxisBase( const idVec3& normal, idVec3& texS, idVec3& texT );
+idMapBrush* 		BrushFromPlanes( const idList<idPlane>& planes, const char* material );	// world-aligned 128-unit tiles
+void				SetSideTextureDefault( idMapBrushSide* side );
+
+// how a face's texture sits, in units a person can reason about
+struct TextureAlign
+{
+	idVec2			offset;		// in map units
+	idVec2			tile;		// map units per repeat; negative flips
+	float			rotation;	// degrees
+};
+TextureAlign		GetTextureAlign( const idMapBrushSide* side );
+void				SetTextureAlign( idMapBrushSide* side, const TextureAlign& align );
+void				FitTexture( idMapBrush* brush, int side, float repeatsU, float repeatsV );
 
 }
 

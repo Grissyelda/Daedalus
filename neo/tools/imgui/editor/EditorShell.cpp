@@ -31,6 +31,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorShell.h"
 #include "EditorDocument.h"
 #include "EditorView.h"
+#include "EditorShapes.h"
 
 #include "../../imgui/BFGimgui.h"
 #include "../../libs/imgui/imgui_internal.h"	// DockBuilder API
@@ -82,7 +83,20 @@ static char			mapNameBuffer[128] = "";
 static char			brushMaterialBuffer[256] = "";
 static int			brushMaterialFor = -1;
 
+enum gizmoMode_t
+{
+	GIZMO_MOVE,
+	GIZMO_ROTATE,
+	GIZMO_RESIZE
+};
+static gizmoMode_t	gizmoMode = GIZMO_MOVE;
 static bool			gizmoDragging = false;
+static unsigned int	dockspaceId = 0;
+static idMat4		gizmoStart;			// the handle's matrix when the drag began
+static idMat4		gizmoMatrix;		// and now
+
+static ShapeSettings	shapeSettings;
+static int			faceRepeats[2] = { 1, 1 };
 static idStr		statusMessage;
 static int			statusTime = 0;
 
@@ -91,6 +105,10 @@ static char			newProjectName[64] = "MyGame";
 static int			newProjectLook = -1;		// -1 = not chosen yet, 0 = stylized, 1 = PBR
 static idStr		newProjectResult;
 static bool			newProjectSucceeded = false;
+
+static void ResizeSelection( const idBounds& bounds, const idVec3& size );
+static void PlaceShape( shapeType_t type );
+static void FitSelectedFaces();
 
 static const char* WINDOW_OUTLINER			= "Outliner";
 static const char* WINDOW_INSPECTOR			= "Inspector";
@@ -271,25 +289,92 @@ static void EditorRedo_f( const idCmdArgs& args )
 	document.Redo();
 }
 
-// lets tests and scripts drive the editor: editorSelect <entity> [primitive]
+static Selection SelectionFromArgs( const idCmdArgs& args )
+{
+	return Selection( atoi( args.Argv( 1 ) ), args.Argc() > 2 ? atoi( args.Argv( 2 ) ) : -1, args.Argc() > 3 ? atoi( args.Argv( 3 ) ) : -1 );
+}
+
+// lets tests and scripts drive the editor: editorSelect <entity> [primitive] [face]
 static void EditorSelect_f( const idCmdArgs& args )
 {
-	if( args.Argc() < 2 )
+	document.selection.Clear();
+	if( args.Argc() >= 2 )
 	{
-		document.selection.Clear();
+		document.selection.Set( SelectionFromArgs( args ) );
+		document.ValidateSelection();
+	}
+}
+
+static void EditorSelectAdd_f( const idCmdArgs& args )
+{
+	if( args.Argc() >= 2 )
+	{
+		document.selection.Add( SelectionFromArgs( args ) );
+		document.ValidateSelection();
+	}
+}
+
+static void EditorRotate_f( const idCmdArgs& args )
+{
+	idBounds bounds;
+	if( args.Argc() != 2 || !document.CanTransformSelection() || !document.SelectionBounds( bounds ) )
+	{
+		common->Printf( "usage: editorRotate <degrees> (turns the selection about its centre)\n" );
 		return;
 	}
-	document.selection.entity = atoi( args.Argv( 1 ) );
-	document.selection.primitive = args.Argc() > 2 ? atoi( args.Argv( 2 ) ) : -1;
-	if( !document.SelectionIsValid() )
+	const idVec3 pivot = bounds.GetCenter();
+	const float angle = DEG2RAD( atof( args.Argv( 1 ) ) );
+	idMat3 turn( cos( angle ), -sin( angle ), 0, sin( angle ), cos( angle ), 0, 0, 0, 1 );
+	idVec3 turned( turn[0] * pivot, turn[1] * pivot, turn[2] * pivot );
+	document.BeginChange( "Rotate" );
+	document.TransformSelection( turn, pivot - turned );
+	document.EndChange();
+}
+
+static void EditorResize_f( const idCmdArgs& args )
+{
+	idBounds bounds;
+	if( args.Argc() != 4 || !document.CanTransformSelection() || !document.SelectionBounds( bounds ) )
 	{
-		document.selection.Clear();
+		common->Printf( "usage: editorResize <x> <y> <z> (new size of the selection)\n" );
+		return;
 	}
+	document.BeginChange( "Resize" );
+	ResizeSelection( bounds, idVec3( atof( args.Argv( 1 ) ), atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ) ) );
+	document.EndChange();
+}
+
+static void EditorShape_f( const idCmdArgs& args )
+{
+	for( int i = 0; i < SHAPE_COUNT; i++ )
+	{
+		if( args.Argc() >= 2 && idStr::Icmp( args.Argv( 1 ), ShapeName( ( shapeType_t )i ) ) == 0 )
+		{
+			PlaceShape( ( shapeType_t )i );
+			return;
+		}
+	}
+	common->Printf( "usage: editorShape <box|room|ramp|cylinder|cone|stairs|arch>\n" );
+}
+
+static void EditorMaterial_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		common->Printf( "usage: editorMaterial <material> (on the selected brushes or faces)\n" );
+		return;
+	}
+	document.SetMaterial( args.Argv( 1 ) );
+}
+
+static void EditorFitTexture_f( const idCmdArgs& args )
+{
+	FitSelectedFaces();
 }
 
 static void EditorMove_f( const idCmdArgs& args )
 {
-	if( args.Argc() != 4 || document.SelectedEntity() == NULL )
+	if( args.Argc() != 4 || !document.CanTransformSelection() )
 	{
 		common->Printf( "usage: editorMove <x> <y> <z> (moves the selection)\n" );
 		return;
@@ -362,6 +447,12 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorRedo", EditorRedo_f, CMD_FL_SYSTEM, "redoes the last undone edit" );
 	cmdSystem->AddCommand( "editorSelect", EditorSelect_f, CMD_FL_SYSTEM, "selects an entity (and optionally one of its brushes): editorSelect <entity> [brush]" );
 	cmdSystem->AddCommand( "editorMove", EditorMove_f, CMD_FL_SYSTEM, "moves the selection: editorMove <x> <y> <z>" );
+	cmdSystem->AddCommand( "editorSelectAdd", EditorSelectAdd_f, CMD_FL_SYSTEM, "adds to the selection: editorSelectAdd <entity> [primitive] [face]" );
+	cmdSystem->AddCommand( "editorRotate", EditorRotate_f, CMD_FL_SYSTEM, "turns the selection: editorRotate <degrees>" );
+	cmdSystem->AddCommand( "editorResize", EditorResize_f, CMD_FL_SYSTEM, "resizes the selection: editorResize <x> <y> <z>" );
+	cmdSystem->AddCommand( "editorShape", EditorShape_f, CMD_FL_SYSTEM, "places a shape: editorShape <name>" );
+	cmdSystem->AddCommand( "editorMaterial", EditorMaterial_f, CMD_FL_SYSTEM, "sets the material of the selection: editorMaterial <name>" );
+	cmdSystem->AddCommand( "editorFitTexture", EditorFitTexture_f, CMD_FL_SYSTEM, "fits the texture to the selected faces" );
 	cmdSystem->AddCommand( "editorCamera", EditorCamera_f, CMD_FL_SYSTEM, "shows or sets the editor camera: editorCamera <x> <y> <z> [yaw] [pitch]" );
 	cmdSystem->AddCommand( "editorWireframe", EditorWireframe_f, CMD_FL_SYSTEM, "toggles brush outlines in the editor view" );
 	cmdSystem->AddCommand( "editorNewProject", EditorNewProject_f, CMD_FL_SYSTEM, "creates a project from the template: editorNewProject <name> <stylized|pbr>" );
@@ -815,15 +906,23 @@ static idStr EntityLabel( const idMapEntity* ent, int index )
 static void FocusSelection()
 {
 	idBounds bounds;
-	if( document.SelectedPrimitive() != NULL )
+	if( document.SelectionBounds( bounds ) )
 	{
-		PrimitiveBounds( document.SelectedPrimitive(), bounds );
+		view.camera.Focus( bounds );
 	}
-	else if( document.SelectedEntity() != NULL )
+}
+
+// a click in a list: Ctrl adds or removes, otherwise it replaces the selection
+static void ClickSelect( const Selection& sel )
+{
+	if( ImGui::GetIO().KeyCtrl )
 	{
-		EntityBounds( document.SelectedEntity(), bounds );
+		document.selection.Toggle( sel );
 	}
-	view.camera.Focus( bounds );
+	else
+	{
+		document.selection.Set( sel );
+	}
 }
 
 static void DrawOutliner()
@@ -858,11 +957,10 @@ static void DrawOutliner()
 			for( int p = 0; p < world->GetNumPrimitives(); p++ )
 			{
 				const bool isBrush = world->GetPrimitive( p )->GetType() == idMapPrimitive::TYPE_BRUSH;
-				const bool selected = document.selection.entity == 0 && document.selection.primitive == p;
+				const bool selected = document.selection.Contains( Selection( 0, p ) );
 				if( ImGui::Selectable( va( "%s %d##prim%d", isBrush ? "Brush" : "Patch", p, p ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 				{
-					document.selection.entity = 0;
-					document.selection.primitive = p;
+					ClickSelect( Selection( 0, p ) );
 					if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
 					{
 						FocusSelection();
@@ -882,11 +980,10 @@ static void DrawOutliner()
 		{
 			continue;
 		}
-		const bool selected = document.selection.entity == i;
+		const bool selected = document.selection.Contains( Selection( i ) );
 		if( ImGui::Selectable( va( "%s##ent%d", label.c_str(), i ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 		{
-			document.selection.entity = i;
-			document.selection.primitive = -1;
+			ClickSelect( Selection( i ) );
 			if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
 			{
 				FocusSelection();
@@ -943,7 +1040,7 @@ static void DrawEntityInspector( idMapEntity* ent )
 	{
 		Hint( def->dict.GetString( "editor_usage" ) );
 	}
-	else if( def == NULL && document.selection.entity != 0 )
+	else if( def == NULL && document.selection.Primary().entity != 0 )
 	{
 		ImGui::TextColored( ImVec4( 1.0f, 0.6f, 0.3f, 1.0f ), "No entity definition called \"%s\" exists.", classname );
 	}
@@ -988,7 +1085,7 @@ static void DrawEntityInspector( idMapEntity* ent )
 			ImGui::TableNextColumn();
 			ImGui::SetNextItemWidth( -1 );
 
-			const bool isWorld = document.selection.entity == 0;
+			const bool isWorld = document.selection.Primary().entity == 0;
 			if( key.Icmp( "classname" ) == 0 && isWorld )
 			{
 				ImGui::TextDisabled( "%s", value.c_str() );
@@ -1113,70 +1210,308 @@ static void DrawEntityInspector( idMapEntity* ent )
 	}
 }
 
-static void SetBrushMaterial( idMapPrimitive* prim, const char* material )
+// Resizes about the bottom centre, so things stay on the floor they stand on.
+// No undo step of its own: callers wrap it.
+static void ResizeSelection( const idBounds& bounds, const idVec3& size )
 {
-	if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+	const idVec3 oldSize = bounds[1] - bounds[0];
+	idVec3 scale;
+	for( int i = 0; i < 3; i++ )
 	{
-		idMapBrush* brush = static_cast<idMapBrush*>( prim );
-		for( int s = 0; s < brush->GetNumSides(); s++ )
+		scale[i] = ( oldSize[i] > 0.01f && size[i] >= 1.0f ) ? size[i] / oldSize[i] : 1.0f;
+	}
+	if( scale.Compare( idVec3( 1, 1, 1 ), 0.0001f ) )
+	{
+		return;
+	}
+
+	const idVec3 anchor( ( bounds[0].x + bounds[1].x ) * 0.5f, ( bounds[0].y + bounds[1].y ) * 0.5f, bounds[0].z );
+	const idMat3 linear( scale.x, 0, 0, 0, scale.y, 0, 0, 0, scale.z );
+	const idVec3 translation( anchor.x - anchor.x * scale.x, anchor.y - anchor.y * scale.y, anchor.z - anchor.z * scale.z );
+	document.TransformSelection( linear, translation );
+}
+
+static void DrawTransformFields()
+{
+	idBounds bounds;
+	if( !document.CanTransformSelection() || !document.SelectionBounds( bounds ) )
+	{
+		return;
+	}
+
+	const float grid = editor_snap.GetBool() ? GridSize() : 1.0f;
+
+	// position: the bottom centre, which is where things stand
+	idVec3 position( ( bounds[0].x + bounds[1].x ) * 0.5f, ( bounds[0].y + bounds[1].y ) * 0.5f, bounds[0].z );
+	const idVec3 oldPosition = position;
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled( "Position" );
+	ImGui::SameLine( 70.0f );
+	ImGui::SetNextItemWidth( -1 );
+	// these drags are bracketed by UndoBracket: one undo step per drag
+	if( ImGui::DragFloat3( "##position", position.ToFloatPtr(), grid * 0.25f, 0, 0, "%.0f" ) )
+	{
+		document.TranslateSelection( position - oldPosition );
+		document.EndChange();
+	}
+	UndoBracket( "Move" );
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Position of the bottom centre" );
+	}
+
+	idVec3 size = bounds[1] - bounds[0];
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled( "Size" );
+	ImGui::SameLine( 70.0f );
+	ImGui::SetNextItemWidth( -1 );
+	if( ImGui::DragFloat3( "##size", size.ToFloatPtr(), grid * 0.25f, 1.0f, 65536.0f, "%.0f" ) )
+	{
+		ResizeSelection( bounds, size );
+		document.EndChange();
+	}
+	UndoBracket( "Resize" );
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Size (width, depth, height)" );
+	}
+}
+
+static void DrawMaterialField( const char* current, int key )
+{
+	if( brushMaterialFor != key )
+	{
+		idStr::Copynz( brushMaterialBuffer, current, sizeof( brushMaterialBuffer ) );
+		brushMaterialFor = key;
+	}
+
+	ImGui::Text( "Material" );
+	ImGui::SetNextItemWidth( -60.0f );
+	const bool entered = ImGui::InputText( "##material", brushMaterialBuffer, sizeof( brushMaterialBuffer ), ImGuiInputTextFlags_EnterReturnsTrue );
+	ImGui::SameLine();
+	if( ImGui::Button( "Apply" ) || entered )
+	{
+		document.SetMaterial( brushMaterialBuffer );
+	}
+	Hint( "Or click a material in the Content Browser's Materials tab." );
+}
+
+static void FitSelectedFaces()
+{
+	if( !document.selection.IsFaces() )
+	{
+		return;
+	}
+	document.BeginChange( "Fit texture" );
+	for( int i = 0; i < document.selection.Num(); i++ )
+	{
+		const Selection& sel = document.selection[i];
+		idMapBrush* brush = static_cast<idMapBrush*>( document.Map()->GetEntity( sel.entity )->GetPrimitive( sel.primitive ) );
+		FitTexture( brush, sel.side, ( float )faceRepeats[0], ( float )faceRepeats[1] );
+	}
+	document.EndChange();
+}
+
+// applies an edit to every selected face; live edits (drags) get their undo step from UndoBracket
+template< typename func_t >
+static void EditFaces( const char* label, func_t edit, bool live = false )
+{
+	if( !live )
+	{
+		document.BeginChange( label );
+	}
+	for( int i = 0; i < document.selection.Num(); i++ )
+	{
+		const Selection& sel = document.selection[i];
+		idMapBrush* brush = static_cast<idMapBrush*>( document.Map()->GetEntity( sel.entity )->GetPrimitive( sel.primitive ) );
+		idMapBrushSide* side = brush->GetSide( sel.side );
+		TextureAlign align = GetTextureAlign( side );
+		edit( align );
+		SetTextureAlign( side, align );
+	}
+	document.EndChange();
+}
+
+static void DrawFaceInspector()
+{
+	idMapBrushSide* face = document.SelectedFace();
+	const int count = document.selection.Num();
+	ImGui::Text( count > 1 ? "%d faces" : "Face", count );
+	Hint( "Shift+click more faces to add them; click without Shift to go back to whole objects." );
+	ImGui::Separator();
+
+	const Selection primary = document.selection.Primary();
+	DrawMaterialField( face->GetMaterial(), ( primary.entity * 1000 + primary.primitive ) * 100 + primary.side + 50000000 );
+	ImGui::Separator();
+
+	ImGui::Text( "Texture" );
+	ImGui::Checkbox( "Texture lock", &document.textureLock );
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Keep textures in place on surfaces when you move, turn or resize brushes." );
+	}
+
+	const TextureAlign align = GetTextureAlign( face );
+	const float grid = GridSize();
+
+	idVec2 offset = align.offset;
+	ImGui::SetNextItemWidth( -80.0f );
+	if( ImGui::DragFloat2( "Offset", offset.ToFloatPtr(), 1.0f, 0, 0, "%.1f" ) )
+	{
+		const idVec2 delta = offset - align.offset;
+		EditFaces( "Texture offset", [&]( TextureAlign & a )
 		{
-			brush->GetSide( s )->SetMaterial( material );
-		}
+			a.offset += delta;
+		}, true );
 	}
-	else if( prim->GetType() == idMapPrimitive::TYPE_PATCH )
+	UndoBracket( "Texture offset" );
+
+	idVec2 tile = align.tile;
+	ImGui::SetNextItemWidth( -80.0f );
+	if( ImGui::DragFloat2( "Tile size", tile.ToFloatPtr(), 1.0f, -4096.0f, 4096.0f, "%.1f" ) )
 	{
-		static_cast<idMapPatch*>( prim )->SetMaterial( material );
+		EditFaces( "Texture size", [&]( TextureAlign & a )
+		{
+			a.tile = tile;
+		}, true );
 	}
+	UndoBracket( "Texture size" );
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Map units covered by one copy of the texture. Negative flips it." );
+	}
+
+	float rotation = align.rotation;
+	ImGui::SetNextItemWidth( -80.0f );
+	if( ImGui::DragFloat( "Rotation", &rotation, 1.0f, -360.0f, 360.0f, "%.1f deg" ) )
+	{
+		EditFaces( "Texture rotation", [&]( TextureAlign & a )
+		{
+			a.rotation = rotation;
+		}, true );
+	}
+	UndoBracket( "Texture rotation" );
+
+	// nudges by the grid, for lining up without dragging
+	ImGui::TextDisabled( "Nudge" );
+	ImGui::SameLine();
+	if( ImGui::ArrowButton( "##left", ImGuiDir_Left ) )
+	{
+		EditFaces( "Texture offset", [&]( TextureAlign & a )
+		{
+			a.offset.x -= grid;
+		} );
+	}
+	ImGui::SameLine();
+	if( ImGui::ArrowButton( "##right", ImGuiDir_Right ) )
+	{
+		EditFaces( "Texture offset", [&]( TextureAlign & a )
+		{
+			a.offset.x += grid;
+		} );
+	}
+	ImGui::SameLine();
+	if( ImGui::ArrowButton( "##up", ImGuiDir_Up ) )
+	{
+		EditFaces( "Texture offset", [&]( TextureAlign & a )
+		{
+			a.offset.y -= grid;
+		} );
+	}
+	ImGui::SameLine();
+	if( ImGui::ArrowButton( "##down", ImGuiDir_Down ) )
+	{
+		EditFaces( "Texture offset", [&]( TextureAlign & a )
+		{
+			a.offset.y += grid;
+		} );
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( "Turn 90" ) )
+	{
+		EditFaces( "Texture rotation", [&]( TextureAlign & a )
+		{
+			a.rotation = idMath::AngleNormalize180( a.rotation + 90.0f );
+		} );
+	}
+
+	if( ImGui::Button( "Flip U" ) )
+	{
+		EditFaces( "Flip texture", [&]( TextureAlign & a )
+		{
+			a.tile.x = -a.tile.x;
+		} );
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( "Flip V" ) )
+	{
+		EditFaces( "Flip texture", [&]( TextureAlign & a )
+		{
+			a.tile.y = -a.tile.y;
+		} );
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( "Reset" ) )
+	{
+		EditFaces( "Reset texture", [&]( TextureAlign & a )
+		{
+			a.offset.Zero();
+			a.tile.Set( 128.0f, 128.0f );
+			a.rotation = 0.0f;
+		} );
+	}
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Straight, unshifted, one copy per 128 units" );
+	}
+
+	if( ImGui::Button( "Fit" ) )
+	{
+		FitSelectedFaces();
+	}
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Stretch the texture to cover the face exactly the number of times set here" );
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth( 90.0f );
+	ImGui::InputInt2( "times", faceRepeats );
+	faceRepeats[0] = idMath::ClampInt( 1, 64, faceRepeats[0] );
+	faceRepeats[1] = idMath::ClampInt( 1, 64, faceRepeats[1] );
 }
 
 static void DrawPrimitiveInspector( idMapPrimitive* prim )
 {
 	const bool isBrush = prim->GetType() == idMapPrimitive::TYPE_BRUSH;
-	ImGui::Text( isBrush ? "Brush" : "Patch" );
-
-	idBounds bounds;
-	if( PrimitiveBounds( prim, bounds ) )
+	const int count = document.selection.Num();
+	if( count > 1 )
 	{
-		const idVec3 size = bounds[1] - bounds[0];
-		ImGui::TextDisabled( "Size %.0f x %.0f x %.0f", size.x, size.y, size.z );
+		ImGui::Text( "%d selected", count );
 	}
+	else
+	{
+		ImGui::Text( isBrush ? "Brush" : "Patch" );
+	}
+	DrawTransformFields();
 	ImGui::Separator();
 
-	// one material for the whole brush; per-face materials arrive with face selection
-	const int key = document.selection.entity * 100000 + document.selection.primitive;
-	if( brushMaterialFor != key || document.IsChangeOpen() == false )
-	{
-		if( brushMaterialFor != key )
-		{
-			const char* current = isBrush ? static_cast<idMapBrush*>( prim )->GetSide( 0 )->GetMaterial() : static_cast<idMapPatch*>( prim )->GetMaterial();
-			idStr::Copynz( brushMaterialBuffer, current, sizeof( brushMaterialBuffer ) );
-			brushMaterialFor = key;
-		}
-	}
-
-	ImGui::Text( "Material" );
-	ImGui::SetNextItemWidth( -60.0f );
-	ImGui::InputText( "##material", brushMaterialBuffer, sizeof( brushMaterialBuffer ) );
-	ImGui::SameLine();
-	if( ImGui::Button( "Apply" ) )
-	{
-		document.BeginChange( "Set material" );
-		SetBrushMaterial( prim, brushMaterialBuffer );
-		document.EndChange();
-	}
-	Hint( "Or click a material in the Content Browser's Materials tab." );
+	const Selection primary = document.selection.Primary();
+	const char* current = isBrush ? static_cast<idMapBrush*>( prim )->GetSide( 0 )->GetMaterial() : static_cast<idMapPatch*>( prim )->GetMaterial();
+	DrawMaterialField( current, primary.entity * 100000 + primary.primitive );
 
 	if( isBrush )
 	{
 		idMapBrush* brush = static_cast<idMapBrush*>( prim );
+		Hint( "Shift+click a face in the view to change just that face." );
 		if( ImGui::TreeNode( "Faces", "Faces (%d)", brush->GetNumSides() ) )
 		{
 			for( int s = 0; s < brush->GetNumSides(); s++ )
 			{
 				const idVec3 n = brush->GetSide( s )->GetPlane().Normal();
-				ImGui::TextDisabled( "%d  (%.2f %.2f %.2f)", s, n.x, n.y, n.z );
-				ImGui::SameLine();
-				ImGui::TextUnformatted( brush->GetSide( s )->GetMaterial() );
+				if( ImGui::Selectable( va( "%d  (%.2f %.2f %.2f)  %s##face%d", s, n.x, n.y, n.z, brush->GetSide( s )->GetMaterial(), s ) ) )
+				{
+					document.selection.Set( Selection( primary.entity, primary.primitive, s ) );
+				}
 			}
 			ImGui::TreePop();
 		}
@@ -1195,33 +1530,95 @@ static void DrawInspector()
 	{
 		ImGui::TextDisabled( "Nothing selected" );
 		ImGui::Separator();
-		Hint( "Click something in the view or in the Outliner to see and change its properties." );
+		Hint( "Click something in the view or in the Outliner to see and change its properties. Ctrl+click adds to the selection; Shift+click picks a single face." );
 		if( document.IsOpen() && ImGui::Button( "Level settings" ) )
 		{
-			document.selection.entity = 0;
-			document.selection.primitive = -1;
+			document.selection.Set( Selection( 0 ) );
 		}
 		ImGui::End();
 		return;
 	}
 
-	if( document.selection.IsPrimitive() )
+	if( document.selection.IsFaces() )
+	{
+		DrawFaceInspector();
+	}
+	else if( document.selection.Primary().IsPrimitive() )
 	{
 		DrawPrimitiveInspector( document.SelectedPrimitive() );
 	}
 	else
 	{
+		if( document.selection.Num() > 1 )
+		{
+			ImGui::Text( "%d selected", document.selection.Num() );
+			DrawTransformFields();
+			ImGui::Separator();
+			ImGui::TextDisabled( "Showing the last one picked:" );
+		}
 		DrawEntityInspector( document.SelectedEntity() );
 	}
 
 	ImGui::End();
 }
 
-// where new things go: just in front of whatever the camera looks at
-static idVec3 PlacementPoint()
+// where new things go: on whatever surface is in the middle of the view,
+// or a little in front of the camera when it looks at nothing
+static idVec3 PlacementPoint( idVec3* surfaceNormal = NULL )
 {
+	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	idVec3 point, normal;
+	if( view.Trace( document, size.x * 0.5f, size.y * 0.5f, point, normal ) && ( point - view.camera.origin ).LengthSqr() < Square( 4096.0f ) )
+	{
+		if( surfaceNormal != NULL )
+		{
+			*surfaceNormal = normal;
+		}
+		return SnapToGrid( point + normal );
+	}
+
+	if( surfaceNormal != NULL )
+	{
+		surfaceNormal->Set( 0, 0, 1 );
+	}
 	const idMat3 axis = view.camera.Axis();
 	return SnapToGrid( view.camera.origin + axis[0] * 256.0f );
+}
+
+static void PlaceShape( shapeType_t type )
+{
+	if( !document.IsOpen() )
+	{
+		return;
+	}
+
+	// sit on floors, stand out from walls, hang from ceilings
+	idVec3 normal;
+	const idVec3 point = PlacementPoint( &normal );
+	const idVec3 size = ShapeDefaultSize( type );
+	idVec3 center = point;
+	if( normal.z > 0.7f )
+	{
+		center.z = point.z + size.z * 0.5f;
+	}
+	else if( normal.z < -0.7f )
+	{
+		center.z = point.z - size.z * 0.5f;
+	}
+	else
+	{
+		center += normal * ( idMath::Fabs( normal.x ) * size.x + idMath::Fabs( normal.y ) * size.y ) * 0.5f;
+	}
+	center = SnapToGrid( center - size * 0.5f ) + size * 0.5f;
+
+	idList<idMapBrush*> brushes;
+	if( !MakeShape( type, shapeSettings, idBounds( center - size * 0.5f, center + size * 0.5f ), "textures/dev/grid_wall", brushes ) )
+	{
+		Status( va( "Couldn't make a %s with those settings.", ShapeName( type ) ) );
+		return;
+	}
+	document.AddBrushes( brushes, va( "Add %s", ShapeName( type ) ) );
+	Status( va( "Added a %s.", ShapeName( type ) ) );
 }
 
 static void DrawContentBrowser()
@@ -1279,7 +1676,7 @@ static void DrawContentBrowser()
 			ImGui::SetNextItemWidth( 240.0f );
 			ImGui::InputTextWithHint( "##matfilter", "Filter", materialFilter, sizeof( materialFilter ) );
 			ImGui::SameLine();
-			Hint( document.SelectedPrimitive() != NULL ? "Click a material to put it on the selected brush." : "Select a brush, then click a material to apply it." );
+			Hint( !document.selection.IsEmpty() ? "Click a material to put it on the selection." : "Select brushes or faces, then click a material to apply it." );
 			ImGui::Separator();
 
 			ImGui::BeginChild( "materials" );
@@ -1295,11 +1692,9 @@ static void DrawContentBrowser()
 				{
 					continue;
 				}
-				if( ImGui::Selectable( decl->GetName() ) && document.SelectedPrimitive() != NULL )
+				if( ImGui::Selectable( decl->GetName() ) && !document.selection.IsEmpty() )
 				{
-					document.BeginChange( "Set material" );
-					SetBrushMaterial( document.SelectedPrimitive(), decl->GetName() );
-					document.EndChange();
+					document.SetMaterial( decl->GetName() );
 					idStr::Copynz( brushMaterialBuffer, decl->GetName(), sizeof( brushMaterialBuffer ) );
 				}
 			}
@@ -1310,16 +1705,42 @@ static void DrawContentBrowser()
 		if( ImGui::BeginTabItem( "Place" ) )
 		{
 			const bool canPlace = document.IsOpen();
+			Hint( "New things land on whatever is in the middle of the view." );
+
+			ImGui::TextDisabled( "Shapes" );
 			ImGui::BeginDisabled( !canPlace );
-			if( ImGui::Button( "Box brush" ) )
+			for( int i = 0; i < SHAPE_COUNT; i++ )
 			{
-				const idVec3 p = PlacementPoint();
-				const float half = Max( 64.0f, GridSize() * 8.0f );
-				document.AddBoxBrush( p - idVec3( half, half, half ), p + idVec3( half, half, half ), "textures/dev/grid_wall" );
+				if( i > 0 )
+				{
+					ImGui::SameLine();
+				}
+				if( ImGui::Button( ShapeName( ( shapeType_t )i ) ) )
+				{
+					PlaceShape( ( shapeType_t )i );
+				}
+				if( ImGui::IsItemHovered() )
+				{
+					ImGui::SetTooltip( "%s", ShapeHelp( ( shapeType_t )i ) );
+				}
 			}
 			ImGui::EndDisabled();
-			ImGui::SameLine();
-			Hint( "New things appear just in front of the camera." );
+
+			if( ImGui::TreeNode( "Shape settings" ) )
+			{
+				ImGui::SetNextItemWidth( 160.0f );
+				ImGui::SliderInt( "Sides (cylinder, cone)", &shapeSettings.sides, 3, 32 );
+				ImGui::SetNextItemWidth( 160.0f );
+				ImGui::SliderInt( "Steps (stairs)", &shapeSettings.steps, 2, 32 );
+				ImGui::SetNextItemWidth( 160.0f );
+				ImGui::SliderInt( "Segments (arch)", &shapeSettings.segments, 2, 24 );
+				ImGui::SetNextItemWidth( 160.0f );
+				ImGui::DragFloat( "Thickness (arch, room)", &shapeSettings.thickness, 1.0f, 1.0f, 256.0f, "%.0f" );
+				Hint( "Resize shapes afterwards in the Inspector or with the resize tool (R)." );
+				ImGui::TreePop();
+			}
+			ImGui::Separator();
+			ImGui::TextDisabled( "Things" );
 
 			ImGui::SetNextItemWidth( 240.0f );
 			ImGui::InputTextWithHint( "##entfilter", "Filter entity types", entityFilter, sizeof( entityFilter ) );
@@ -1396,8 +1817,7 @@ static void DrawProblems()
 				ImGui::PushID( i );
 				if( ImGui::SmallButton( "Show" ) )
 				{
-					document.selection.entity = i;
-					document.selection.primitive = -1;
+					document.selection.Set( Selection( i ) );
 					FocusSelection();
 				}
 				ImGui::SameLine();
@@ -1440,7 +1860,7 @@ static void DrawAbout()
 		ImGui::Text( "Moving around" );
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Without the right button, the wheel moves forward and back." );
 		ImGui::Text( "Editing" );
-		Hint( "Click to select. Drag the arrows to move. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
+		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces for texturing. W, E and R switch between moving, turning and resizing; [ and ] change the grid. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
 	}
 	ImGui::End();
 }
@@ -1453,48 +1873,35 @@ static void DrawAbout()
 ===============================================================================
 */
 
-static idBounds SelectionBounds()
+static void EndGizmoDrag()
 {
-	idBounds bounds;
-	bounds.Clear();
-	if( document.SelectedPrimitive() != NULL )
+	if( !gizmoDragging )
 	{
-		PrimitiveBounds( document.SelectedPrimitive(), bounds );
+		return;
 	}
-	else if( document.SelectedEntity() != NULL )
+	gizmoDragging = false;
+	document.EndTransform();
+	if( document.IsChangeOpen() )
 	{
-		EntityBounds( document.SelectedEntity(), bounds );
+		const idMat4 moved = gizmoMatrix.Transpose() * gizmoStart.Transpose().Inverse();
+		if( moved.Compare( mat4_identity, 0.0001f ) )
+		{
+			document.CancelChange();	// grabbed but never moved
+		}
+		else
+		{
+			document.EndChange();
+		}
 	}
-	return bounds;
 }
 
-static void DrawMoveHandle()
+static void DrawGizmo()
 {
-	// the level itself has no handle; its brushes do
-	if( !document.SelectionIsValid() || ( document.selection.entity == 0 && !document.selection.IsPrimitive() ) )
+	idBounds bounds;
+	if( !document.CanTransformSelection() || !document.SelectionBounds( bounds ) )
 	{
-		if( gizmoDragging )
-		{
-			gizmoDragging = false;
-			if( document.IsChangeOpen() )
-			{
-				document.CancelChange();
-			}
-		}
+		EndGizmoDrag();
 		return;
-	}
-
-	const idBounds bounds = SelectionBounds();
-	if( bounds.IsCleared() )
-	{
-		return;
-	}
-
-	idVec3 pivot = bounds.GetCenter();
-	const idMapEntity* ent = document.SelectedEntity();
-	if( !document.selection.IsPrimitive() && ent->GetNumPrimitives() == 0 )
-	{
-		pivot = ent->epairs.GetVector( "origin" );
 	}
 
 	renderView_t rv;
@@ -1510,36 +1917,161 @@ static void DrawMoveHandle()
 	ImGuizmo::SetRect( 0, 0, size.x, size.y );
 	ImGuizmo::SetID( 1 );
 
-	idMat4 matrix = idMat4( mat3_identity, pivot ).Transpose();
-	const float grid = GridSize();
-	const float snap[3] = { grid, grid, grid };
+	// the handle sits in the middle of the selection, or on a lone point entity's origin
+	idVec3 pivot = bounds.GetCenter();
+	const Selection primary = document.selection.Primary();
+	if( document.selection.Num() == 1 && primary.primitive < 0 && document.SelectedEntity()->GetNumPrimitives() == 0 )
+	{
+		pivot = document.SelectedEntity()->epairs.GetVector( "origin" );
+	}
 
-	ImGuizmo::Manipulate( viewDef.worldSpace.modelViewMatrix, viewDef.unjitteredProjectionMatrix, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, matrix.ToFloatPtr(), NULL, editor_snap.GetBool() ? snap : NULL );
+	if( !gizmoDragging )
+	{
+		// ImGuizmo wants OpenGL's column-major layout, which is idMat4 transposed
+		gizmoMatrix = idMat4( mat3_identity, pivot ).Transpose();
+	}
+
+	const bool snapping = editor_snap.GetBool();
+	const float grid = GridSize();
+	float snap[3] = { grid, grid, grid };
+	ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+	const char* label = "Move";
+	float localBounds[6];
+	float boundsSnap[3] = { grid, grid, grid };
+	bool useBounds = false;
+
+	if( gizmoMode == GIZMO_ROTATE )
+	{
+		operation = ImGuizmo::ROTATE;
+		label = "Rotate";
+		snap[0] = snap[1] = snap[2] = 15.0f;
+	}
+	else if( gizmoMode == GIZMO_RESIZE )
+	{
+		operation = ImGuizmo::BOUNDS;
+		label = "Resize";
+		useBounds = true;
+		const idVec3 start = gizmoDragging ? gizmoStart.Transpose().GetTranslation() : pivot;
+		static idBounds dragBounds;
+		if( !gizmoDragging )
+		{
+			dragBounds = bounds;
+		}
+		for( int i = 0; i < 3; i++ )
+		{
+			localBounds[i] = dragBounds[0][i] - start[i];
+			localBounds[i + 3] = dragBounds[1][i] - start[i];
+		}
+	}
+
+	ImGuizmo::Manipulate( viewDef.worldSpace.modelViewMatrix, viewDef.unjitteredProjectionMatrix, operation, ImGuizmo::WORLD, gizmoMatrix.ToFloatPtr(), NULL,
+						  snapping ? snap : NULL, useBounds ? localBounds : NULL, ( useBounds && snapping ) ? boundsSnap : NULL );
 
 	if( ImGuizmo::IsUsing() )
 	{
 		if( !gizmoDragging )
 		{
 			gizmoDragging = true;
-			document.BeginChange( "Move" );
+			gizmoStart = idMat4( mat3_identity, pivot ).Transpose();
+			document.BeginChange( label );
+			document.BeginTransform();
 		}
-		const idVec3 moved = matrix.Transpose().GetTranslation();
-		const idVec3 delta = moved - pivot;
-		if( delta.LengthSqr() > 0.0001f )
+
+		// the whole change since the drag began: start -> now
+		const idMat4 total = gizmoMatrix.Transpose() * gizmoStart.Transpose().Inverse();
+		idMat3 linear;
+		for( int r = 0; r < 3; r++ )
 		{
-			document.TranslateSelection( delta );
-			document.EndChange();
+			linear[r].Set( total[r][0], total[r][1], total[r][2] );
 		}
+		const idVec3 translation( total[0][3], total[1][3], total[2][3] );
+		document.UpdateTransform( linear, translation );
 	}
-	else if( gizmoDragging )
+	else
 	{
-		gizmoDragging = false;
-		if( document.IsChangeOpen() )
-		{
-			// grabbed but never moved
-			document.CancelChange();
-		}
+		EndGizmoDrag();
 	}
+}
+
+// the strip of tool buttons across the top of the 3D view
+static void DrawViewportToolbar()
+{
+	ImGuiDockNode* central = ( dockspaceId != 0 ) ? ImGui::DockBuilderGetCentralNode( dockspaceId ) : NULL;
+	if( central == NULL )
+	{
+		return;
+	}
+
+	ImGui::SetNextWindowPos( ImVec2( central->Pos.x + 8.0f, central->Pos.y + 8.0f ) );
+	ImGui::SetNextWindowBgAlpha( 0.75f );
+	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+								   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+	if( ImGui::Begin( "##viewport_toolbar", NULL, flags ) )
+	{
+		const char* modes[] = { "Move (W)", "Rotate (E)", "Resize (R)" };
+		const char* tips[] = { "Drag the arrows to move the selection", "Drag the rings to turn the selection; snaps to 15 degrees", "Drag the dots on the box edges to resize" };
+		for( int i = 0; i < 3; i++ )
+		{
+			if( i > 0 )
+			{
+				ImGui::SameLine();
+			}
+			const bool active = ( gizmoMode == i );
+			if( active )
+			{
+				ImGui::PushStyleColor( ImGuiCol_Button, ImGui::GetStyleColorVec4( ImGuiCol_ButtonActive ) );
+			}
+			if( ImGui::Button( modes[i] ) )
+			{
+				gizmoMode = ( gizmoMode_t )i;
+			}
+			if( active )
+			{
+				ImGui::PopStyleColor();
+			}
+			if( ImGui::IsItemHovered() )
+			{
+				ImGui::SetTooltip( "%s", tips[i] );
+			}
+		}
+
+		ImGui::SameLine();
+		ImGui::TextDisabled( "|" );
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth( 64.0f );
+		static const int gridSizes[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
+		if( ImGui::BeginCombo( "##grid", va( "Grid %d", editor_gridSize.GetInteger() ) ) )
+		{
+			for( int i = 0; i < 9; i++ )
+			{
+				if( ImGui::Selectable( va( "%d", gridSizes[i] ), editor_gridSize.GetInteger() == gridSizes[i] ) )
+				{
+					editor_gridSize.SetInteger( gridSizes[i] );
+				}
+			}
+			ImGui::EndCombo();
+		}
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "Grid size. [ and ] make it smaller and bigger." );
+		}
+
+		ImGui::SameLine();
+		bool snap = editor_snap.GetBool();
+		if( ImGui::Checkbox( "Snap", &snap ) )
+		{
+			editor_snap.SetBool( snap );
+		}
+		ImGui::SameLine();
+		ImGui::Checkbox( "Texture lock", &document.textureLock );
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "Keep textures in place on surfaces when you move, turn or resize brushes" );
+		}
+		ImGui::SameLine();
+		ImGui::Checkbox( "Wireframe", &view.wireframe );
+	}
+	ImGui::End();
 }
 
 static void HandleShortcuts()
@@ -1589,6 +2121,28 @@ static void HandleShortcuts()
 	{
 		document.selection.Clear();
 	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_W, false ) )
+	{
+		gizmoMode = GIZMO_MOVE;
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_E, false ) )
+	{
+		gizmoMode = GIZMO_ROTATE;
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_R, false ) )
+	{
+		gizmoMode = GIZMO_RESIZE;
+	}
+	else if( ImGui::IsKeyPressed( ImGuiKey_LeftBracket, false ) )
+	{
+		editor_gridSize.SetInteger( Max( 1, editor_gridSize.GetInteger() / 2 ) );
+		Status( va( "Grid %d", editor_gridSize.GetInteger() ) );
+	}
+	else if( ImGui::IsKeyPressed( ImGuiKey_RightBracket, false ) )
+	{
+		editor_gridSize.SetInteger( Min( 256, editor_gridSize.GetInteger() * 2 ) );
+		Status( va( "Grid %d", editor_gridSize.GetInteger() ) );
+	}
 }
 
 static void HandleViewport()
@@ -1597,11 +2151,43 @@ static void HandleViewport()
 	const bool hovered = !io.WantCaptureMouse;
 
 	view.UpdateCamera( hovered );
-	DrawMoveHandle();
+	DrawGizmo();
+	DrawViewportToolbar();
 
+	// click selects, Ctrl+click adds or removes, Shift+click picks faces
 	if( hovered && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() )
 	{
-		document.selection = view.Pick( document, io.MousePos.x, io.MousePos.y );
+		if( io.KeyShift )
+		{
+			const Selection face = view.Pick( document, io.MousePos.x, io.MousePos.y, true );
+			if( face.IsFace() )
+			{
+				if( document.selection.IsFaces() )
+				{
+					document.selection.Toggle( face );
+				}
+				else
+				{
+					document.selection.Set( face );
+				}
+			}
+		}
+		else
+		{
+			const Selection hit = view.Pick( document, io.MousePos.x, io.MousePos.y );
+			if( io.KeyCtrl )
+			{
+				document.selection.Toggle( hit );
+			}
+			else if( hit.IsEmpty() )
+			{
+				document.selection.Clear();
+			}
+			else
+			{
+				document.selection.Set( hit );
+			}
+		}
 	}
 
 	HandleShortcuts();
@@ -1707,7 +2293,7 @@ void DrawMainMenuBar()
 			document.Redo();
 		}
 		ImGui::Separator();
-		const bool canEdit = document.SelectionIsValid() && !( document.selection.entity == 0 && !document.selection.IsPrimitive() );
+		const bool canEdit = document.CanTransformSelection();
 		if( ImGui::MenuItem( "Duplicate", "Ctrl+D", false, canEdit ) )
 		{
 			document.DuplicateSelection( idVec3( GridSize() * 4.0f, GridSize() * 4.0f, 0.0f ) );
@@ -1720,6 +2306,24 @@ void DrawMainMenuBar()
 		{
 			FocusSelection();
 		}
+		if( ImGui::MenuItem( "Select none", "Esc", false, !document.selection.IsEmpty() ) )
+		{
+			document.selection.Clear();
+		}
+		ImGui::Separator();
+		if( ImGui::MenuItem( "Move tool", "W", gizmoMode == GIZMO_MOVE ) )
+		{
+			gizmoMode = GIZMO_MOVE;
+		}
+		if( ImGui::MenuItem( "Rotate tool", "E", gizmoMode == GIZMO_ROTATE ) )
+		{
+			gizmoMode = GIZMO_ROTATE;
+		}
+		if( ImGui::MenuItem( "Resize tool", "R", gizmoMode == GIZMO_RESIZE ) )
+		{
+			gizmoMode = GIZMO_RESIZE;
+		}
+		ImGui::MenuItem( "Texture lock", NULL, &document.textureLock );
 		ImGui::Separator();
 		bool snap = editor_snap.GetBool();
 		if( ImGui::MenuItem( "Snap to grid", NULL, &snap ) )
@@ -1728,8 +2332,8 @@ void DrawMainMenuBar()
 		}
 		if( ImGui::BeginMenu( "Grid size" ) )
 		{
-			const int sizes[] = { 1, 2, 4, 8, 16, 32, 64, 128 };
-			for( int i = 0; i < 8; i++ )
+			const int sizes[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
+			for( int i = 0; i < 9; i++ )
 			{
 				if( ImGui::MenuItem( va( "%d", sizes[i] ), NULL, editor_gridSize.GetInteger() == sizes[i] ) )
 				{
@@ -1830,6 +2434,7 @@ void Draw( unsigned int mainDockSpaceId )
 		}
 	}
 
+	dockspaceId = mainDockSpaceId;
 	if( mainDockSpaceId != 0 && ( !layoutBuilt || requestLayoutReset ) )
 	{
 		ImGuiDockNode* node = ImGui::DockBuilderGetNode( mainDockSpaceId );
