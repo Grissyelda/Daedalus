@@ -1,5 +1,6 @@
 @lesson
 @order 3
+@next lessons/models
 # Build, play and change things as you go
 
 The game plays a built version of your level. Building runs in the background, so you keep working while it does.

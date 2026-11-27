@@ -1391,6 +1391,7 @@ idDeclManagerLocal::ReloadFile
 */
 void idDeclManagerLocal::ReloadFile( const char* filename, bool force )
 {
+	bool found = false;
 	for( int i = 0; i < loadedFiles.Num(); i++ )
 	{
 		if( !loadedFiles[i]->fileName.Icmp( filename ) )
@@ -1398,7 +1399,37 @@ void idDeclManagerLocal::ReloadFile( const char* filename, bool force )
 			checksum ^= loadedFiles[i]->checksum;
 			loadedFiles[i]->Reload( force );
 			checksum ^= loadedFiles[i]->checksum;
+			found = true;
 		}
+	}
+	if( found )
+	{
+		return;
+	}
+
+	// GrizzTech4: a file written while running (the editor's importer, for one) is
+	// loaded the way it would have been at startup, if it sits in a decl folder
+	idStr fileName = filename;
+	fileName.BackSlashesToSlashes();
+	idStr folder = fileName;
+	folder.StripFilename();
+	idStr extension;
+	fileName.ExtractFileExtension( extension );
+	for( int i = 0; i < declFolders.Num(); i++ )
+	{
+		if( declFolders[i]->folder.Icmp( folder ) != 0 || declFolders[i]->extension.Icmp( va( ".%s", extension.c_str() ) ) != 0 )
+		{
+			continue;
+		}
+		if( fileSystem->GetFileLength( fileName ) <= 0 )
+		{
+			return;
+		}
+		idDeclFile* df = new( TAG_DECL ) idDeclFile( fileName, declFolders[i]->defaultType );
+		loadedFiles.Append( df );
+		df->LoadAndParse();
+		checksum ^= df->checksum;
+		return;
 	}
 }
 

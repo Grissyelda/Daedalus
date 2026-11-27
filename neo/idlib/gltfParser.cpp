@@ -2103,6 +2103,13 @@ bool GLTF_Parser::Load( idStr filename )
 	//.. and destroy data !!
 	gltfData* data = gltfData::Data( filename );
 	currentFile = filename;
+	const ID_TIME_T fileTime = fileSystem->GetTimestamp( filename );
+	if( data != nullptr && fileTime != FILE_NOT_FOUND_TIMESTAMP && fileTime > data->SourceTime() )
+	{
+		// GrizzTech4: the file changed since it was read (an editor reload), so read it again
+		delete data;
+		data = nullptr;
+	}
 	if( data != nullptr )
 	{
 		currentAsset = data;
@@ -2182,6 +2189,7 @@ bool GLTF_Parser::Load( idStr filename )
 		}
 	}
 	//CreateBgfxData();
+	currentAsset->SetSourceTime( fileTime );
 	return true;
 }
 
@@ -2347,9 +2355,15 @@ void gltfData::ClearData( idStr& fileName )
 
 	if( index != -1 )
 	{
+		// GrizzTech4: removing shifts every later entry down one, so the hash is rebuilt
+		// (RemoveIndex on the hash alone left the later files pointing one slot too far)
 		dataList.RemoveIndex( index );
-		dataList.Condense();
-		fileDataHash.RemoveIndex( key, index );
+		dataList.Condense();	// AssureSizeAlloc only makes new entries past the capacity, so don't leave a freed one there
+		fileDataHash.Clear();
+		for( int i = 0; i < dataList.Num(); i++ )
+		{
+			fileDataHash.Add( dataList[i]->FileNameHash(), i );
+		}
 	}
 	else
 	{

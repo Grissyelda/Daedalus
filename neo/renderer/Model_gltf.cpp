@@ -56,6 +56,73 @@ static const idMat4 blenderToDoomTransform( idAngles( 0.0f, 0.0f, 90 ).ToMat3(),
 //static const idMat4 blenderToDoomTransform = mat4_identity;
 static idRenderModelGLTF* lastMeshFromFile = nullptr;
 
+/*
+==============
+GrizzTech4: imported models
+
+The editor's importer keeps a model's materials next to it, named
+"<model path without extension>/<material>", so two models can both use a
+material called "Material.001" without clashing. It also writes the import
+settings (such as the size the model was made in) to "<model path without
+extension>.import" as a line "options -scale 39.37", which is used when the
+model isn't loaded through a modelDef with options of its own.
+==============
+*/
+static const idMaterial* FindModelMaterial( const idStr& modelFile, const char* materialName )
+{
+	if( modelFile.Length() > 0 )
+	{
+		idStr local = modelFile;
+		local.StripFileExtension();
+		local += "/";
+		for( const char* c = materialName; *c != '\0'; c++ )
+		{
+			const char ch = idStr::ToLower( *c );
+			const bool keep = ( ch >= 'a' && ch <= 'z' ) || ( ch >= '0' && ch <= '9' ) || ch == '_' || ch == '-';
+			local += keep ? ch : '_';
+		}
+		const idMaterial* mat = declManager->FindMaterial( local, false );
+		if( mat != NULL )
+		{
+			return mat;
+		}
+	}
+	return declManager->FindMaterial( materialName );
+}
+
+static bool ReadImportOptions( const char* fileName, idStr& commandLine )
+{
+	idStr sidecar = fileName;
+	int meshId = -1;
+	idStr meshName;
+	gltfManager::ExtractIdentifier( sidecar, meshId, meshName );
+	sidecar.SetFileExtension( "import" );
+
+	char* text = NULL;
+	if( fileSystem->ReadFile( sidecar, ( void** )&text ) <= 0 || text == NULL )
+	{
+		return false;
+	}
+	bool found = false;
+	idLexer src( text, idStr::Length( text ), sidecar, LEXFL_NOSTRINGCONCAT | LEXFL_ALLOWPATHNAMES | LEXFL_NOFATALERRORS );
+	idToken token;
+	while( src.ReadToken( &token ) )
+	{
+		if( token.Icmp( "options" ) == 0 )
+		{
+			src.ReadRestOfLine( commandLine );
+			commandLine.StripLeading( ' ' );
+			found = true;
+		}
+		else
+		{
+			src.SkipRestOfLine();
+		}
+	}
+	fileSystem->FreeFile( text );
+	return found;
+}
+
 bool idRenderModelStatic::ConvertGltfMeshToModelsurfaces( const gltfMesh* mesh )
 {
 	return false;
@@ -88,11 +155,12 @@ void idRenderModelGLTF::ProcessNode_r( gltfNode* modelNode, const idMat4& parent
 			}
 			if( mat != NULL && !gltf_forceBspMeshTexture.GetBool() )
 			{
-				surf.shader = declManager->FindMaterial( mat->name );
+				surf.shader = FindModelMaterial( gltfFileName, mat->name );
 			}
 			else
 			{
-				surf.shader = declManager->FindMaterial( "textures/base_wall/snpanel2rust" );
+				// GrizzTech4: there's no Doom 3 data to fall back on
+				surf.shader = declManager->FindMaterial( "_default" );
 			}
 			surf.id = this->NumSurfaces();
 
@@ -496,6 +564,9 @@ void idRenderModelGLTF::InitFromFile( const char* fileName, const idImportOption
 	}
 	else
 	{
+		// GrizzTech4: settings written by the editor's importer
+		ReadImportOptions( fileName, commandLine );
+
 		if( !commandLine.IsEmpty() )
 		{
 			localOptions = new idImportOptions();

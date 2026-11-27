@@ -87,6 +87,37 @@ void R_ReloadImages_f( const idCmdArgs& args )
 }
 #endif
 
+/*
+===============
+R_ReloadImage_f
+
+GrizzTech4: reload just the named images (the editor's importer uses it for
+the pictures it rewrote); unlike reloadImages it leaves the framebuffers alone
+===============
+*/
+#if !defined( DMAP )
+void R_ReloadImage_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		idLib::Printf( "USAGE: reloadImage <image> [image...]\n" );
+		return;
+	}
+	tr.commandList->open();
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		idImage* image = globalImages->GetImage( args.Argv( i ) );
+		if( image != NULL )
+		{
+			image->Reload( true, tr.commandList );
+		}
+	}
+	globalImages->LoadDeferredImages( tr.commandList );
+	tr.commandList->close();
+	deviceManager->GetDevice()->executeCommandList( tr.commandList );
+}
+#endif
+
 typedef struct
 {
 	idImage*	image;
@@ -770,6 +801,7 @@ void idImageManager::Init()
 	CreateIntrinsicImages();
 
 	cmdSystem->AddCommand( "reloadImages", R_ReloadImages_f, CMD_FL_RENDERER, "reloads images" );
+	cmdSystem->AddCommand( "reloadImage", R_ReloadImage_f, CMD_FL_RENDERER, "reloads the named images" );
 	cmdSystem->AddCommand( "cacheGlobalIlluminationData", CacheGlobalIlluminationData_f, CMD_FL_RENDERER, "turn env/maps/*.exr files into .bimage files" );
 #endif
 	cmdSystem->AddCommand( "listImages", R_ListImages_f, CMD_FL_RENDERER, "lists images" );

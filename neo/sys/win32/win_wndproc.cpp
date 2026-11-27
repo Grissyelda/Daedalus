@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../renderer/RenderCommon.h"
 
 #include <windowsx.h>
+#include <shellapi.h>
 #include <sys/DeviceManager.h>
 
 LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
@@ -281,6 +282,27 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 				WIN_EnableAltTab();
 			}
 			break;
+
+		case WM_DROPFILES:
+		{
+			// GrizzTech4: files dropped on the window from the desktop (the editor brings models in)
+			HDROP drop = ( HDROP )wParam;
+			const UINT count = DragQueryFileW( drop, 0xFFFFFFFF, NULL, 0 );
+			for( UINT i = 0; i < count && Sys_FileDropped != NULL; i++ )
+			{
+				wchar_t wide[MAX_PATH * 4];
+				if( DragQueryFileW( drop, i, wide, sizeof( wide ) / sizeof( wide[0] ) ) > 0 )
+				{
+					char utf8[MAX_PATH * 12];
+					if( WideCharToMultiByte( CP_UTF8, 0, wide, -1, utf8, sizeof( utf8 ), NULL, NULL ) > 0 )
+					{
+						Sys_FileDropped( utf8 );
+					}
+				}
+			}
+			DragFinish( drop );
+			return 0;
+		}
 
 		case WM_CLOSE:
 			soundSystem->SetMute( true );

@@ -175,3 +175,162 @@ void Sys_ProcessFree( void* handle )
 	}
 	delete process;
 }
+
+/*
+===============================================================================
+
+	The desktop (POSIX)
+
+	Showing a folder uses xdg-open (open on macOS); asking for a file uses
+	zenity or kdialog when one is installed. Without them the editor falls
+	back to typing a path or dropping the file on the window.
+
+===============================================================================
+*/
+
+void ( *Sys_FileDropped )( const char* osPath ) = NULL;
+
+// run a program without waiting for it and without a shell
+static void LaunchDetached( const char* program, const char* arg )
+{
+	const pid_t pid = fork();
+	if( pid == 0 )
+	{
+		// a grandchild, so nothing is left to reap
+		if( fork() == 0 )
+		{
+			setsid();
+			const int devNull = open( "/dev/null", O_RDWR );
+			if( devNull >= 0 )
+			{
+				dup2( devNull, STDIN_FILENO );
+				dup2( devNull, STDOUT_FILENO );
+				dup2( devNull, STDERR_FILENO );
+			}
+			execlp( program, program, arg, ( char* )NULL );
+		}
+		_exit( 0 );
+	}
+	if( pid > 0 )
+	{
+		int status;
+		waitpid( pid, &status, 0 );
+	}
+}
+
+void Sys_OpenFolder( const char* osPath )
+{
+#if defined( __APPLE__ )
+	LaunchDetached( "open", osPath );
+#else
+	LaunchDetached( "xdg-open", osPath );
+#endif
+}
+
+static bool HaveProgram( const char* program )
+{
+	const char* path = getenv( "PATH" );
+	if( path == NULL )
+	{
+		return false;
+	}
+	idStr dirs = path;
+	int start = 0;
+	while( start <= dirs.Length() )
+	{
+		int end = dirs.Find( ':', start );
+		if( end < 0 )
+		{
+			end = dirs.Length();
+		}
+		idStr candidate( dirs, start, end );
+		candidate += "/";
+		candidate += program;
+		if( access( candidate.c_str(), X_OK ) == 0 )
+		{
+			return true;
+		}
+		start = end + 1;
+	}
+	return false;
+}
+
+// run a dialog program and read the path it prints (blocks until it's closed)
+static bool RunDialog( const char* const* argv, char* path, int pathSize )
+{
+	int pipeFds[2];
+	if( pipe( pipeFds ) != 0 )
+	{
+		return false;
+	}
+	const pid_t pid = fork();
+	if( pid < 0 )
+	{
+		close( pipeFds[0] );
+		close( pipeFds[1] );
+		return false;
+	}
+	if( pid == 0 )
+	{
+		dup2( pipeFds[1], STDOUT_FILENO );
+		close( pipeFds[0] );
+		close( pipeFds[1] );
+		execvp( argv[0], ( char* const* )argv );
+		_exit( 127 );
+	}
+	close( pipeFds[1] );
+	int length = 0;
+	while( length < pathSize - 1 )
+	{
+		const ssize_t got = read( pipeFds[0], path + length, pathSize - 1 - length );
+		if( got <= 0 )
+		{
+			break;
+		}
+		length += ( int )got;
+	}
+	close( pipeFds[0] );
+	path[length] = '\0';
+	int status = 0;
+	waitpid( pid, &status, 0 );
+	while( length > 0 && ( path[length - 1] == '\n' || path[length - 1] == '\r' ) )
+	{
+		path[--length] = '\0';
+	}
+	return WIFEXITED( status ) && WEXITSTATUS( status ) == 0 && length > 0;
+}
+
+bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int pathSize )
+{
+	if( path == NULL || pathSize <= 1 )
+	{
+		return false;
+	}
+	path[0] = '\0';
+
+	// "Label|*.a;*.b" -> "Label | *.a *.b" for zenity, "*.a *.b|Label" for kdialog
+	idStr label = filter;
+	idStr patterns;
+	const int bar = label.Find( '|' );
+	if( bar >= 0 )
+	{
+		patterns = label.c_str() + bar + 1;
+		label.CapLength( bar );
+		patterns.Replace( ";", " " );
+	}
+
+	if( HaveProgram( "zenity" ) )
+	{
+		const idStr titleArg = va( "--title=%s", title );
+		const idStr filterArg = va( "--file-filter=%s | %s", label.c_str(), patterns.c_str() );
+		const char* argv[] = { "zenity", "--file-selection", titleArg.c_str(), filterArg.c_str(), NULL };
+		return RunDialog( argv, path, pathSize );
+	}
+	if( HaveProgram( "kdialog" ) )
+	{
+		const idStr filterArg = va( "%s|%s", patterns.c_str(), label.c_str() );
+		const char* argv[] = { "kdialog", "--title", title, "--getopenfilename", ".", filterArg.c_str(), NULL };
+		return RunDialog( argv, path, pathSize );
+	}
+	return false;
+}

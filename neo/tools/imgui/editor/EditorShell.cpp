@@ -31,6 +31,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorShell.h"
 #include "EditorDocument.h"
 #include "EditorPrefabs.h"
+#include "EditorImport.h"
 #include "EditorHelp.h"
 #include "EditorView.h"
 #include "EditorShapes.h"
@@ -229,6 +230,21 @@ static bool DrawPieceInspector();
 static void DrawPartCard();
 static void PlacePiece( const char* name, const idVec3& point );
 static void DrawPieceProblems( bool& any );
+static void PlaceModel( const char* name, const idVec3& point );
+static void DrawModelCard( idMapEntity* ent );
+static void DrawModelProblems( bool& any );
+static void DrawContentModels();
+static void DrawModelTiles();
+static int CountModelTiles();
+static void DrawImportDialog();
+static void ModelsUpdate();
+static void EditorImport_f( const idCmdArgs& args );
+static void EditorImportSize_f( const idCmdArgs& args );
+static void EditorImportTurn_f( const idCmdArgs& args );
+static void EditorReimport_f( const idCmdArgs& args );
+static void EditorPlaceModel_f( const idCmdArgs& args );
+static void EditorListImports_f( const idCmdArgs& args );
+static void EditorDropFile_f( const idCmdArgs& args );
 
 // quiet, wrapped hint text
 static void Hint( const char* text )
@@ -1550,6 +1566,13 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorShowMe", EditorShowMe_f, CMD_FL_SYSTEM, "makes a control glow, as a lesson's Show me does: editorShowMe [tab/]control" );
 	cmdSystem->AddCommand( "editorHelp", EditorHelp_f, CMD_FL_SYSTEM, "opens the Help panel, on a page if given: editorHelp [page]" );
 	cmdSystem->AddCommand( "editorDuplicate", EditorDuplicate_f, CMD_FL_SYSTEM, "duplicates the selection: editorDuplicate <dx> <dy> <dz>" );
+	cmdSystem->AddCommand( "editorImport", EditorImport_f, CMD_FL_SYSTEM, "brings a model file in (.glb, .gltf, .obj): editorImport <file> [place]" );
+	cmdSystem->AddCommand( "editorImportSize", EditorImportSize_f, CMD_FL_SYSTEM, "what a model was made in: editorImportSize <model> <meters|centimeters|units|scale>" );
+	cmdSystem->AddCommand( "editorImportTurn", EditorImportTurn_f, CMD_FL_SYSTEM, "turns a model itself: editorImportTurn <model> <degrees>" );
+	cmdSystem->AddCommand( "editorReimport", EditorReimport_f, CMD_FL_SYSTEM, "brings a model in again from its file: editorReimport <model>" );
+	cmdSystem->AddCommand( "editorPlaceModel", EditorPlaceModel_f, CMD_FL_SYSTEM, "adds a model to the level: editorPlaceModel <model> [x y z]" );
+	cmdSystem->AddCommand( "editorListImports", EditorListImports_f, CMD_FL_SYSTEM, "lists the models brought in" );
+	cmdSystem->AddCommand( "editorDropFile", EditorDropFile_f, CMD_FL_SYSTEM, "acts as if a file was dropped on the window: editorDropFile <file>" );
 
 	// F10 always gets back to the editor while playing
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "bind F10 editorStop\n" );
@@ -2978,6 +3001,10 @@ static void DrawEntityInspector( idMapEntity* ent )
 	{
 		DrawLightCard( ent );
 	}
+	if( !isWorld && ent->GetNumPrimitives() == 0 && Import::IsModelFile( ent->epairs.GetString( "model" ) ) )
+	{
+		DrawModelCard( ent );
+	}
 	if( ent->GetNumPrimitives() > 0 && !isWorld )
 	{
 		if( UI::BeginCard( "brushes", ICON_BRUSH, "Brushes", "This thing is made of brushes. Giving them back turns them into plain level geometry again." ) )
@@ -3407,6 +3434,11 @@ static void DrawContentBrowser()
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}
+		if( ImGui::BeginTabItem( ICON_SHAPE_BOX "  Models" ) )
+		{
+			DrawContentModels();
+			ImGui::EndTabItem();
+		}
 
 		ImGui::EndTabBar();
 	}
@@ -3539,6 +3571,7 @@ static void DrawProblems()
 	}
 
 	DrawPieceProblems( any );
+	DrawModelProblems( any );
 
 	// what the last build said, while it's about the open level
 	const bool buildAboutThis = document.IsOpen() && buildHasResult && buildResultMap.Icmp( document.Name() ) == 0 && !BuildRunning();
@@ -6064,6 +6097,554 @@ static void DrawPieceEditBanner( const ImGuiDockNode* central )
 }
 
 /*
+===============================================================================
+
+	Models (see EditorImport.h)
+
+	A model comes in by dragging its file onto the window, from Kits >
+	Bring in a model, or by saving it into the project's import folder. It's
+	placed as a "Static detail" thing whose model is the imported file. Its
+	source is watched, so saving it again in Blender updates it here (and in a
+	paused game) a moment later.
+
+===============================================================================
+*/
+
+static bool			modelImportRequest = false;
+static char			modelImportPath[1024] = "";
+static bool			modelImportPlace = true;
+static idStr		modelImportError;
+static int			modelViewRebuild = 0;			// frames left to rebuild the view after models reload
+static idStr		modelDropPending;				// a dropped file waiting for the mouse to be over the view
+
+// the size a model comes out at in the level
+static bool ModelBounds( const char* modelPath, idBounds& bounds )
+{
+	idRenderModel* model = renderModelManager->FindModel( modelPath );
+	if( model == NULL || model->IsDefaultModel() )
+	{
+		return false;
+	}
+	bounds = model->Bounds();
+	return !bounds.IsCleared();
+}
+
+// a "Static detail" thing showing the model, standing on the point
+static void PlaceModel( const char* name, const idVec3& point )
+{
+	const Import::model_t* m = Import::FindByName( name );
+	if( m == NULL || !document.IsOpen() )
+	{
+		return;
+	}
+	idVec3 origin = point;
+	idBounds bounds;
+	if( ModelBounds( m->model, bounds ) )
+	{
+		origin.z -= bounds[0].z;	// its lowest point on the floor
+	}
+	idDict keys;
+	keys.Set( "model", m->model );
+	keys.Set( "name", document.Map()->GetUniqueEntityName( m->name ) );
+	document.BeginChange( va( "Add %s", m->name.c_str() ) );
+	document.AddEntity( "func_static", origin, &keys );
+	Help::Event( "model.placed" );
+}
+
+static bool ImportModel( const char* osPath, bool place, bool atMouse )
+{
+	idStr name, message;
+	const int before = Import::Models().Num();
+	if( !Import::ImportFile( osPath, name, message ) )
+	{
+		Status( message );
+		modelImportError = message;
+		return false;
+	}
+	modelImportError.Clear();
+	modelViewRebuild = 3;
+	Status( message );
+	Help::Event( Import::Models().Num() > before ? "model.imported" : "model.updated" );
+	if( place && document.IsOpen() )
+	{
+		const ImGuiIO& io = ImGui::GetIO();
+		PlaceModel( name, atMouse ? PlacementPointAt( io.MousePos.x, io.MousePos.y ) : PlacementPoint() );
+	}
+	return true;
+}
+
+// once a frame: sources that changed, files saved into the import folder, files dropped on the window
+static void ModelsUpdate()
+{
+	if( Import::Poll() )
+	{
+		modelViewRebuild = 3;
+		Help::Event( "model.updated" );
+	}
+	if( modelViewRebuild > 0 )
+	{
+		// the models reload at the start of a frame (reloadModels), so rebuild for a few frames
+		modelViewRebuild--;
+		view.Rebuild();
+	}
+
+	idStr dropped;
+	while( Import::TakeDroppedFile( dropped ) )
+	{
+		if( !Import::IsModelFile( dropped ) )
+		{
+			Status( "Only .glb, .gltf and .obj models can be dropped here." );
+			continue;
+		}
+		// dropped on the view: place it where it landed (the mouse position arrives with the next events)
+		modelDropPending = dropped;
+	}
+	if( modelDropPending.Length() > 0 && !IsPlaying() )
+	{
+		const bool overPanel = ImGui::IsWindowHovered( ImGuiHoveredFlags_AnyWindow );
+		ImportModel( modelDropPending, document.IsOpen(), !overPanel && !planView );
+		modelDropPending.Clear();
+	}
+}
+
+static void DrawImportDialog()
+{
+	if( modelImportRequest )
+	{
+		modelImportRequest = false;
+		modelImportError.Clear();
+		ImGui::OpenPopup( "Bring in a model" );
+	}
+	ImGui::SetNextWindowSize( ImVec2( 520.0f * UI::Scale(), 0.0f ) );
+	if( !ImGui::BeginPopupModal( "Bring in a model", NULL, ImGuiWindowFlags_NoResize ) )
+	{
+		return;
+	}
+	UI::Hint( "Bring in a .glb or .gltf (glTF 2) or an .obj file: from Blender, an asset store or anywhere else. Its pictures and materials come with it." );
+	ImGui::Spacing();
+	UI::FieldLabel( "File" );
+	ImGui::SetNextItemWidth( -FLT_MIN - 90.0f * UI::Scale() );
+	const bool enter = ImGui::InputTextWithHint( "##modelpath", "Paste or type where the file is", modelImportPath, sizeof( modelImportPath ), ImGuiInputTextFlags_EnterReturnsTrue );
+	ImGui::SameLine();
+	if( ImGui::Button( ICON_OPEN "  Browse", ImVec2( 84.0f * UI::Scale(), 0 ) ) )
+	{
+		idStr path;
+		if( Import::BrowseForModel( path ) )
+		{
+			idStr::Copynz( modelImportPath, path.c_str(), sizeof( modelImportPath ) );
+		}
+		else
+		{
+			modelImportError = "No file window is available here: paste the file's path, or drag the file onto the editor.";
+		}
+	}
+	ImGui::Checkbox( "Place it in the level", &modelImportPlace );
+	if( modelImportError.Length() > 0 )
+	{
+		ImGui::TextColored( UI::Warn(), ICON_WARNING );
+		ImGui::SameLine();
+		ImGui::PushTextWrapPos( 0.0f );
+		ImGui::TextUnformatted( modelImportError.c_str() );
+		ImGui::PopTextWrapPos();
+	}
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+	ImGui::TextUnformatted( ICON_INFO "  Two quicker ways" );
+	UI::Hint( "Drag a model file from your desktop onto the editor: it lands where you drop it.\n"
+			  "Or save models into your project's import folder: they come in by themselves, and every time you save them again they update in the editor." );
+	if( ImGui::Button( ICON_OPEN "  Open the import folder" ) )
+	{
+		Import::ShowFolder( Import::ImportFolder() );
+	}
+	UI::Tip( Import::ImportFolder().c_str() );
+
+	ImGui::Spacing();
+	idStr path = modelImportPath;
+	path.StripLeading( ' ' );
+	path.StripTrailingWhitespace();
+	path.StripLeading( '"' );
+	path.StripTrailing( '"' );
+	const bool ok = path.Length() > 0;
+	ImGui::BeginDisabled( !ok );
+	if( ( UI::ColorButton( ICON_OK "  Bring it in", UI::Accent(), ImVec2( 140.0f * UI::Scale(), 0 ) ) || enter ) && ok )
+	{
+		if( ImportModel( path, modelImportPlace, false ) )
+		{
+			modelImportPath[0] = '\0';
+			ImGui::CloseCurrentPopup();
+		}
+	}
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if( ImGui::Button( "Cancel" ) || ImGui::IsKeyPressed( ImGuiKey_Escape ) )
+	{
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+}
+
+static int CountModelTiles()
+{
+	return 1 + Import::Models().Num();
+}
+
+static void DrawModelTiles()
+{
+	if( UI::ToolTile( "importmodel", ICON_OPEN, "Bring in", false, "Bring in a model (.glb, .gltf or .obj) from Blender or anywhere else.\nYou can also drag a model file onto the editor, or save it into the project's import folder.", true, dockTile ) )
+	{
+		modelImportRequest = true;
+	}
+	const idList<Import::model_t>& models = Import::Models();
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		ImGui::SameLine();
+		const idStr tip = va( "The model \"%s\".\nClick to add one in the middle of the view, or drag it in.", models[i].name.c_str() );
+		if( UI::ToolTile( va( "model:%s", models[i].name.c_str() ), ICON_SHAPE_BOX, models[i].name, false, tip, document.IsOpen(), dockTile ) )
+		{
+			PlaceModel( models[i].name, PlacementPoint() );
+		}
+		DragOut( -1, va( "model:%s", models[i].name.c_str() ) );
+	}
+}
+
+// the Model card, for things showing a model file
+static void DrawModelCard( idMapEntity* ent )
+{
+	const idStr modelPath = ent->epairs.GetString( "model" );
+	const Import::model_t* m = Import::FindByModel( modelPath );
+	if( !UI::BeginCard( "model", ICON_SHAPE_BOX, "Model", "The model this thing shows. Models brought in update by themselves when their file is saved again." ) )
+	{
+		UI::EndCard();
+		return;
+	}
+
+	idBounds bounds;
+	const bool haveBounds = ModelBounds( modelPath, bounds );
+	if( m == NULL )
+	{
+		UI::FieldLabel( "File" );
+		ImGui::TextUnformatted( modelPath.c_str() );
+		if( !haveBounds )
+		{
+			ImGui::TextColored( UI::Warn(), ICON_WARNING "  This model file can't be found." );
+		}
+		UI::EndCard();
+		return;
+	}
+
+	UI::FieldLabel( "Name" );
+	ImGui::TextUnformatted( m->name.c_str() );
+
+	// how big it is, in meters and game units
+	if( haveBounds )
+	{
+		const idVec3 size = bounds[1] - bounds[0];
+		UI::FieldLabel( "Size" );
+		ImGui::Text( "%.2f x %.2f x %.2f m", size.x * 0.0254f, size.y * 0.0254f, size.z * 0.0254f );
+		UI::Tip( va( "%.0f x %.0f x %.0f game units (1 unit is an inch; the player is about 1.8 m tall)", size.x, size.y, size.z ) );
+	}
+
+	// what it was made in sets its size
+	UI::FieldLabel( "Made in" );
+	ImGui::SetNextItemWidth( -FLT_MIN );
+	if( ImGui::BeginCombo( "##madein", Import::MadeInLabel( m->madeIn ) ) )
+	{
+		for( int i = 0; i < Import::MADE_IN_CUSTOM; i++ )
+		{
+			if( ImGui::Selectable( Import::MadeInLabel( ( Import::madeIn_t )i ), m->madeIn == i ) )
+			{
+				idStr message;
+				Import::SetMadeIn( m->name, ( Import::madeIn_t )i, 0.0f, message );
+				Status( message );
+				modelViewRebuild = 3;
+				Help::Event( "model.size" );
+			}
+		}
+		if( ImGui::Selectable( Import::MadeInLabel( Import::MADE_IN_CUSTOM ), m->madeIn == Import::MADE_IN_CUSTOM ) )
+		{
+			idStr message;
+			Import::SetMadeIn( m->name, Import::MADE_IN_CUSTOM, Import::MadeInScale( m->madeIn, m->customScale ), message );
+			Status( message );
+			modelViewRebuild = 3;
+		}
+		ImGui::EndCombo();
+	}
+	UI::Tip( "glTF files are made in meters. If the model comes out much too big or too small, pick what it was made in." );
+	if( m->madeIn == Import::MADE_IN_CUSTOM )
+	{
+		static float customScale = 1.0f;
+		static idStr customFor;
+		if( customFor != m->name )
+		{
+			customFor = m->name;
+			customScale = m->customScale;
+		}
+		UI::FieldLabel( "Scale" );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		ImGui::DragFloat( "##customscale", &customScale, 0.05f, 0.001f, 10000.0f, "%.3f units per model unit" );
+		if( ImGui::IsItemDeactivatedAfterEdit() )
+		{
+			idStr message;
+			Import::SetMadeIn( m->name, Import::MADE_IN_CUSTOM, customScale, message );
+			Status( message );
+			modelViewRebuild = 3;
+			Help::Event( "model.size" );
+		}
+	}
+
+	// facing, for models that were made facing another way
+	UI::FieldLabel( "Turn" );
+	if( ImGui::Button( ICON_TURN_LEFT "##modelturnleft" ) )
+	{
+		idStr message;
+		Import::SetTurn( m->name, m->turn + 90.0f, message );
+		Status( message );
+		modelViewRebuild = 3;
+	}
+	UI::Tip( "Turn the model itself a quarter left (every copy). To turn just this one, use Facing above." );
+	ImGui::SameLine();
+	if( ImGui::Button( ICON_TURN_RIGHT "##modelturnright" ) )
+	{
+		idStr message;
+		Import::SetTurn( m->name, m->turn - 90.0f, message );
+		Status( message );
+		modelViewRebuild = 3;
+	}
+	UI::Tip( "Turn the model itself a quarter right (every copy)" );
+	ImGui::SameLine();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextDisabled( "%.0f%s", m->turn, "\xc2\xb0" );
+
+	// where it came from
+	idStr sourceName = m->source;
+	sourceName.StripPath();
+	UI::FieldLabel( "From" );
+	if( m->sourceMissing )
+	{
+		ImGui::TextColored( UI::Warn(), ICON_WARNING "  %s (missing)", sourceName.c_str() );
+		UI::Tip( va( "%s\n\nThe model stays as it was last brought in. Bring the file back to have it update again.", m->source.c_str() ) );
+	}
+	else
+	{
+		ImGui::TextUnformatted( sourceName.c_str() );
+		UI::Tip( va( "%s\n\nSave this file again and the model updates by itself.", m->source.c_str() ) );
+	}
+	if( ImGui::Button( ICON_UNDO "  Update now" ) )
+	{
+		idStr message;
+		Import::Reimport( m->name, message );
+		Status( message );
+		modelViewRebuild = 3;
+	}
+	UI::Tip( "Read the file again now (it also happens by itself when the file is saved)" );
+	ImGui::SameLine();
+	if( ImGui::Button( ICON_OPEN "  Show file" ) )
+	{
+		idStr folder = m->source;
+		const bool absolute = folder.Length() > 1 && ( folder[0] == '/' || folder[1] == ':' );
+		if( !absolute )
+		{
+			folder = fileSystem->RelativePathToOSPath( folder, "fs_basepath" );
+		}
+		folder.BackSlashesToSlashes();
+		folder.StripFilename();
+		Import::ShowFolder( folder );
+	}
+
+	ImGui::TextDisabled( "%d material%s, %d picture%s", m->materials, m->materials == 1 ? "" : "s", m->textures, m->textures == 1 ? "" : "s" );
+	for( int i = 0; i < m->warnings.Num(); i++ )
+	{
+		ImGui::PushTextWrapPos( 0.0f );
+		ImGui::TextColored( UI::Warn(), ICON_INFO " %s", m->warnings[i].c_str() );
+		ImGui::PopTextWrapPos();
+	}
+	UI::EndCard();
+}
+
+// notes from bringing models in, for the models this level uses
+static void DrawModelProblems( bool& any )
+{
+	const idMapFile* map = document.Map();
+	if( map == NULL )
+	{
+		return;
+	}
+	idStrList shown;
+	for( int e = 1; e < map->GetNumEntities(); e++ )
+	{
+		const Import::model_t* m = Import::FindByModel( map->GetEntity( e )->epairs.GetString( "model" ) );
+		if( m == NULL || shown.FindIndex( m->name ) >= 0 )
+		{
+			continue;
+		}
+		shown.Append( m->name );
+		for( int i = 0; i < m->warnings.Num(); i++ )
+		{
+			any = true;
+			ProblemRow( va( "%s: %s", m->name.c_str(), m->warnings[i].c_str() ) );
+		}
+		if( m->sourceMissing )
+		{
+			any = true;
+			ProblemRow( va( "%s: the file it was brought in from (%s) is gone, so it won't update any more.", m->name.c_str(), m->source.c_str() ) );
+		}
+	}
+	if( modelImportError.Length() > 0 )
+	{
+		any = true;
+		ProblemRow( modelImportError );
+	}
+}
+
+// Content > Models
+static void DrawContentModels()
+{
+	if( ImGui::Button( ICON_PLUS "  Bring in a model" ) )
+	{
+		modelImportRequest = true;
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( ICON_OPEN "  Import folder" ) )
+	{
+		Import::ShowFolder( Import::ImportFolder() );
+	}
+	UI::Tip( "Models saved into this folder come in by themselves" );
+	ImGui::SameLine();
+	ImGui::AlignTextToFramePadding();
+	Hint( "Double-click to add one to the level." );
+
+	ImGui::BeginChild( "models" );
+	const idList<Import::model_t>& models = Import::Models();
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		const Import::model_t& m = models[i];
+		if( ImGui::Selectable( va( ICON_SHAPE_BOX "  %s##model%d", m.name.c_str(), i ), false, ImGuiSelectableFlags_AllowDoubleClick ) &&
+				ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+		{
+			PlaceModel( m.name, PlacementPoint() );
+		}
+		DragOut( -1, va( "model:%s", m.name.c_str() ) );
+		RowType( m.sourceMissing ? "file gone" : ( m.warnings.Num() > 0 ? "notes" : Import::MadeInLabel( m.madeIn ) ) );
+	}
+	if( models.Num() == 0 )
+	{
+		Hint( "No models brought in yet. Drag a .glb, .gltf or .obj file onto the editor to start." );
+	}
+	ImGui::EndChild();
+}
+
+/*
+-------------------------------------------------------------------------------
+	model console commands (for tests and scripting)
+-------------------------------------------------------------------------------
+*/
+
+static void EditorImport_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		common->Printf( "usage: editorImport <file> [place]\n" );
+		return;
+	}
+	ImportModel( args.Args( 1, args.Argc() >= 3 && idStr::Icmp( args.Argv( args.Argc() - 1 ), "place" ) == 0 ? args.Argc() - 2 : -1 ),
+				 args.Argc() >= 3 && idStr::Icmp( args.Argv( args.Argc() - 1 ), "place" ) == 0, false );
+}
+
+static void EditorImportSize_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		common->Printf( "usage: editorImportSize <model> <meters|centimeters|units|scale>\n" );
+		return;
+	}
+	idStr message;
+	const char* what = args.Argv( 2 );
+	Import::madeIn_t madeIn = Import::MADE_IN_CUSTOM;
+	if( idStr::Icmp( what, "meters" ) == 0 )
+	{
+		madeIn = Import::MADE_IN_METERS;
+	}
+	else if( idStr::Icmp( what, "centimeters" ) == 0 )
+	{
+		madeIn = Import::MADE_IN_CENTIMETERS;
+	}
+	else if( idStr::Icmp( what, "units" ) == 0 )
+	{
+		madeIn = Import::MADE_IN_INCHES;
+	}
+	Import::SetMadeIn( args.Argv( 1 ), madeIn, madeIn == Import::MADE_IN_CUSTOM ? atof( what ) : 0.0f, message );
+	modelViewRebuild = 3;
+	common->Printf( "%s\n", message.c_str() );
+}
+
+static void EditorImportTurn_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 )
+	{
+		common->Printf( "usage: editorImportTurn <model> <degrees>\n" );
+		return;
+	}
+	idStr message;
+	Import::SetTurn( args.Argv( 1 ), atof( args.Argv( 2 ) ), message );
+	modelViewRebuild = 3;
+	common->Printf( "%s\n", message.c_str() );
+}
+
+static void EditorReimport_f( const idCmdArgs& args )
+{
+	idStr message;
+	Import::Reimport( args.Argv( 1 ), message );
+	modelViewRebuild = 3;
+	common->Printf( "%s\n", message.c_str() );
+}
+
+static void EditorPlaceModel_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		common->Printf( "usage: editorPlaceModel <model> [x y z]\n" );
+		return;
+	}
+	idVec3 point = PlacementPoint();
+	if( args.Argc() >= 5 )
+	{
+		point.Set( atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ) );
+	}
+	PlaceModel( args.Argv( 1 ), point );
+}
+
+static void EditorListImports_f( const idCmdArgs& args )
+{
+	const idList<Import::model_t>& models = Import::Models();
+	for( int i = 0; i < models.Num(); i++ )
+	{
+		const Import::model_t& m = models[i];
+		idBounds bounds;
+		idStr size = "?";
+		if( ModelBounds( m.model, bounds ) )
+		{
+			size = va( "%.1f %.1f %.1f .. %.1f %.1f %.1f", bounds[0].x, bounds[0].y, bounds[0].z, bounds[1].x, bounds[1].y, bounds[1].z );
+		}
+		common->Printf( "%s: %s from %s, %s, turn %g, %d materials, %d pictures, %d meshes%s, bounds %s%s\n", m.name.c_str(), m.model.c_str(), m.source.c_str(),
+						Import::MadeInLabel( m.madeIn ), m.turn, m.materials, m.textures, m.meshes, m.skinned ? ", skinned" : "", size.c_str(),
+						m.sourceMissing ? " (source missing)" : "" );
+		for( int j = 0; j < m.warnings.Num(); j++ )
+		{
+			common->Printf( "    note: %s\n", m.warnings[j].c_str() );
+		}
+	}
+	common->Printf( "%d imported models\n", models.Num() );
+}
+
+static void EditorDropFile_f( const idCmdArgs& args )
+{
+	// what dropping a file on the window does, for tests
+	Import::QueueDroppedFile( args.Args() );
+}
+
+/*
 -------------------------------------------------------------------------------
 	piece console commands (for tests and scripting)
 -------------------------------------------------------------------------------
@@ -6460,6 +7041,8 @@ static void DrawKitTiles()
 	}
 	TileDivider();
 	DrawPieceTiles();
+	TileDivider();
+	DrawModelTiles();
 }
 
 static ImVec2 dockTopCenter( 0, 0 );
@@ -6508,7 +7091,7 @@ static float ModeRowWidth( editMode_t mode )
 		case MODE_LIGHT:
 			return TileRowWidth( 5, 0 );
 		default:
-			return TileRowWidth( CountDefs( false ) + 1, 1 );
+			return TileRowWidth( CountDefs( false ) + 1 + ( int )pieceNames.Num() + CountModelTiles(), 2 );
 	}
 }
 
@@ -6893,6 +7476,10 @@ static void HandleShapeDrag()
 	{
 		label = draggingThing.c_str() + 6;
 	}
+	else if( draggingThing.Cmpn( "model:", 6 ) == 0 )
+	{
+		label = draggingThing.c_str() + 6;
+	}
 	else
 	{
 		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, draggingThing, false ) );
@@ -6951,6 +7538,10 @@ static void HandleShapeDrag()
 			else if( draggingThing.Cmpn( "piece:", 6 ) == 0 )
 			{
 				PlacePiece( draggingThing.c_str() + 6, point );
+			}
+			else if( draggingThing.Cmpn( "model:", 6 ) == 0 )
+			{
+				PlaceModel( draggingThing.c_str() + 6, point );
 			}
 			else
 			{
@@ -7740,6 +8331,8 @@ void Draw( unsigned int mainDockSpaceId )
 
 	RegisterCommands();
 	BuildUpdate();
+	Sys_FileDropped = Import::QueueDroppedFile;
+	ModelsUpdate();
 	document.afterChange = PieceAfterChange;
 	document.filesRestored = PieceFilesRestored;
 	prefabFileWritten = PieceFileWritten;
@@ -7858,6 +8451,7 @@ void Draw( unsigned int mainDockSpaceId )
 	DrawWelcome();
 	DrawNewProjectDialog();
 	DrawMakePieceDialog();
+	DrawImportDialog();
 	UI::DrawHighlights();
 	DrawOpenProjectDialog();
 	DrawMapNameDialog( "Save Map As", openSaveAsPopup, false );

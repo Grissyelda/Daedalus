@@ -633,6 +633,13 @@ void			Sys_ProcessKill( void* process );
 void			Sys_ProcessFree( void* process );						// after it has finished or been killed
 const char* 	Sys_EXEPath();
 
+// GrizzTech4: the desktop. Paths are OS paths in UTF-8.
+void			Sys_OpenFolder( const char* osPath );		// show a folder in the system's file browser
+// ask for a file to open; filter is "Label|*.a;*.b". False if cancelled, or if there's no such window here.
+bool			Sys_OpenFileDialog( const char* title, const char* filter, char* path, int pathSize );
+// called with each file dropped on the main window, on the thread that handles window messages
+extern void ( *Sys_FileDropped )( const char* osPath );
+
 // GrizzTech4: extra OS windows, for editor panels dragged out of the main window
 // (e.g. onto another monitor). Rectangles are client areas in screen pixels.
 struct sysScreenRect_t

@@ -29,6 +29,12 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "win_local.h"
 
+#include <shellapi.h>
+#include <commdlg.h>
+
+#pragma comment( lib, "comdlg32.lib" )
+#pragma comment( lib, "shell32.lib" )
+
 /*
 ===============================================================================
 
@@ -226,4 +232,61 @@ void Sys_ProcessFree( void* handle )
 		CloseHandle( process->output );
 	}
 	delete process;
+}
+
+/*
+===============================================================================
+
+	The desktop (Win32)
+
+===============================================================================
+*/
+
+void ( *Sys_FileDropped )( const char* osPath ) = NULL;
+
+void Sys_OpenFolder( const char* osPath )
+{
+	idStr path = osPath;
+	path.SlashesToBackSlashes();
+	idList<wchar_t> wide = Widen( path.c_str() );
+	ShellExecuteW( NULL, L"open", wide.Ptr(), NULL, NULL, SW_SHOWNORMAL );
+}
+
+bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int pathSize )
+{
+	if( path == NULL || pathSize <= 1 )
+	{
+		return false;
+	}
+	path[0] = '\0';
+
+	// "Label|*.a;*.b" -> "Label\0*.a;*.b\0\0"
+	idList<wchar_t> wideFilter = Widen( filter );
+	wideFilter.Append( 0 );
+	for( int i = 0; i < wideFilter.Num(); i++ )
+	{
+		if( wideFilter[i] == L'|' )
+		{
+			wideFilter[i] = 0;
+		}
+	}
+	idList<wchar_t> wideTitle = Widen( title );
+
+	wchar_t file[MAX_PATH * 4];
+	file[0] = 0;
+	OPENFILENAMEW ofn;
+	memset( &ofn, 0, sizeof( ofn ) );
+	ofn.lStructSize = sizeof( ofn );
+	ofn.hwndOwner = win32.hWnd;
+	ofn.lpstrFilter = wideFilter.Ptr();
+	ofn.lpstrFile = file;
+	ofn.nMaxFile = sizeof( file ) / sizeof( file[0] );
+	ofn.lpstrTitle = wideTitle.Ptr();
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
+	if( !GetOpenFileNameW( &ofn ) )
+	{
+		return false;
+	}
+	const int n = WideCharToMultiByte( CP_UTF8, 0, file, -1, path, pathSize, NULL, NULL );
+	return n > 0;
 }

@@ -70,6 +70,12 @@ public:
 	// rebuild from the document when it has changed
 	void			Sync( const Document& doc );
 
+	// build again on the next Sync even if the document hasn't changed (a model it uses was reloaded)
+	void			Rebuild()
+	{
+		builtRevision = -1;
+	}
+
 	// render the 3D view (fills the screen behind the editor panels)
 	void			Draw( const Document& doc );
 

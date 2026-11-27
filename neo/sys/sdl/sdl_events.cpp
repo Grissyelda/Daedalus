@@ -851,6 +851,26 @@ sysEvent_t Sys_GetEvent()
 				// Avoid more 'unknown event' spam
 				continue;
 
+			case SDL_DROPFILE:
+				// GrizzTech4: a file dropped on the window from the desktop (the editor brings models in)
+				if( ev.drop.file != NULL )
+				{
+					if( Sys_FileDropped != NULL )
+					{
+						Sys_FileDropped( ev.drop.file );
+					}
+					SDL_free( ev.drop.file );
+				}
+				continue;
+
+			case SDL_DROPTEXT:
+				SDL_free( ev.drop.file );
+				continue;
+
+			case SDL_DROPBEGIN:
+			case SDL_DROPCOMPLETE:
+				continue;
+
 			case SDL_QUIT:
 				PushConsoleEvent( "quit" );
 				res = no_more_events; // don't handle next event, just quit.

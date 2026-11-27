@@ -704,7 +704,12 @@ void idRenderModelManagerLocal::ReloadModels( bool forceAll )
 		common->Printf( "Checking for changed model files...\n" );
 	}
 
+	// GrizzTech4: a model's GPU buffers go when it reloads, so let the frames still using them finish
+	deviceManager->GetDevice()->waitForIdle();
+
 	R_FreeDerivedData();
+
+	idList<idRenderModel*> reloaded;
 
 	// skip the default model at index 0
 	for( int i = 1; i < models.Num(); i++ )
@@ -778,6 +783,26 @@ void idRenderModelManagerLocal::ReloadModels( bool forceAll )
 		{
 			model->LoadModel();
 		}
+		reloaded.Append( model );
+	}
+
+	// GrizzTech4: give the reloaded models their static buffers, as a level load does
+	if( reloaded.Num() > 0 && commandList )
+	{
+		commandList->open();
+		for( int i = 0; i < reloaded.Num(); i++ )
+		{
+			reloaded[i]->CreateBuffers( commandList );
+			if( reloaded[i]->IsLoaded() )
+			{
+				for( int j = 0; j < reloaded[i]->NumSurfaces(); j++ )
+				{
+					R_CreateStaticBuffersForTri( *( reloaded[i]->Surface( j )->geometry ), commandList );
+				}
+			}
+		}
+		commandList->close();
+		deviceManager->GetDevice()->executeCommandList( commandList );
 	}
 
 	// we must force the world to regenerate, because models may

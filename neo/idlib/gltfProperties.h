@@ -765,7 +765,7 @@ public:
 class gltfData
 {
 public:
-	gltfData() : fileName( "" ), fileNameHash( 0 ), json( nullptr ), data( nullptr ), totalChunks( -1 ) { };
+	gltfData() : fileName( "" ), fileNameHash( 0 ), json( nullptr ), data( nullptr ), totalChunks( -1 ), sourceTime( 0 ) { };
 	~gltfData();
 	byte* AddData( int size, int* bufferID = nullptr );
 	byte* GetJsonData( int& size )
@@ -785,6 +785,15 @@ public:
 	int FileNameHash()
 	{
 		return fileNameHash;
+	}
+	// GrizzTech4: when the file was read, so a changed file is read again
+	ID_TIME_T SourceTime() const
+	{
+		return sourceTime;
+	}
+	void SetSourceTime( ID_TIME_T time )
+	{
+		sourceTime = time;
 	}
 	idStr& FileName()
 	{
@@ -1554,6 +1563,7 @@ private:
 	byte** data;
 	int jsonDataLength;
 	int totalChunks;
+	ID_TIME_T sourceTime;
 
 	idList<gltfBuffer*>			buffers;
 	idList<gltfImage*>			images;
