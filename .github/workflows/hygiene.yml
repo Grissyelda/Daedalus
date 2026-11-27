@@ -1,6 +1,6 @@
 name: Hygiene
 
-# GrizzTech4 is public. Every pushed or proposed commit is checked for personal
+# Daedalus is public. Every pushed or proposed commit is checked for personal
 # information, local paths, secrets and design documents.
 
 on:

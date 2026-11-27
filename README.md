@@ -22,7 +22,7 @@ Create, Understand, and Control. E.G; Block coding into nodes into Doom script. 
 Clone with submodules:
 
 ```
-git clone --recurse-submodules https://github.com/Grissyelda/GrizzTech4.git
+git clone --recurse-submodules https://github.com/Grissyelda/Daedalus.git
 ```
 
 You need CMake 3.25 or newer, [ISPC](https://github.com/ispc/ispc/releases) on your `PATH`, and:
@@ -60,7 +60,7 @@ Run the executable from the repository root (or a package folder), next to `cont
 - Start with `+set editor 0` to run as the game, without the editor. `editor_uiScale` makes the editor's text and controls bigger or smaller.
 - **Help** (**F1**) has a page for every part of the editor, reached from the **?** buttons on panels, cards and tools, and lessons that tick themselves off as you go, with **Show me** to make the right button glow. Pages and lessons are Markdown files in `content/editor/help/`; a project can add its own, or replace the engine's, in its own `editor/help/` folder (the file format is described in `neo/tools/imgui/editor/EditorHelp.h`).
 
-`content/` holds the engine's own content: default materials, the `grizzsans` font (generated from DejaVu Sans), prototype grid textures, the default player and a test room. The editor's UI fonts are [Inter](https://rsms.me/inter/) (SIL Open Font License) and [Lucide](https://lucide.dev) icons (ISC license), in `content/editor/fonts`. The scripts in `scripts/content/` regenerate the fonts, textures and test map.
+`content/` holds the engine's own content: default materials, the `daedalussans` font (generated from DejaVu Sans), prototype grid textures, the default player and a test room. The editor's UI fonts are [Inter](https://rsms.me/inter/) (SIL Open Font License) and [Lucide](https://lucide.dev) icons (ISC license), in `content/editor/fonts`. The scripts in `scripts/content/` regenerate the fonts, textures and test map.
 
 ## Contributing
 
@@ -68,12 +68,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). In short: enable the hygiene hook, and c
 
 ## License
 
-GrizzTech4's code is licensed under the GNU General Public License v3 with id Software's additional terms. See [LICENSE.md](LICENSE.md) and [LICENSE_EXCEPTIONS.md](LICENSE_EXCEPTIONS.md) for third-party components under other licenses.
+Daedalus's code is licensed under the GNU General Public License v3 with id Software's additional terms. See [LICENSE.md](LICENSE.md) and [LICENSE_EXCEPTIONS.md](LICENSE_EXCEPTIONS.md) for third-party components under other licenses.
 
-Games made with GrizzTech4 must publish their engine and game code under the same terms. Their art, maps, audio and writing are not covered by the GPL and can stay proprietary.
+Games made with Daedalus must publish their engine and game code under the same terms. Their art, maps, audio and writing are not covered by the GPL and can stay proprietary.
 
-GrizzTech4 contains no Doom 3 game data, which remains covered by its original EULA.
+Daedalus contains no Doom 3 game data, which remains covered by its original EULA.
 
 ## Credits
 
-GrizzTech4 stands on the work of id Software (Doom 3 and Doom 3 BFG Edition), Robert Beckebans and the RBDOOM-3-BFG contributors, and the wider id Tech 4 community. See [docs/UPSTREAM.md](docs/UPSTREAM.md) for the exact upstream version.
+Daedalus stands on the work of id Software (Doom 3 and Doom 3 BFG Edition), Robert Beckebans and the RBDOOM-3-BFG contributors, and the wider id Tech 4 community. See [docs/UPSTREAM.md](docs/UPSTREAM.md) for the exact upstream version.

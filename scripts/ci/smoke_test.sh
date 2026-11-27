@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# GrizzTech4 headless smoke test (Linux).
+# Daedalus headless smoke test (Linux).
 #
-# Boots the engine with only GrizzTech4's own content, compiles and loads the
+# Boots the engine with only Daedalus's own content, compiles and loads the
 # test map, spawns the player and quits. Fails if any step errors.
 #
-# usage: smoke_test.sh <path-to-GrizzTech4-binary>
+# usage: smoke_test.sh <path-to-Daedalus-binary>
 # Needs: Xvfb, a Vulkan driver (Mesa's lavapipe works without a GPU).
 
 set -euo pipefail
@@ -31,8 +31,8 @@ set +e
 timeout 900 "$BIN" \
 	+set fs_basepath "$WORK" +set fs_savepath "$WORK/save" \
 	+set r_fullscreen 0 +set com_skipIntroVideos 1 +set editor 0 \
-	+dmap testmaps/gt4_test_room \
-	+map testmaps/gt4_test_room \
+	+dmap testmaps/test_room \
+	+map testmaps/test_room \
 	+wait 5 +quit > "$LOG" 2>&1
 STATUS=$?
 set -e

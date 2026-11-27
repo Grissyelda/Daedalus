@@ -2188,7 +2188,7 @@ void idGameLocal::SpawnPlayer( int clientNum )
 	else
 	{
 		// precache the player
-		args.Set( "classname", gameLocal.world->spawnArgs.GetString( "def_player", "player" ) );	// GrizzTech4: default player def
+		args.Set( "classname", gameLocal.world->spawnArgs.GetString( "def_player", "player" ) );	// Daedalus: default player def
 	}
 
 	// It's important that we increment numClients before calling SpawnEntityDef, because some
@@ -4037,7 +4037,7 @@ bool idGameLocal::InhibitEntitySpawn( idDict& spawnArgs )
 		}
 	}
 
-	// GrizzTech4: piece (prefab) anchors only tell the editor where a copy of a piece sits
+	// Daedalus: piece (prefab) anchors only tell the editor where a copy of a piece sits
 	if( idStr::Icmp( spawnArgs.GetString( "classname" ), "func_prefab" ) == 0 )
 	{
 		result = true;

@@ -786,7 +786,7 @@ public:
 	{
 		return fileNameHash;
 	}
-	// GrizzTech4: when the file was read, so a changed file is read again
+	// Daedalus: when the file was read, so a changed file is read again
 	ID_TIME_T SourceTime() const
 	{
 		return sourceTime;

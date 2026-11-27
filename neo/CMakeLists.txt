@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 if(NOT DEFINED APP_NAME)
 	# RB: This sets the name of the .exe and is the only line needed for a different mod executable.
 	# If you want to make a different game then you also need to change neo/framework/Licensee.h
-    set(APP_NAME GrizzTech4)
+    set(APP_NAME Daedalus)
 endif()
 project(${APP_NAME})
 
@@ -17,12 +17,12 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.6")
 endif()
 	
 option(STANDALONE
-		"Use the standalone GrizzTech4 content/ folder instead of DOOM-3-BFG base/" ON)
+		"Use the standalone Daedalus content/ folder instead of DOOM-3-BFG base/" ON)
 
-option(GRIZZ_EDITOR
-		"Build the GrizzTech4 editor into the executable (turn off for shipped games)" ON)
+option(DAEDALUS_EDITOR
+		"Build the Daedalus editor into the executable (turn off for shipped games)" ON)
 
-# GrizzTech4: classic Doom 1 & 2 support was removed together with the doomclassic/ folder
+# Daedalus: classic Doom 1 & 2 support was removed together with the doomclassic/ folder
 set(DOOM_CLASSIC OFF)
 
 option(FORCE_COLOR_OUTPUT
@@ -282,7 +282,7 @@ elseif(MSVC)
 	set(CMAKE_EXE_LINKER_FLAGS_MINSIZEREL "${CMAKE_EXE_LINKER_FLAGS_MINSIZEREL} /SAFESEH:NO")
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /SAFESEH:NO")
 
-	# GrizzTech4: release builds get a .pdb too, so crash reports can name functions
+	# Daedalus: release builds get a .pdb too, so crash reports can name functions
 	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG /OPT:REF /OPT:ICF")
@@ -316,8 +316,8 @@ if (USE_INTRINSICS_NEON)
 	add_definitions(-DSTBI_NEON)
 endif()
 
-if(GRIZZ_EDITOR)
-	add_definitions(-DGRIZZ_EDITOR)
+if(DAEDALUS_EDITOR)
+	add_definitions(-DDAEDALUS_EDITOR)
 endif()
 
 if(STANDALONE)
@@ -811,7 +811,7 @@ if(MSVC)
 endif()
 
 set(WIN32_RESOURCES
-	sys/win32/rc/res/doom.ico
+	sys/win32/rc/res/daedalus.ico
 	sys/win32/rc/doom.rc
 	)
 

@@ -1338,7 +1338,7 @@ idUDP::InitForPort
 */
 bool idUDP::InitForPort( int portNumber )
 {
-	// GrizzTech4: games are single-player only. The session still talks to itself through
+	// Daedalus: games are single-player only. The session still talks to itself through
 	// this socket, so bind it to the loopback address and never listen on the network.
 	netSocket = NET_IPSocket( "127.0.0.1", portNumber, &bound_to );
 	if( netSocket <= 0 )

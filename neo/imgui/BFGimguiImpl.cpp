@@ -35,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderCommon.h"
 #include "renderer/RenderBackend.h"
 #include "../tools/imgui/editor/EditorShell.h"
-#if defined( GRIZZ_EDITOR )
+#if defined( DAEDALUS_EDITOR )
 	#include "../tools/imgui/editor/EditorTheme.h"
 #endif
 
@@ -98,7 +98,7 @@ bool ImGui::DragVec3fitLabel( const char* label, idVec3& v, float v_speed,
 namespace ImGuiHook
 {
 
-// GrizzTech4: panels in windows of their own (BFGimguiViewports.cpp)
+// Daedalus: panels in windows of their own (BFGimguiViewports.cpp)
 bool g_FrameRendered = false;				// an ImGui frame was rendered since the last RenderPlatformWindows
 void InitViewports();
 void ViewportsNewFrame( bool pollMouse, ImVec2& mousePos );
@@ -114,7 +114,7 @@ float	g_MouseWheel = 0.0f;
 ImVec2	g_MousePos = ImVec2( -1.0f, -1.0f ); //{-1.0f, -1.0f};
 ImVec2	g_DisplaySize = ImVec2( 0.0f, 0.0f ); //{0.0f, 0.0f};
 bool	g_haveNewFrame = false;
-bool	g_MousePosForced = false;			// GrizzTech4: SetMousePos was called; use that rather than polling the mouse
+bool	g_MousePosForced = false;			// Daedalus: SetMousePos was called; use that rather than polling the mouse
 bool	g_insideRender = false;
 
 bool HandleKeyEvent( const sysEvent_t& keyEvent )
@@ -140,10 +140,10 @@ bool HandleKeyEvent( const sysEvent_t& keyEvent )
 		return true;
 	}
 
-	if( g_MousePressed[1] && !GrizzEditor::IsEditing() )
+	if( g_MousePressed[1] && !DaedalusEditor::IsEditing() )
 	{
 		// RB: ignore everything as long right mouse button is pressed
-		// GrizzTech4: except in the editor, which flies its camera with WASD while it's held
+		// Daedalus: except in the editor, which flies its camera with WASD while it's held
 		return false;
 	}
 
@@ -152,7 +152,7 @@ bool HandleKeyEvent( const sysEvent_t& keyEvent )
 		// keyboard input as direct input scancodes
 		io.KeysDown[keyNum] = pressed;
 
-		// GrizzTech4: track the modifiers from these events. usercmdGen never sees them
+		// Daedalus: track the modifiers from these events. usercmdGen never sees them
 		// once ImGui has taken the keyboard, so its key states stay "up".
 		io.KeyAlt = io.KeysDown[K_LALT] || io.KeysDown[K_RALT];
 		io.KeyCtrl = io.KeysDown[K_LCTRL] || io.KeysDown[K_RCTRL];
@@ -178,7 +178,7 @@ bool HandleKeyEvent( const sysEvent_t& keyEvent )
 // sets the kb-layout specific keys in the keymap
 void FillCharKeys( int* keyMap )
 {
-	// GrizzTech4: map every letter, not just the clipboard and undo ones, so editor shortcuts
+	// Daedalus: map every letter, not just the clipboard and undo ones, so editor shortcuts
 	// (Ctrl+S, Ctrl+D, F, W/E/R...) work. Scancodes first, as defaults for keys whose names
 	// aren't found below.
 	static const keyNum_t letters[26] =
@@ -254,8 +254,8 @@ void SetClipboardText( void*, const char* text )
 
 bool ShowWindows()
 {
-	// GrizzTech4: the editor shell is always drawn in editor mode (also while playing, for the Stop button)
-	return ( GrizzEditor::IsEditorMode() || ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 );
+	// Daedalus: the editor shell is always drawn in editor mode (also while playing, for the Stop button)
+	return ( DaedalusEditor::IsEditorMode() || ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 );
 }
 
 bool UseInput()
@@ -263,12 +263,12 @@ bool UseInput()
 	return ( ImGuiTools::ReleaseMouseForTools() || imgui_showDemoWindow.GetBool() );
 }
 
-// GrizzTech4: while a level is played from the editor the mouse belongs to the game.
+// Daedalus: while a level is played from the editor the mouse belongs to the game.
 // ImGui still draws the menu bar then, so it must not see the game's clicks: the cursor
 // is hidden but ImGui would keep its last position (usually right on the Play/Stop button).
 static bool PlayingFromEditor()
 {
-	return GrizzEditor::IsEditorMode() && !GrizzEditor::IsEditing() && !ImGuiTools::AreEditorsActive() && !imgui_showDemoWindow.GetBool();
+	return DaedalusEditor::IsEditorMode() && !DaedalusEditor::IsEditing() && !ImGuiTools::AreEditorsActive() && !imgui_showDemoWindow.GetBool();
 }
 
 void StyleGruvboxDark()
@@ -758,12 +758,12 @@ bool Init( int windowWidth, int windowHeight )
 	//StyleBioshock();
 	//StyleUE5EditorTheme( "themes/military1.json" );
 
-#if defined( GRIZZ_EDITOR )
-	// GrizzTech4: the editor's fonts, icons and look
-	GrizzEditor::UI::Init();
+#if defined( DAEDALUS_EDITOR )
+	// Daedalus: the editor's fonts, icons and look
+	DaedalusEditor::UI::Init();
 #endif
 
-	// GrizzTech4: panels can be dragged out into windows of their own
+	// Daedalus: panels can be dragged out into windows of their own
 	InitViewports();
 
 	g_IsInit = true;
@@ -779,7 +779,7 @@ void SetMousePos( float x, float y )
 
 void NotifyDisplaySizeChanged( int width, int height )
 {
-	// GrizzTech4: just take the new size (NewFrame passes it on). Recreating the context here
+	// Daedalus: just take the new size (NewFrame passes it on). Recreating the context here
 	// threw away the editor's layout state, fonts and any panels in their own windows.
 	g_DisplaySize = ImVec2( ( float )width, ( float )height );
 }
@@ -806,7 +806,7 @@ bool InjectSysEvent( const sysEvent_t* event )
 				// RB: still allow mouse movement if right mouse button is pressed
 				//if( !g_MousePressed[1] )
 			{
-				// GrizzTech4: with panel windows the mouse is polled in screen coordinates instead
+				// Daedalus: with panel windows the mouse is polled in screen coordinates instead
 				if( !ViewportsActive() )
 				{
 					g_MousePos.x = ev.evValue;
@@ -873,7 +873,7 @@ void NewFrame()
 
 		g_Time = current_time;
 
-		// GrizzTech4: panel windows follow the main window, and the mouse is found in screen coordinates
+		// Daedalus: panel windows follow the main window, and the mouse is found in screen coordinates
 		const bool playing = PlayingFromEditor();
 		ViewportsNewFrame( !playing && !g_MousePosForced, g_MousePos );
 		g_MousePosForced = false;
@@ -949,14 +949,14 @@ void Render()
 			NewFrame();
 		}
 
-		// GrizzTech4: the editor's menu bar goes first so the dockspace fits below it
-		GrizzEditor::DrawMainMenuBar();
+		// Daedalus: the editor's menu bar goes first so the dockspace fits below it
+		DaedalusEditor::DrawMainMenuBar();
 
 		// make dockspace transparent
 		static ImGuiDockNodeFlags dockspaceFlags = ImGuiDockNodeFlags_PassthruCentralNode;
 		ImGuiID mainDockSpaceId = ImGui::DockSpaceOverViewport( NULL, dockspaceFlags, NULL );
 
-		GrizzEditor::Draw( mainDockSpaceId );
+		DaedalusEditor::Draw( mainDockSpaceId );
 
 		ImGuiTools::DrawToolWindows();
 

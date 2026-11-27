@@ -362,12 +362,12 @@ void idCommonLocal::Draw()
 	}
 #endif
 	// RB end
-	else if( GrizzEditor::IsEditing() && ( !mapSpawned || GrizzEditor::IsPlayPaused() ) )
+	else if( DaedalusEditor::IsEditing() && ( !mapSpawned || DaedalusEditor::IsPlayPaused() ) )
 	{
-		// GrizzTech4: no game running (or Play paused for editing), so show the level being edited
+		// Daedalus: no game running (or Play paused for editing), so show the level being edited
 		renderSystem->SetColor4( 0, 0, 0, 1 );
 		renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
-		GrizzEditor::DrawWorld();
+		DaedalusEditor::DrawWorld();
 	}
 	else if( game && game->Shell_IsActive() )
 	{
@@ -623,7 +623,7 @@ void idCommonLocal::Frame()
 								 || ( !IsMultiplayer()
 									  && ( Dialog().IsDialogPausing() || session->IsSystemUIShowing()
 										   || ( game && game->Shell_IsActive() ) || com_pause.GetInteger() ) )
-								 || GrizzEditor::IsPlayPaused() );	// GrizzTech4: Play paused for live editing
+								 || DaedalusEditor::IsPlayPaused() );	// Daedalus: Play paused for live editing
 #endif
 		// RB end
 
@@ -925,7 +925,7 @@ void idCommonLocal::Frame()
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
 
-		// GrizzTech4: editor panels in windows of their own are made, moved and drawn here, on the
+		// Daedalus: editor panels in windows of their own are made, moved and drawn here, on the
 		// main thread, now that the game thread's ImGui frame is done and the back end is idle
 		ImGuiHook::RenderPlatformWindows();
 

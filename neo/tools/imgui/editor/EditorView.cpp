@@ -1,24 +1,24 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
@@ -26,7 +26,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "precompiled.h"
 #pragma hdrstop
 
-#if defined( GRIZZ_EDITOR )
+#if defined( DAEDALUS_EDITOR )
 
 #include "EditorView.h"
 
@@ -34,15 +34,15 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "../../imgui/ImGui_Hooks.h"
 #include "renderer/RenderCommon.h"
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 
 View view;
 
-static const idVec4 COLOR_SELECTED( 1.0f, 0.78f, 0.15f, 1.0f );
+static const idVec4 COLOR_SELECTED( 0.20f, 0.83f, 0.60f, 1.0f );	// the emerald accent
 static const idVec4 COLOR_WIRE( 0.75f, 0.78f, 0.82f, 1.0f );
 static const idVec4 COLOR_FACE( 0.2f, 0.9f, 1.0f, 1.0f );
-static const idVec4 COLOR_DOOR( 0.3f, 1.0f, 0.5f, 1.0f );
+static const idVec4 COLOR_DOOR( 0.72f, 0.55f, 1.0f, 1.0f );	// violet, apart from the selection
 static const char* TOOL_MATERIAL = "editor/toolsurface";
 
 idCVar editor_lookSensitivity( "editor_lookSensitivity", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT | CVAR_NOCHEAT, "how fast the editor camera turns with the mouse", 0.1f, 10.0f );
@@ -258,7 +258,7 @@ idRenderModel* View::BuildBrushModel( const idMapEntity* ent, int entityNum, int
 	}
 
 	idRenderModel* model = renderModelManager->AllocModel();
-	model->InitEmpty( va( focus == 2 ? "_gt4editor_ghost%d" : "_gt4editor_entity%d", entityNum ) );
+	model->InitEmpty( va( focus == 2 ? "_daedaluseditor_ghost%d" : "_daedaluseditor_entity%d", entityNum ) );
 
 	for( int b = 0; b < buckets.Num(); b++ )
 	{
@@ -510,7 +510,7 @@ void View::UpdateGrid()
 	R_BoundTriSurf( tri );
 
 	gridModel = renderModelManager->AllocModel();
-	gridModel->InitEmpty( "_gt4editor_floorgrid" );
+	gridModel->InitEmpty( "_daedaluseditor_floorgrid" );
 	modelSurface_t surf;
 	surf.id = 0;
 	surf.shader = declManager->FindMaterial( GRID_MATERIAL );
@@ -1039,6 +1039,6 @@ void View::Draw( const Document& doc )
 	world->RenderScene( &rv );
 }
 
-} // namespace GrizzEditor
+} // namespace DaedalusEditor
 
-#endif // GRIZZ_EDITOR
+#endif // DAEDALUS_EDITOR

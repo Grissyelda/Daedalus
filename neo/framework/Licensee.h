@@ -35,16 +35,16 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-#define GAME_NAME						"GrizzTech4"		// appears on window titles and errors
+#define GAME_NAME						"Daedalus"		// appears on window titles and errors
 
-// GrizzTech4: own save/config locations, so nothing collides with DOOM 3 BFG or RBDOOM-3-BFG installs
-#define SAVE_PATH						"\\GrizzTech4"			// Windows: Documents\My Games\GrizzTech4
-#define SAVE_DIR_POSIX					"grizztech4"			// Linux: $XDG_DATA_HOME/grizztech4 or ~/.local/share/grizztech4
-#define PREF_PATH_APP					"GrizzTech4"			// macOS: SDL preference path
-#define SCREENSHOT_PREFIX				"grizztech4"
+// Daedalus: own save/config locations, so nothing collides with DOOM 3 BFG or RBDOOM-3-BFG installs
+#define SAVE_PATH						"\\Daedalus"			// Windows: Documents\My Games\Daedalus
+#define SAVE_DIR_POSIX					"daedalus"			// Linux: $XDG_DATA_HOME/daedalus or ~/.local/share/daedalus
+#define PREF_PATH_APP					"Daedalus"			// macOS: SDL preference path
+#define SCREENSHOT_PREFIX				"daedalus"
 
-#define ENGINE_VERSION					"GrizzTech4 0.1.0"		// printed in console
-#define UPSTREAM_VERSION				"RBDOOM-3-BFG 1.6.0"	// the engine GrizzTech4 is forked from
+#define ENGINE_VERSION					"Daedalus 0.1.0"		// printed in console
+#define UPSTREAM_VERSION				"RBDOOM-3-BFG 1.6.0"	// the engine Daedalus is forked from
 
 // DG begin
 #ifdef ID_REPRODUCIBLE_BUILD
@@ -69,27 +69,27 @@ If you have questions concerning this license or the applicable additional terms
 	#define	BASE_GAMEDIR				"base"
 #endif
 
-#define CONFIG_FILE						"GrizzTech4.cfg"
+#define CONFIG_FILE						"Daedalus.cfg"
 
 // see ASYNC_PROTOCOL_VERSION
 // use a different major for each game
 #define ASYNC_PROTOCOL_MAJOR			1
 
 // win32 info
-#define WIN32_CONSOLE_CLASS				"GrizzTech4_WinConsole"
-#define	WIN32_WINDOW_CLASS_NAME			"GrizzTech4"
-#define	WIN32_FAKE_WINDOW_CLASS_NAME	"GrizzTech4_WGL_FAKE"
+#define WIN32_CONSOLE_CLASS				"Daedalus_WinConsole"
+#define	WIN32_WINDOW_CLASS_NAME			"Daedalus"
+#define	WIN32_FAKE_WINDOW_CLASS_NAME	"Daedalus_WGL_FAKE"
 
 // RB begin
 // Default base path (used only if none could be found)
 #ifdef __APPLE__
-	#define DEFAULT_BASEPATH				"/Applications/GrizzTech4.app/Contents/Resources"
+	#define DEFAULT_BASEPATH				"/Applications/Daedalus.app/Contents/Resources"
 #else
-	#define DEFAULT_BASEPATH				"/usr/share/games/grizztech4"
+	#define DEFAULT_BASEPATH				"/usr/share/games/daedalus"
 #endif
 // RB end
 
-// GrizzTech4: no lookup of DOOM 3 BFG Steam/GOG installs. Games ship their own data.
+// Daedalus: no lookup of DOOM 3 BFG Steam/GOG installs. Games ship their own data.
 // (STEAMPATH_APPID, STEAMPATH_NAME and GOGPATH_ID are intentionally left undefined.)
 
 #define VR_OPTIONS						0

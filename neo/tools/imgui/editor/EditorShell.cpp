@@ -1,24 +1,24 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
@@ -26,7 +26,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "precompiled.h"
 #pragma hdrstop
 
-#if defined( GRIZZ_EDITOR )
+#if defined( DAEDALUS_EDITOR )
 
 #include "EditorShell.h"
 #include "EditorDocument.h"
@@ -43,8 +43,8 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "../../libs/imgui/ImGuizmo.h"
 #include "renderer/RenderCommon.h"
 
-idCVar editor( "editor", "1", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "start in the GrizzTech4 editor (0 = run as the game)" );
-idCVar editor_startMap( "editor_startMap", "testmaps/gt4_test_room", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_NOCHEAT, "map the editor opens at startup" );
+idCVar editor( "editor", "1", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "start in the Daedalus editor (0 = run as the game)" );
+idCVar editor_startMap( "editor_startMap", "testmaps/test_room", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_NOCHEAT, "map the editor opens at startup" );
 idCVar editor_gridSize( "editor_gridSize", "8", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "editor grid size in units" );
 idCVar editor_showWelcome( "editor_showWelcome", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "show the Getting started window when the editor opens" );
 idCVar editor_snap( "editor_snap", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "snap moves to the editor grid" );
@@ -52,7 +52,7 @@ idCVar editor_playFrom( "editor_playFrom", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVA
 
 extern idCVar r_materialPath;
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 
 /*
@@ -1228,7 +1228,7 @@ static void EditorOpen_f( const idCmdArgs& args )
 {
 	if( args.Argc() != 2 )
 	{
-		common->Printf( "usage: editorOpen <map, e.g. testmaps/gt4_test_room>\n" );
+		common->Printf( "usage: editorOpen <map, e.g. testmaps/test_room>\n" );
 		return;
 	}
 	OpenMap( args.Argv( 1 ) );
@@ -1724,14 +1724,14 @@ static bool CreateProject( const char* name, int look, idStr& result )
 
 	// project description, read by the editor
 	idStr projectFile = projectOS;
-	projectFile.AppendPath( "project.gt4" );
+	projectFile.AppendPath( "project.daedalus" );
 	idFile* f = fileSystem->OpenExplicitFileWrite( projectFile.c_str() );
 	if( f == NULL )
 	{
 		result = va( "Could not write %s.", projectFile.c_str() );
 		return false;
 	}
-	f->Printf( "// GrizzTech4 project\n" );
+	f->Printf( "// Daedalus project\n" );
 	f->Printf( "name \"%s\"\n", name );
 	f->Printf( "look \"%s\"\n", lookName );
 	f->Printf( "engine \"%s\"\n", ENGINE_VERSION );
@@ -1743,7 +1743,7 @@ static bool CreateProject( const char* name, int look, idStr& result )
 	f = fileSystem->OpenExplicitFileWrite( autoexec.c_str() );
 	if( f != NULL )
 	{
-		f->Printf( "// GrizzTech4 project settings (written by New Project)\n" );
+		f->Printf( "// Daedalus project settings (written by New Project)\n" );
 		f->Printf( "seta r_materialPath \"%s\"\n", lookName );
 		fileSystem->CloseFile( f );
 	}
@@ -1789,7 +1789,7 @@ static void DrawLookPreview( int look, float size )
 	ImGui::Dummy( ImVec2( size, size ) );
 }
 
-// projects are folders next to the engine with a project.gt4 in them
+// projects are folders next to the engine with a project.daedalus in them
 static void RefreshProjectList()
 {
 	projectList.Clear();
@@ -1804,7 +1804,7 @@ static void RefreshProjectList()
 		}
 		idStr projectFile = basePath;
 		projectFile.AppendPath( folders[i] );
-		projectFile.AppendPath( "project.gt4" );
+		projectFile.AppendPath( "project.daedalus" );
 		idFile* f = fileSystem->OpenExplicitFileRead( projectFile.c_str() );
 		if( f != NULL )
 		{
@@ -1843,7 +1843,7 @@ static void DrawOpenProjectDialog()
 	}
 
 	const char* current = cvarSystem->GetCVarString( "fs_game" );
-	Hint( "GrizzTech4 restarts to open a project. Unsaved changes to the open map are saved first." );
+	Hint( "Daedalus restarts to open a project. Unsaved changes to the open map are saved first." );
 	ImGui::Separator();
 
 	if( projectList.Num() == 0 )
@@ -1901,7 +1901,7 @@ static void DrawNewProjectDialog()
 		ImGui::TextWrapped( "Your project was created at:" );
 		ImGui::TextWrapped( "%s", newProjectResult.c_str() );
 		ImGui::Spacing();
-		ImGui::TextWrapped( "Open it now? GrizzTech4 restarts into the new project. You can also open it later from File > Open Project." );
+		ImGui::TextWrapped( "Open it now? Daedalus restarts into the new project. You can also open it later from File > Open Project." );
 		if( ImGui::Button( "Open it now" ) )
 		{
 			SwitchProject( newProjectName );
@@ -3670,9 +3670,9 @@ static void DrawWelcome()
 	if( open )
 	{
 		ImGui::PushFont( UI::Font( UI::FONT_TITLE ) );
-		ImGui::TextColored( UI::Accent(), ICON_SPARKLES );
-		ImGui::SameLine();
-		ImGui::TextUnformatted( "Welcome to GrizzTech4" );
+		UI::Emblem( ImGui::GetFontSize() );
+		ImGui::SameLine( 0.0f, 10.0f * UI::Scale() );
+		ImGui::TextUnformatted( "Welcome to Daedalus" );
 		ImGui::PopFont();
 		Hint( "A level in five steps. The lesson walks you through them in the Help panel and ticks each off as you do it." );
 		ImGui::Spacing();
@@ -3731,9 +3731,17 @@ static void DrawAbout()
 	}
 
 	ImGui::SetNextWindowSize( ImVec2( 460, 0 ), ImGuiCond_Appearing );
-	if( ImGui::Begin( "About GrizzTech4", &showAbout, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse ) )
+	if( ImGui::Begin( "About Daedalus", &showAbout, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse ) )
 	{
-		ImGui::Text( "%s", ENGINE_VERSION );
+		UI::Emblem( 40.0f * UI::Scale() );
+		ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
+		ImGui::BeginGroup();
+		ImGui::PushFont( UI::Font( UI::FONT_TITLE ) );
+		ImGui::TextUnformatted( "Daedalus" );
+		ImGui::PopFont();
+		ImGui::TextDisabled( "%s", ENGINE_VERSION );
+		ImGui::EndGroup();
+		ImGui::Spacing();
 		ImGui::TextDisabled( "Based on %s and the Doom 3 BFG Edition GPL source.", UPSTREAM_VERSION );
 		ImGui::Spacing();
 		ImGui::TextWrapped( "Licensed under the GNU GPL v3 with id Software's additional terms." );
@@ -4705,8 +4713,8 @@ static void DrawPlanView( bool hovered )
 				pts.Append( PlanToScreen( hull[k], mins, maxs ) );
 			}
 			const ImU32 fill = item.entity == 0 ? IM_COL32( 120, 130, 150, 60 ) : IM_COL32( 60, 160, 220, 70 );
-			draw->AddConvexPolyFilled( pts.Ptr(), pts.Num(), selected ? IM_COL32( 255, 200, 40, 70 ) : fill );
-			draw->AddPolyline( pts.Ptr(), pts.Num(), selected ? IM_COL32( 255, 200, 40, 255 ) : IM_COL32( 200, 205, 215, 255 ), ImDrawFlags_Closed, selected ? 2.0f : 1.0f );
+			draw->AddConvexPolyFilled( pts.Ptr(), pts.Num(), selected ? IM_COL32( 52, 211, 153, 70 ) : fill );
+			draw->AddPolyline( pts.Ptr(), pts.Num(), selected ? IM_COL32( 52, 211, 153, 255 ) : IM_COL32( 200, 205, 215, 255 ), ImDrawFlags_Closed, selected ? 2.0f : 1.0f );
 		}
 
 		// point entities, with the way they face
@@ -4726,7 +4734,7 @@ static void DrawPlanView( bool hovered )
 				def->dict.GetVector( "editor_color", "0.5 0.5 1", color );
 			}
 			const bool selected = document.selection.Contains( Selection( e ) );
-			const ImU32 col = selected ? IM_COL32( 255, 200, 40, 255 ) : IM_COL32( ( int )( color.x * 255 ), ( int )( color.y * 255 ), ( int )( color.z * 255 ), 255 );
+			const ImU32 col = selected ? IM_COL32( 52, 211, 153, 255 ) : IM_COL32( ( int )( color.x * 255 ), ( int )( color.y * 255 ), ( int )( color.z * 255 ), 255 );
 			const ImVec2 a = PlanToScreen( idVec2( b[0].x, b[1].y ), mins, maxs );
 			const ImVec2 c = PlanToScreen( idVec2( b[1].x, b[0].y ), mins, maxs );
 			draw->AddRect( a, ImVec2( Max( c.x, a.x + 6.0f ), Max( c.y, a.y + 6.0f ) ), col, 0.0f, 0, selected ? 2.0f : 1.0f );
@@ -7953,12 +7961,18 @@ void DrawMainMenuBar()
 		return;
 	}
 
-	// wordmark
-	ImGui::PushFont( UI::Font( UI::FONT_BOLD ) );
-	ImGui::TextColored( UI::Accent(), "Grizz" );
-	ImGui::SameLine( 0.0f, 0.0f );
-	ImGui::TextUnformatted( "Tech4" );
-	ImGui::PopFont();
+	// wordmark: the labyrinth and the name
+	{
+		// leave room for the emblem, write the name, then centre the emblem on the name
+		const float size = ImGui::GetFontSize() * 0.9f;
+		const float space = 6.0f * UI::Scale();
+		ImGui::SetCursorPosX( ImGui::GetCursorPosX() + size + space );
+		ImGui::PushFont( UI::Font( UI::FONT_BOLD ) );
+		ImGui::TextUnformatted( "Daedalus" );
+		ImGui::PopFont();
+		const ImVec2 lo = ImGui::GetItemRectMin(), hi = ImGui::GetItemRectMax();
+		UI::EmblemAt( ImGui::GetWindowDrawList(), ImVec2( lo.x - space - size, ( lo.y + hi.y - size ) * 0.5f ), size );
+	}
 	ImGui::SameLine( 0.0f, 16.0f * UI::Scale() );
 
 	if( ImGui::BeginMenu( "File", !playing ) )
@@ -8140,7 +8154,7 @@ void DrawMainMenuBar()
 		{
 			showWelcome = true;
 		}
-		if( ImGui::MenuItem( ICON_KEYBOARD "  About GrizzTech4 and controls" ) )
+		if( ImGui::MenuItem( ICON_KEYBOARD "  About Daedalus and controls" ) )
 		{
 			showAbout = true;
 		}
@@ -8458,6 +8472,6 @@ void Draw( unsigned int mainDockSpaceId )
 	DrawMapNameDialog( "New Map", openNewMapPopup, true );
 }
 
-} // namespace GrizzEditor
+} // namespace DaedalusEditor
 
-#endif // GRIZZ_EDITOR
+#endif // DAEDALUS_EDITOR

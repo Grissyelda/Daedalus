@@ -48,6 +48,34 @@ If you have questions concerning this license or the applicable additional terms
 #include "sdl_local.h"
 
 #include <sys/DeviceManager.h>
+
+#define STBI_NO_STDIO
+#include "../../libs/stb/stb_image.h"
+
+// Daedalus: the window's icon (content/editor/daedalus_icon.png, from scripts/content/make_icon.py)
+static void SetWindowIcon( SDL_Window* window )
+{
+	void* file = NULL;
+	const int length = fileSystem->ReadFile( "editor/daedalus_icon.png", &file );
+	if( length <= 0 || file == NULL )
+	{
+		return;
+	}
+	int width = 0, height = 0, channels = 0;
+	stbi_uc* pixels = stbi_load_from_memory( ( const stbi_uc* )file, length, &width, &height, &channels, 4 );
+	fileSystem->FreeFile( file );
+	if( pixels == NULL )
+	{
+		return;
+	}
+	SDL_Surface* icon = SDL_CreateRGBSurfaceWithFormatFrom( pixels, width, height, 32, width * 4, SDL_PIXELFORMAT_RGBA32 );
+	if( icon != NULL )
+	{
+		SDL_SetWindowIcon( window, icon );
+		SDL_FreeSurface( icon );
+	}
+	stbi_image_free( pixels );
+}
 extern DeviceManager* deviceManager;
 
 idCVar in_nograb( "in_nograb", "0", CVAR_SYSTEM | CVAR_NOCHEAT, "prevents input grabbing" );
@@ -81,13 +109,13 @@ VkResult DeviceManager::CreateSDLWindowSurface( VkInstance instance, VkSurfaceKH
 	return VkResult::VK_SUCCESS;
 }
 
-// GrizzTech4: the main window, for the editor's extra panel windows
+// Daedalus: the main window, for the editor's extra panel windows
 void* Sys_MainWindowHandle()
 {
 	return window;
 }
 
-// GrizzTech4: used by the editor's mouse look
+// Daedalus: used by the editor's mouse look
 void Sys_WarpMouseInWindow( int x, int y )
 {
 	if( window != nullptr )
@@ -114,6 +142,7 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain( const glimpParms_t& parms, c
 		common->Warning( "Error while creating SDL Vulkan window: %s", SDL_GetError() );
 		return false;
 	}
+	SetWindowIcon( window );
 
 	// RB
 	m_DeviceParams.backBufferWidth = parms.width;

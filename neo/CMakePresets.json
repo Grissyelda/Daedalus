@@ -36,7 +36,7 @@
 			"inherits": "linux",
 			"cacheVariables": {
 				"CMAKE_BUILD_TYPE": "Release",
-				"GRIZZ_EDITOR": "OFF"
+				"DAEDALUS_EDITOR": "OFF"
 			}
 		},
 		{
@@ -56,15 +56,15 @@
 			"name": "windows-game",
 			"displayName": "Windows: game only (no editor) (Visual Studio 2022)",
 			"inherits": "windows",
-			"cacheVariables": { "GRIZZ_EDITOR": "OFF" }
+			"cacheVariables": { "DAEDALUS_EDITOR": "OFF" }
 		}
 	],
 	"buildPresets": [
-		{ "name": "linux-release", "configurePreset": "linux-release", "targets": [ "GrizzTech4", "rbdmap" ] },
-		{ "name": "linux-debug", "configurePreset": "linux-debug", "targets": [ "GrizzTech4", "rbdmap" ] },
-		{ "name": "steamdeck-release", "configurePreset": "steamdeck-release", "targets": [ "GrizzTech4" ] },
-		{ "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release", "targets": [ "GrizzTech4", "rbdmap" ] },
-		{ "name": "windows-debug", "configurePreset": "windows-vs2022", "configuration": "RelWithDebInfo", "targets": [ "GrizzTech4", "rbdmap" ] },
-		{ "name": "windows-game-release", "configurePreset": "windows-game", "configuration": "Release", "targets": [ "GrizzTech4" ] }
+		{ "name": "linux-release", "configurePreset": "linux-release", "targets": [ "Daedalus", "rbdmap" ] },
+		{ "name": "linux-debug", "configurePreset": "linux-debug", "targets": [ "Daedalus", "rbdmap" ] },
+		{ "name": "steamdeck-release", "configurePreset": "steamdeck-release", "targets": [ "Daedalus" ] },
+		{ "name": "windows-release", "configurePreset": "windows-vs2022", "configuration": "Release", "targets": [ "Daedalus", "rbdmap" ] },
+		{ "name": "windows-debug", "configurePreset": "windows-vs2022", "configuration": "RelWithDebInfo", "targets": [ "Daedalus", "rbdmap" ] },
+		{ "name": "windows-game-release", "configurePreset": "windows-game", "configuration": "Release", "targets": [ "Daedalus" ] }
 	]
 }

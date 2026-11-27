@@ -1,6 +1,6 @@
 # Upstream
 
-GrizzTech4 is based on RBDOOM-3-BFG. Its history was not imported. The fork point is recorded here so upstream changes can be brought in deliberately.
+Daedalus is based on RBDOOM-3-BFG. Its history was not imported. The fork point is recorded here so upstream changes can be brought in deliberately.
 
 | | |
 | --- | --- |

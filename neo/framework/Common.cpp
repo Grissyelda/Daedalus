@@ -1791,12 +1791,12 @@ idCommonLocal::ProcessEvent
 */
 bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 {
-	// GrizzTech4: in the editor, F5 plays (or resumes a paused Play) instead of quick-saving
+	// Daedalus: in the editor, F5 plays (or resumes a paused Play) instead of quick-saving
 	if( cvarSystem->GetCVarBool( "editor" ) && event->evType == SE_KEY && event->evValue == K_F5 )
 	{
 		if( event->evValue2 == 1 && !console->Active() )
 		{
-			if( GrizzEditor::IsPlayPaused() )
+			if( DaedalusEditor::IsPlayPaused() )
 			{
 				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorResume\n" );
 			}
@@ -1807,7 +1807,7 @@ bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 		}
 		return true;
 	}
-	// GrizzTech4: F10 always stops Play, even when the editor has the keyboard (Play paused)
+	// Daedalus: F10 always stops Play, even when the editor has the keyboard (Play paused)
 	if( cvarSystem->GetCVarBool( "editor" ) && event->evType == SE_KEY && event->evValue == K_F10 )
 	{
 		if( event->evValue2 == 1 && game && game->IsInGame() )
@@ -1822,9 +1822,9 @@ bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 	{
 		if( event->evType == SE_KEY && event->evValue2 == 1 && ( event->evValue == K_ESCAPE || event->evValue == K_JOY9 ) )
 		{
-			// GrizzTech4: when playing from the editor, Escape pauses and brings the editor back
+			// Daedalus: when playing from the editor, Escape pauses and brings the editor back
 			// (edits then go into the running game; Play resumes). While paused, Escape is the editor's.
-			if( cvarSystem->GetCVarBool( "editor" ) && GrizzEditor::IsPlayPaused() )
+			if( cvarSystem->GetCVarBool( "editor" ) && DaedalusEditor::IsPlayPaused() )
 			{
 				// fall through to the editor
 			}

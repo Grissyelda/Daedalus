@@ -1,6 +1,6 @@
 name: Build
 
-# Builds GrizzTech4 for Linux (editor and Steam Deck game builds) and Windows,
+# Builds Daedalus for Linux (editor and Steam Deck game builds) and Windows,
 # runs the headless smoke test on Linux, and uploads ready-to-run packages.
 
 on:
@@ -56,32 +56,32 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --parallel 4
 
       - name: Smoke test
-        run: bash scripts/ci/smoke_test.sh build/${{ matrix.preset }}/GrizzTech4
+        run: bash scripts/ci/smoke_test.sh build/${{ matrix.preset }}/Daedalus
 
       - name: Editor tests
         if: matrix.preset == 'linux-release'
-        run: bash scripts/test/run_editor_tests.sh build/${{ matrix.preset }}/GrizzTech4
+        run: bash scripts/test/run_editor_tests.sh build/${{ matrix.preset }}/Daedalus
 
       - name: Package
         run: |
-          mkdir -p package/GrizzTech4
-          cp build/${{ matrix.preset }}/GrizzTech4 package/GrizzTech4/
-          cp -r content template README.md LICENSE.md LICENSE_EXCEPTIONS.md package/GrizzTech4/
-          rm -rf package/GrizzTech4/content/maps/testmaps/*.proc package/GrizzTech4/content/maps/testmaps/*.cm
+          mkdir -p package/Daedalus
+          cp build/${{ matrix.preset }}/Daedalus package/Daedalus/
+          cp -r content template README.md LICENSE.md LICENSE_EXCEPTIONS.md package/Daedalus/
+          rm -rf package/Daedalus/content/maps/testmaps/*.proc package/Daedalus/content/maps/testmaps/*.cm
           # the level compiler the editor runs in the background
-          if [ -f build/${{ matrix.preset }}/tools/compilers/rbdmap ]; then cp build/${{ matrix.preset }}/tools/compilers/rbdmap package/GrizzTech4/; fi
+          if [ -f build/${{ matrix.preset }}/tools/compilers/rbdmap ]; then cp build/${{ matrix.preset }}/tools/compilers/rbdmap package/Daedalus/; fi
 
       - name: Level compiler test
         if: matrix.preset == 'linux-release'
         run: |
-          cd package/GrizzTech4
-          ./rbdmap -nogui +set fs_basepath "$PWD" +set fs_savepath "$RUNNER_TEMP/save" testmaps/gt4_test_room > "$RUNNER_TEMP/rbdmap.log" 2>&1 || { cat "$RUNNER_TEMP/rbdmap.log"; exit 1; }
-          test -f content/maps/testmaps/gt4_test_room.proc || { cat "$RUNNER_TEMP/rbdmap.log"; echo "rbdmap wrote no .proc"; exit 1; }
+          cd package/Daedalus
+          ./rbdmap -nogui +set fs_basepath "$PWD" +set fs_savepath "$RUNNER_TEMP/save" testmaps/test_room > "$RUNNER_TEMP/rbdmap.log" 2>&1 || { cat "$RUNNER_TEMP/rbdmap.log"; exit 1; }
+          test -f content/maps/testmaps/test_room.proc || { cat "$RUNNER_TEMP/rbdmap.log"; echo "rbdmap wrote no .proc"; exit 1; }
           rm -f content/maps/testmaps/*.proc content/maps/testmaps/*.cm content/maps/testmaps/*.lin
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GrizzTech4-${{ matrix.preset }}
+          name: Daedalus-${{ matrix.preset }}
           path: package
           retention-days: 14
 
@@ -126,19 +126,19 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force package/GrizzTech4 | Out-Null
-          Copy-Item build/${{ matrix.preset }}/Release/GrizzTech4.exe package/GrizzTech4/
+          New-Item -ItemType Directory -Force package/Daedalus | Out-Null
+          Copy-Item build/${{ matrix.preset }}/Release/Daedalus.exe package/Daedalus/
           # editor builds carry the symbols, so crash reports name the functions involved
-          if ( "${{ matrix.preset }}" -eq "windows-vs2022" ) { Copy-Item build/${{ matrix.preset }}/Release/GrizzTech4.pdb package/GrizzTech4/ }
-          Copy-Item -Recurse content, template package/GrizzTech4/
-          Copy-Item README.md, LICENSE.md, LICENSE_EXCEPTIONS.md package/GrizzTech4/
+          if ( "${{ matrix.preset }}" -eq "windows-vs2022" ) { Copy-Item build/${{ matrix.preset }}/Release/Daedalus.pdb package/Daedalus/ }
+          Copy-Item -Recurse content, template package/Daedalus/
+          Copy-Item README.md, LICENSE.md, LICENSE_EXCEPTIONS.md package/Daedalus/
           # the level compiler the editor runs in the background
           $rbdmap = Get-ChildItem build/${{ matrix.preset }} -Recurse -Filter rbdmap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
-          if ( $rbdmap ) { Copy-Item $rbdmap.FullName package/GrizzTech4/ }
+          if ( $rbdmap ) { Copy-Item $rbdmap.FullName package/Daedalus/ }
           elseif ( "${{ matrix.preset }}" -eq "windows-vs2022" ) { throw "rbdmap.exe wasn't built" }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GrizzTech4-${{ matrix.preset }}
+          name: Daedalus-${{ matrix.preset }}
           path: package
           retention-days: 14

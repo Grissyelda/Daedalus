@@ -1,24 +1,24 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
@@ -26,7 +26,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "precompiled.h"
 #pragma hdrstop
 
-#if defined( GRIZZ_EDITOR )
+#if defined( DAEDALUS_EDITOR )
 
 #include "EditorDocument.h"
 #include "EditorBrushOps.h"
@@ -43,7 +43,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 ===============================================================================
 */
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 
 void Document::SelectedBrushes( idList<Selection>& out ) const
@@ -464,4 +464,4 @@ bool Document::UngroupSelection()
 
 }
 
-#endif // GRIZZ_EDITOR
+#endif // DAEDALUS_EDITOR

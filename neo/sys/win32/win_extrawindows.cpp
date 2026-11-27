@@ -1,24 +1,24 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
@@ -45,7 +45,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 ===============================================================================
 */
 
-#define EXTRA_WINDOW_CLASS_NAME "GrizzTech4Panel"
+#define EXTRA_WINDOW_CLASS_NAME "DaedalusPanel"
 
 struct extraWindow_t
 {
@@ -306,7 +306,7 @@ void* Sys_ExtraWindowCreate( const sysScreenRect_t& rect, void* owner )
 	extraWindows.Append( window );
 
 	// owned by the main window: stays above it and minimizes with it
-	window->hwnd = CreateWindowEx( EXTRA_EX_STYLE, EXTRA_WINDOW_CLASS_NAME, "GrizzTech4", EXTRA_STYLE,
+	window->hwnd = CreateWindowEx( EXTRA_EX_STYLE, EXTRA_WINDOW_CLASS_NAME, "Daedalus", EXTRA_STYLE,
 								   r.left, r.top, r.right - r.left, r.bottom - r.top,
 								   owner != NULL ? ( HWND )owner : win32.hWnd, NULL, win32.hInstance, NULL );
 	if( window->hwnd == NULL )

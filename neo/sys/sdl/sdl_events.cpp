@@ -345,7 +345,7 @@ Sys_GrabMouseCursor
 */
 /*
 ===============
-GrizzTech4 editor mouse look: SDL's relative mode hides the pointer, holds it,
+Daedalus editor mouse look: SDL's relative mode hides the pointer, holds it,
 and reports raw movement
 ===============
 */
@@ -467,7 +467,7 @@ sysEvent_t Sys_GetEvent()
 	// loop until there is an event we care about (will return then) or no more events
 	while( SDL_PollEvent( &ev ) )
 	{
-		// GrizzTech4: the editor's panel windows handle their own window events
+		// Daedalus: the editor's panel windows handle their own window events
 		extern bool Sys_SDL_HandleExtraWindowEvent( const SDL_Event & ev );
 		if( Sys_SDL_HandleExtraWindowEvent( ev ) )
 		{
@@ -659,11 +659,11 @@ sysEvent_t Sys_GetEvent()
 
 			case SDL_MOUSEMOTION:
 			{
-				// GrizzTech4: the editor's panel windows follow the mouse in screen coordinates
+				// Daedalus: the editor's panel windows follow the mouse in screen coordinates
 				extern void Sys_SDL_TrackMouseMotion( const SDL_Event & ev );
 				Sys_SDL_TrackMouseMotion( ev );
 			}
-				// GrizzTech4: raw movement for the editor's mouse look
+				// Daedalus: raw movement for the editor's mouse look
 				if( lookCaptured )
 				{
 					lookDeltaX += ev.motion.xrel;
@@ -852,7 +852,7 @@ sysEvent_t Sys_GetEvent()
 				continue;
 
 			case SDL_DROPFILE:
-				// GrizzTech4: a file dropped on the window from the desktop (the editor brings models in)
+				// Daedalus: a file dropped on the window from the desktop (the editor brings models in)
 				if( ev.drop.file != NULL )
 				{
 					if( Sys_FileDropped != NULL )

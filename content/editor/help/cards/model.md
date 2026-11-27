@@ -7,6 +7,6 @@ For things showing a model file.
 - **Made in** sets the size: what the model was made in. glTF files are made in meters.
 - **Turn** turns the model itself a quarter left or right, for every copy.
 - **From** is the file it came from. Save that file again and the model updates by itself; **Update now** reads it straight away, and **Show the file** opens its folder.
-- Notes in amber are things the import couldn't do, such as a see-through material drawn with cut-out edges. They're in Problems too.
+- Notes in yellow are things the import couldn't do, such as a see-through material drawn with cut-out edges. They're in Problems too.
 
 See [Models](things/models).

@@ -58,7 +58,7 @@ static idRenderModelGLTF* lastMeshFromFile = nullptr;
 
 /*
 ==============
-GrizzTech4: imported models
+Daedalus: imported models
 
 The editor's importer keeps a model's materials next to it, named
 "<model path without extension>/<material>", so two models can both use a
@@ -159,7 +159,7 @@ void idRenderModelGLTF::ProcessNode_r( gltfNode* modelNode, const idMat4& parent
 			}
 			else
 			{
-				// GrizzTech4: there's no Doom 3 data to fall back on
+				// Daedalus: there's no Doom 3 data to fall back on
 				surf.shader = declManager->FindMaterial( "_default" );
 			}
 			surf.id = this->NumSurfaces();
@@ -564,7 +564,7 @@ void idRenderModelGLTF::InitFromFile( const char* fileName, const idImportOption
 	}
 	else
 	{
-		// GrizzTech4: settings written by the editor's importer
+		// Daedalus: settings written by the editor's importer
 		ReadImportOptions( fileName, commandLine );
 
 		if( !commandLine.IsEmpty() )

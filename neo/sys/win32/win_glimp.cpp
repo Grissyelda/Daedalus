@@ -788,10 +788,10 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain( const glimpParms_t& parms, c
 
 	::SetTimer( win32.hWnd, 0, 100, NULL );
 
-	// GrizzTech4: the editor takes files dropped from the desktop (WM_DROPFILES)
+	// Daedalus: the editor takes files dropped from the desktop (WM_DROPFILES)
 	DragAcceptFiles( win32.hWnd, TRUE );
 
-	// GrizzTech4: the editor opens maximized, like other editors
+	// Daedalus: the editor opens maximized, like other editors
 	ShowWindow( win32.hWnd, ( parms.fullScreen == 0 && cvarSystem->GetCVarBool( "editor" ) ) ? SW_MAXIMIZE : SW_SHOW );
 	UpdateWindow( win32.hWnd );
 	common->Printf( "...created window @ %d,%d (%dx%d)\n", x, y, w, h );

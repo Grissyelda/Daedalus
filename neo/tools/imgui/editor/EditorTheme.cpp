@@ -1,24 +1,24 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
@@ -26,14 +26,14 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "precompiled.h"
 #pragma hdrstop
 
-#if defined( GRIZZ_EDITOR )
+#if defined( DAEDALUS_EDITOR )
 
 #include "EditorTheme.h"
 #include "../../../libs/imgui/imgui_internal.h"
 
 idCVar editor_uiScale( "editor_uiScale", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT | CVAR_NOCHEAT, "size of the editor's text and controls (1 = normal); takes effect after a restart", 0.5f, 3.0f );
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 namespace UI
 {
@@ -42,10 +42,10 @@ static ImFont*	fonts[FONT_COUNT];
 static float	scale = 1.0f;
 
 // one accent on neutral greys
-static const ImVec4 ACCENT( 0.96f, 0.58f, 0.24f, 1.0f );
+static const ImVec4 ACCENT( 0.204f, 0.827f, 0.600f, 1.0f );	// emerald (#34D399)
 static const ImVec4 TEXT_COLOR( 0.90f, 0.91f, 0.92f, 1.0f );
 static const ImVec4 MUTED( 0.56f, 0.58f, 0.61f, 1.0f );
-static const ImVec4 GOOD( 0.29f, 0.74f, 0.45f, 1.0f );
+static const ImVec4 GOOD( 0.55f, 0.85f, 0.70f, 1.0f );		// mint, kept apart from the emerald accent
 static const ImVec4 BAD( 0.89f, 0.34f, 0.34f, 1.0f );
 static const ImVec4 WARN( 0.98f, 0.76f, 0.32f, 1.0f );
 
@@ -327,6 +327,56 @@ ImVec4 Good()
 ImVec4 Bad()
 {
 	return BAD;
+}
+
+/*
+================
+Emblem
+
+The Daedalus labyrinth (as in scripts/content/make_icon.py): a square spiral
+running clockwise and inward from the bottom left, drawn at the cursor.
+================
+*/
+void Emblem( float size )
+{
+	EmblemAt( ImGui::GetWindowDrawList(), ImGui::GetCursorScreenPos(), size );
+	ImGui::Dummy( ImVec2( size, size ) );
+}
+
+void EmblemAt( ImDrawList* draw, const ImVec2& at, float size )
+{
+	const ImU32 color = ImGui::GetColorU32( ACCENT );
+	const int rings = size < 28.0f ? 1 : ( size < 64.0f ? 2 : 3 );
+	const float gap = size / ( 2 * rings + 1 );
+	const float width = Max( 1.0f, gap * 0.5f );
+	float left = at.x + width * 0.5f, top = at.y + width * 0.5f;
+	float right = at.x + size - width * 0.5f, bottom = at.y + size - width * 0.5f;
+
+	ImVec2 pts[64];
+	int count = 0;
+	pts[count++] = ImVec2( left, bottom );
+	for( int i = 0; i <= rings && count < 60; i++ )
+	{
+		pts[count++] = ImVec2( left, top );
+		pts[count++] = ImVec2( right, top );
+		pts[count++] = ImVec2( right, bottom );
+		left += gap;
+		if( right - left < gap * 0.6f )
+		{
+			break;
+		}
+		pts[count++] = ImVec2( left, bottom );
+		top += gap;
+		right -= gap;
+		bottom -= gap;
+	}
+	for( int i = 0; i + 1 < count; i++ )
+	{
+		// square ends, so the corners meet cleanly
+		const ImVec2 a = pts[i], b = pts[i + 1];
+		const float h = width * 0.5f;
+		draw->AddRectFilled( ImVec2( Min( a.x, b.x ) - h, Min( a.y, b.y ) - h ), ImVec2( Max( a.x, b.x ) + h, Max( a.y, b.y ) + h ), color );
+	}
 }
 
 ImVec4 Warn()
@@ -807,6 +857,6 @@ bool HelpButton( const char* page, const char* tooltip )
 }
 
 } // namespace UI
-} // namespace GrizzEditor
+} // namespace DaedalusEditor
 
-#endif // GRIZZ_EDITOR
+#endif // DAEDALUS_EDITOR

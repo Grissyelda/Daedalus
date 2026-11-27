@@ -1,6 +1,6 @@
-# Your GrizzTech4 project
+# Your Daedalus project
 
-This folder was created by **File → New Project** in the GrizzTech4 editor. Everything your game adds or replaces lives here. GrizzTech4's own engine content (`content/`) stays underneath it, so anything you put here with the same name wins.
+This folder was created by **File → New Project** in the Daedalus editor. Everything your game adds or replaces lives here. Daedalus's own engine content (`content/`) stays underneath it, so anything you put here with the same name wins.
 
 | Folder | What goes in it |
 | --- | --- |
@@ -12,6 +12,6 @@ This folder was created by **File → New Project** in the GrizzTech4 editor. Ev
 | `script/` | Game scripts. |
 | `sound/` | Sounds and sound definitions. |
 
-`project.gt4` records the project's name and starting look (stylized or PBR). `autoexec.cfg` holds settings applied every time the project opens.
+`project.daedalus` records the project's name and starting look (stylized or PBR). `autoexec.cfg` holds settings applied every time the project opens.
 
-Remember that the GPL covers your game's **code**, not your art, maps, audio or writing. Keep your project in its own repository rather than in the GrizzTech4 engine repository.
+Remember that the GPL covers your game's **code**, not your art, maps, audio or writing. Keep your project in its own repository rather than in the Daedalus engine repository.

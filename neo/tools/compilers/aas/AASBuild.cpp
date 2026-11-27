@@ -1116,7 +1116,7 @@ void RunAAS_f( const idCmdArgs& args )
 	const idDict* dict = FindEntityDefDict( "aas_types", false );
 	if( !dict )
 	{
-		// GrizzTech4: projects without AI have no navigation types; that's not an error
+		// Daedalus: projects without AI have no navigation types; that's not an error
 		common->Printf( "No AI navigation types (aas_types) defined: skipping AAS\n" );
 		common->SetRefreshOnPrint( false );
 		return;

@@ -2798,7 +2798,7 @@ void idMover_Binary::SetMoverState( moverState_t newstate, int time )
 	moverState = newstate;
 	move_thread = 0;
 
-	// GrizzTech4: doors and lifts report their state too, for level testing
+	// Daedalus: doors and lifts report their state too, for level testing
 	if( g_debugMover.GetBool() )
 	{
 		static const char* stateNames[] = { "closed", "open", "opening", "closing" };

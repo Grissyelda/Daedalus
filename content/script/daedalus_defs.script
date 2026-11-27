@@ -1,8 +1,8 @@
 /***********************************************************************
 
-grizz_defs.script
+daedalus_defs.script
 
-Constants shared by GrizzTech4 scripts. The script compiler includes
+Constants shared by Daedalus scripts. The script compiler includes
 this file at the top of every script automatically.
 
 ***********************************************************************/

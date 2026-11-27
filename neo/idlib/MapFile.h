@@ -206,7 +206,7 @@ public:
 	{
 		return sides[i];
 	}
-	// GrizzTech4 editor
+	// Daedalus editor
 	void					RemoveSide( int i )
 	{
 		delete sides[i];
@@ -485,7 +485,7 @@ public:
 	{
 		primitives.Append( p );
 	}
-	// GrizzTech4 editor: remove one primitive (deleting it) or take it out without deleting it
+	// Daedalus editor: remove one primitive (deleting it) or take it out without deleting it
 	void					RemovePrimitive( int i )
 	{
 		delete primitives[i];
@@ -528,7 +528,7 @@ public:
 	bool					Parse( const char* filename, bool ignoreRegion = false, bool osPath = false, bool ignoreExtraEnts = false );
 	bool					Write( const char* fileName, const char* ext, bool fromBasePath = true );
 
-	// GrizzTech4 editor: write the whole map to an open file, and parse a map from text in memory
+	// Daedalus editor: write the whole map to an open file, and parse a map from text in memory
 	bool					WriteToFile( idFile* fp ) const;
 	bool					ParseFromMemory( const char* text, int length, const char* mapName );
 
@@ -605,7 +605,7 @@ protected:
 	bool					gltfFormat;
 
 public:
-	// GrizzTech4 editor: also used to name newly placed entities
+	// Daedalus editor: also used to name newly placed entities
 	const char*				GetUniqueEntityName( const char* classname ) const; // RB
 
 private:

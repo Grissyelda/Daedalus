@@ -104,7 +104,7 @@ void WIN_Sizing( WORD side, RECT* rect )
 		return;
 	}
 
-	// GrizzTech4: the editor's panels work at any shape, so only the game keeps the aspect limits
+	// Daedalus: the editor's panels work at any shape, so only the game keeps the aspect limits
 	if( cvarSystem->GetCVarBool( "editor" ) )
 	{
 		return;
@@ -180,7 +180,7 @@ MainWndProc
 main window procedure
 ====================
 */
-// GrizzTech4: in the editor, a held mouse button keeps the mouse even outside the window, so
+// Daedalus: in the editor, a held mouse button keeps the mouse even outside the window, so
 // panels can be dragged out onto other monitors and the release still arrives
 static void Win_CaptureForEditor( HWND hWnd, bool down, WPARAM wParam )
 {
@@ -285,7 +285,7 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 
 		case WM_DROPFILES:
 		{
-			// GrizzTech4: files dropped on the window from the desktop (the editor brings models in)
+			// Daedalus: files dropped on the window from the desktop (the editor brings models in)
 			HDROP drop = ( HDROP )wParam;
 			const UINT count = DragQueryFileW( drop, 0xFFFFFFFF, NULL, 0 );
 			for( UINT i = 0; i < count && Sys_FileDropped != NULL; i++ )
@@ -320,7 +320,7 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 			fActive = LOWORD( wParam );
 			fMinimized = ( BOOL ) HIWORD( wParam );
 
-			// GrizzTech4: focus moving to one of the editor's own panel windows keeps the app active
+			// Daedalus: focus moving to one of the editor's own panel windows keeps the app active
 			extern bool Win_IsExtraWindow( HWND hwnd );
 			if( fActive == WA_INACTIVE && Win_IsExtraWindow( ( HWND )lParam ) )
 			{
@@ -369,7 +369,7 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 			break;
 		}
 		case WM_SYSCOMMAND:
-			// GrizzTech4: the editor's window can be maximized again after it's been made smaller
+			// Daedalus: the editor's window can be maximized again after it's been made smaller
 			// (the low four bits of wParam are used by Windows itself, so mask them off)
 			if( ( wParam & 0xFFF0 ) == SC_SCREENSAVE || ( wParam & 0xFFF0 ) == SC_KEYMENU ||
 					( ( wParam & 0xFFF0 ) == SC_MAXIMIZE && !cvarSystem->GetCVarBool( "editor" ) ) )
@@ -530,7 +530,7 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 		}
 		case WM_INPUT:
 		{
-			// GrizzTech4: raw mouse movement for the editor's mouse look
+			// Daedalus: raw mouse movement for the editor's mouse look
 			extern void Win_HandleRawInput( LPARAM lParam );
 			Win_HandleRawInput( lParam );
 			break;	// DefWindowProc still has to see it

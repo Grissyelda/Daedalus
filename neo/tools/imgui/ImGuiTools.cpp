@@ -54,14 +54,14 @@ void SetReleaseToolMouse( bool doRelease )
 bool AreEditorsActive()
 {
 	// FIXME: this is not exactly clean and must be changed if we ever support game dlls
-	return g_editEntityMode.GetInteger() > 0 || com_editors != 0 || GrizzEditor::IsEditing();
+	return g_editEntityMode.GetInteger() > 0 || com_editors != 0 || DaedalusEditor::IsEditing();
 }
 
 bool ReleaseMouseForTools()
 {
 	// RB: ignore everything as long right mouse button is pressed
-	// GrizzTech4: the editor shell keeps the cursor free while editing; the right button looks around without capturing it
-	if( GrizzEditor::IsEditing() )
+	// Daedalus: the editor shell keeps the cursor free while editing; the right button looks around without capturing it
+	if( DaedalusEditor::IsEditing() )
 	{
 		return true;
 	}

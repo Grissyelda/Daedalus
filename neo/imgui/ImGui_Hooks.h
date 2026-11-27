@@ -42,7 +42,7 @@ bool	IsInitialized();
 // tell imgui that the (game) window size has changed
 void	NotifyDisplaySizeChanged( int width, int height );
 
-// GrizzTech4: moves ImGui's idea of the mouse, after the editor has moved the real one
+// Daedalus: moves ImGui's idea of the mouse, after the editor has moved the real one
 void	SetMousePos( float x, float y );
 
 // inject a sys event (keyboard, mouse, unicode character)
@@ -66,7 +66,7 @@ void	Destroy();
 
 bool	RightMouseActive();
 
-// GrizzTech4: editor panels dragged out of the main window get OS windows of their own.
+// Daedalus: editor panels dragged out of the main window get OS windows of their own.
 // RenderPlatformWindows creates, moves and draws them; call it once per frame on the main
 // thread, after the frame's Render() and outside the render back end.
 bool	ViewportsActive();

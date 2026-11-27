@@ -1,5 +1,5 @@
 /*
-	GrizzTech4 engine materials
+	Daedalus engine materials
 
 	Materials the engine itself looks up by name. They only use images the
 	engine generates at startup, so a new project needs no texture files to run.

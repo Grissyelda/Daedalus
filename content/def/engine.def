@@ -1,5 +1,5 @@
 /*
-	GrizzTech4 core entity definitions
+	Daedalus core entity definitions
 
 	The entity classes every level relies on. Each "editor_" key documents the
 	class for the editor's Inspector; the other keys are defaults that a placed

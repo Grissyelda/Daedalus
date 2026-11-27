@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""GrizzTech4 repository hygiene check.
+"""Daedalus repository hygiene check.
 
-GrizzTech4 is a public repository. This check stops personal information, local
+Daedalus is a public repository. This check stops personal information, local
 machine details, secrets and design documents from being committed.
 
 It only looks at what a change ADDS, so third-party code that already lives in
@@ -230,7 +230,7 @@ def main():
             problems += check_commit(sha, denylist)
 
     if problems:
-        print("Hygiene check failed. GrizzTech4 is public, so these must not be committed:\n")
+        print("Hygiene check failed. Daedalus is public, so these must not be committed:\n")
         for p in problems:
             print("  - " + p)
         print("\nRemove them, or if one is a genuine false positive, add 'hygiene: allow' to that line.")

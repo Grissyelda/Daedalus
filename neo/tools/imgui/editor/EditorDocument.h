@@ -1,30 +1,30 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
 
-#ifndef __GRIZZ_EDITOR_DOCUMENT_H__
-#define __GRIZZ_EDITOR_DOCUMENT_H__
+#ifndef __DAEDALUS_EDITOR_DOCUMENT_H__
+#define __DAEDALUS_EDITOR_DOCUMENT_H__
 
 /*
 ===============================================================================
@@ -44,7 +44,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 ===============================================================================
 */
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 
 // one selected thing: an entity, one brush or patch of it, or one face of a brush
@@ -165,7 +165,7 @@ public:
 	// a new level with a floor, a light and a player start
 	bool				New( const char* mapName );
 
-	// mapName is relative to maps/ and has no extension, e.g. "testmaps/gt4_test_room"
+	// mapName is relative to maps/ and has no extension, e.g. "testmaps/test_room"
 	bool				Load( const char* mapName );
 	bool				Save();
 	bool				SaveAs( const char* mapName );
@@ -354,4 +354,4 @@ void				FitTexture( idMapBrush* brush, int side, float repeatsU, float repeatsV 
 
 }
 
-#endif /* !__GRIZZ_EDITOR_DOCUMENT_H__ */
+#endif /* !__DAEDALUS_EDITOR_DOCUMENT_H__ */

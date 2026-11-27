@@ -1,51 +1,51 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
 
-#ifndef __GRIZZ_EDITOR_SHELL_H__
-#define __GRIZZ_EDITOR_SHELL_H__
+#ifndef __DAEDALUS_EDITOR_SHELL_H__
+#define __DAEDALUS_EDITOR_SHELL_H__
 
 /*
 ===============================================================================
 
-	GrizzTech4 editor shell
+	Daedalus editor shell
 
 	The executable starts in the editor: a docked workspace (menu bar,
 	Outliner, Inspector, Content Browser, Problems) around the game view.
 	Play runs the selected map in the same window; Stop returns to the editor.
 
-	The editor is compiled in when GRIZZ_EDITOR is defined (CMake option
-	GRIZZ_EDITOR, on by default) and can be switched off at runtime with
-	+set editor 0. Shipped games build with GRIZZ_EDITOR off.
+	The editor is compiled in when DAEDALUS_EDITOR is defined (CMake option
+	DAEDALUS_EDITOR, on by default) and can be switched off at runtime with
+	+set editor 0. Shipped games build with DAEDALUS_EDITOR off.
 
 ===============================================================================
 */
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 
-#if defined( GRIZZ_EDITOR )
+#if defined( DAEDALUS_EDITOR )
 
 // true when the editor is compiled in and the "editor" cvar is on
 bool	IsEditorMode();
@@ -87,4 +87,4 @@ inline void	DrawWorld() {}
 
 }
 
-#endif /* !__GRIZZ_EDITOR_SHELL_H__ */
+#endif /* !__DAEDALUS_EDITOR_SHELL_H__ */

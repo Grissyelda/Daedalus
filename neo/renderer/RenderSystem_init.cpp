@@ -70,7 +70,7 @@ glconfig_t	glConfig;
 idCVar r_requestStereoPixelFormat( "r_requestStereoPixelFormat", "1", CVAR_RENDERER, "Ask for a stereo GL pixel format on startup" );
 idCVar r_debugContext( "r_debugContext", "0", CVAR_RENDERER, "Enable various levels of context debug." );
 
-// GrizzTech4: which material path renders the world. The stylized path lands in milestone 5; until then both render as PBR.
+// Daedalus: which material path renders the world. The stylized path lands in milestone 5; until then both render as PBR.
 idCVar r_materialPath( "r_materialPath", "pbr", CVAR_RENDERER | CVAR_ARCHIVE, "material path: pbr or stylized" );
 
 #if defined( _WIN32 )
@@ -2531,7 +2531,7 @@ idRenderSystemLocal::ShutdownOpenGL
 */
 void idRenderSystemLocal::ShutdownOpenGL()
 {
-	// GrizzTech4: editor panel windows have swap chains on the device that's about to go
+	// Daedalus: editor panel windows have swap chains on the device that's about to go
 	ImGuiHook::ShutdownViewports();
 
 	// free the context and close the window

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate GrizzTech4 engine fonts from a TrueType font.
+"""Generate Daedalus engine fonts from a TrueType font.
 
 Writes, under the given content folder:
   newfonts/<Name>/48.dat   glyph metrics in the BFG font format (version 42)
@@ -7,7 +7,7 @@ Writes, under the given content folder:
   textures/bigchars.tga    16x16 ASCII grid used by the console (with --console-font)
 
 Usage:
-  make_font.py --ttf DejaVuSans.ttf --name GrizzSans --out content \
+  make_font.py --ttf DejaVuSans.ttf --name DaedalusSans --out content \
                [--console-font DejaVuSansMono.ttf]
 
 Needs Pillow (pip install pillow).

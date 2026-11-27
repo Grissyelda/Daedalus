@@ -1444,7 +1444,7 @@ void idTarget_SetInfluence::Event_RestoreInfluence()
 		light = static_cast<idLight*>( ent );
 		if( !light->spawnArgs.GetBool( "leave_demonic_mat" ) )
 		{
-			const char* texture = light->spawnArgs.GetString( "texture", "lights/defaultPointLight" );	// GrizzTech4: engine default light shape
+			const char* texture = light->spawnArgs.GetString( "texture", "lights/defaultPointLight" );	// Daedalus: engine default light shape
 			light->SetShader( texture );
 		}
 		color = light->spawnArgs.GetVector( "_color" );

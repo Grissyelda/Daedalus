@@ -704,7 +704,7 @@ void idRenderModelManagerLocal::ReloadModels( bool forceAll )
 		common->Printf( "Checking for changed model files...\n" );
 	}
 
-	// GrizzTech4: a model's GPU buffers go when it reloads, so let the frames still using them finish
+	// Daedalus: a model's GPU buffers go when it reloads, so let the frames still using them finish
 	deviceManager->GetDevice()->waitForIdle();
 
 	R_FreeDerivedData();
@@ -786,7 +786,7 @@ void idRenderModelManagerLocal::ReloadModels( bool forceAll )
 		reloaded.Append( model );
 	}
 
-	// GrizzTech4: give the reloaded models their static buffers, as a level load does
+	// Daedalus: give the reloaded models their static buffers, as a level load does
 	if( reloaded.Num() > 0 && commandList )
 	{
 		commandList->open();

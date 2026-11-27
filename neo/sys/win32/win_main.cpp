@@ -40,7 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>  // for PathMatchSpecW
-#include <dbghelp.h>  // GrizzTech4: crash reports
+#include <dbghelp.h>  // Daedalus: crash reports
 #pragma comment( lib, "dbghelp.lib" )
 
 #ifndef __MRC__
@@ -2207,11 +2207,11 @@ WinMain
 */
 /*
 ==============
-GrizzTech4 crash reports
+Daedalus crash reports
 
-When the program crashes, writes two files to <Saved Games>\GrizzTech4\crashes:
+When the program crashes, writes two files to <Saved Games>\Daedalus\crashes:
 a minidump for a debugger, and a text report with the call stack (function
-names come from GrizzTech4.pdb when it sits next to the exe). Then tells the
+names come from Daedalus.pdb when it sits next to the exe). Then tells the
 person where they are.
 ==============
 */
@@ -2344,14 +2344,14 @@ static LONG WINAPI CrashHandler( EXCEPTION_POINTERS* ep )
 	}
 
 	char message[ 1024 ];
-	_snprintf( message, sizeof( message ), "GrizzTech4 crashed. A report was saved to:\n\n%s\n\nPlease send that file (and the .dmp next to it) along with what you were doing.", reportPath );
-	MessageBoxA( NULL, message, "GrizzTech4 crashed", MB_OK | MB_ICONERROR | MB_TOPMOST );
+	_snprintf( message, sizeof( message ), "Daedalus crashed. A report was saved to:\n\n%s\n\nPlease send that file (and the .dmp next to it) along with what you were doing.", reportPath );
+	MessageBoxA( NULL, message, "Daedalus crashed", MB_OK | MB_ICONERROR | MB_TOPMOST );
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 
 int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow )
 {
-	// GrizzTech4: crash reports go to <Saved Games>\GrizzTech4\crashes
+	// Daedalus: crash reports go to <Saved Games>\Daedalus\crashes
 	_snprintf( crashFolder, sizeof( crashFolder ), "%s\\crashes", Sys_DefaultSavePath() );
 	SetUnhandledExceptionFilter( CrashHandler );
 

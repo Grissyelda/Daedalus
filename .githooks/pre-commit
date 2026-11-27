@@ -1,5 +1,5 @@
 #!/bin/sh
-# GrizzTech4 pre-commit hook: blocks personal info, local paths, secrets and
+# Daedalus pre-commit hook: blocks personal info, local paths, secrets and
 # design documents from being committed to this public repository.
 # Enable once per clone with:  git config core.hooksPath .githooks
 

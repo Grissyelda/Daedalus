@@ -1,11 +1,11 @@
 /*
 ===========================================================================
 
-GrizzTech4 editor: bringing models in
+Daedalus editor: bringing models in
 
-Copyright (C) 2026 the GrizzTech4 authors
+Copyright (C) 2026 the Daedalus authors
 
-This file is part of GrizzTech4, which is based on the Doom 3 BFG Edition GPL
+This file is part of Daedalus, which is based on the Doom 3 BFG Edition GPL
 Source Code and RBDOOM-3-BFG. It is free software: you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
 published by the Free Software Foundation, either version 3 of the License,
@@ -27,7 +27,7 @@ or (at your option) any later version.
 #include "../../../libs/stb/stb_image.h"
 #include "../../../libs/stb/stb_image_write.h"
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 namespace Import
 {
@@ -629,7 +629,7 @@ static bool WriteMaterials( const model_t& m, idList<material_t>& mats, idStrLis
 	prefix.StripFileExtension();
 
 	idStr text;
-	text += va( "/*\n\tMaterials for the imported model \"%s\", written by the GrizzTech4 editor.\n", m.name.c_str() );
+	text += va( "/*\n\tMaterials for the imported model \"%s\", written by the Daedalus editor.\n", m.name.c_str() );
 	text += "\tThey're written again each time the model is brought in again, so changes made here\n";
 	text += "\tdon't last: change the model, or make a material of your own with another name.\n*/\n\n";
 	for( int i = 0; i < mats.Num(); i++ )
@@ -1497,7 +1497,7 @@ static bool ConvertObj( const char* osPath, const model_t& m, float scale, idStr
 	meshes = Max( groups.Num(), 1 );
 
 	const int spareTexCoord = texCoords.Append( idVec2( 0, 0 ) );
-	out = va( "# %s, brought in by the GrizzTech4 editor: standing Z up, in game units, as triangles\n", m.name.c_str() );
+	out = va( "# %s, brought in by the Daedalus editor: standing Z up, in game units, as triangles\n", m.name.c_str() );
 	for( int i = 0; i < verts.Num(); i++ )
 	{
 		out += va( "v %.6f %.6f %.6f\n", verts[i].x, verts[i].y, verts[i].z );
@@ -1564,7 +1564,7 @@ static bool WriteSettings( const model_t& m, const idStrList& cache )
 {
 	const float scale = MadeInScale( m.madeIn, m.customScale );
 	idStr text;
-	text += "// GrizzTech4 import settings, written by the editor. Change them on the model's card in the Inspector.\n";
+	text += "// Daedalus import settings, written by the editor. Change them on the model's card in the Inspector.\n";
 	text += va( "source %s\n", Quote( m.source ).c_str() );
 	text += va( "type %s\n", m.sourceType.c_str() );
 	text += va( "madeIn %s\n", MadeInKey( m.madeIn ) );
@@ -2133,4 +2133,4 @@ bool BrowseForModel( idStr& osPath )
 }
 
 } // namespace Import
-} // namespace GrizzEditor
+} // namespace DaedalusEditor

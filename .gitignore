@@ -43,7 +43,7 @@ neo/cmake-build-*/
 neo/bin/
 /tools/
 
-# GrizzTech4: keep personal and local files out of this public repository
+# Daedalus: keep personal and local files out of this public repository
 .hygiene-denylist
 .env
 .env.*

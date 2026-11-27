@@ -207,7 +207,7 @@ protected:
 	}
 
 public:
-	// GrizzTech4: extra windows
+	// Daedalus: extra windows
 	void* CreateExtraSwapChain( void* windowHandle, int width, int height ) override;
 	void ResizeExtraSwapChain( void* swapChain, int width, int height ) override;
 	void DestroyExtraSwapChain( void* swapChain ) override;
@@ -1735,7 +1735,7 @@ void DeviceManager_VK::Present()
 /*
 ===============================================================================
 
-	GrizzTech4: swap chains for extra windows (editor panels on other monitors)
+	Daedalus: swap chains for extra windows (editor panels on other monitors)
 
 ===============================================================================
 */

@@ -1163,7 +1163,7 @@ void idGameEdit::PlayerGetEyePosition( idVec3& org ) const
 ================
 idGameEdit::PlayerTeleport
 
-GrizzTech4: Play from the editor camera
+Daedalus: Play from the editor camera
 ================
 */
 bool idGameEdit::PlayerTeleport( const idVec3& eye, const idAngles& angles )

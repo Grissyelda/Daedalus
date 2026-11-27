@@ -192,7 +192,7 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict* args, renderLight_t*
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
 	args->GetBool( "parallel", "0", renderLight->parallel );
 
-	args->GetString( "texture", "lights/defaultPointLight", &texture );	// GrizzTech4: engine default light shape
+	args->GetString( "texture", "lights/defaultPointLight", &texture );	// Daedalus: engine default light shape
 
 	// allow this to be NULL
 	renderLight->shader = declManager->FindMaterial( texture, false );
@@ -875,7 +875,7 @@ void idLight::BecomeBroken( idEntity* activator )
 	{
 		StopSound( SND_CHANNEL_ANY, false );
 		const idSoundShader* alternate = refSound.shader ? refSound.shader->GetAltSound() : declManager->FindSound( parm );
-		// GrizzTech4: a light that never played a sound has no emitter
+		// Daedalus: a light that never played a sound has no emitter
 		if( alternate && refSound.referenceSound != NULL )
 		{
 			// start it with no diversity, so the leadin break sound plays

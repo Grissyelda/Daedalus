@@ -1,6 +1,6 @@
-# Contributing to GrizzTech4
+# Contributing to Daedalus
 
-GrizzTech4 is a public repository, so keep personal information out of it.
+Daedalus is a public repository, so keep personal information out of it.
 
 ## One-time setup per clone
 

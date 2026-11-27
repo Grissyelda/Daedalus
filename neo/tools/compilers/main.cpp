@@ -1048,7 +1048,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
-		exit( 1 );	// GrizzTech4: so the editor can tell a failed build
+		exit( 1 );	// Daedalus: so the editor can tell a failed build
 	}
 	virtual void			FatalError( const char* fmt, ... )
 	{
@@ -1297,7 +1297,7 @@ int Dmap_NoGui( int argc, char** argv )
 {
 	commonLocal.com_refreshOnPrint = false;
 
-	// GrizzTech4: unbuffered, so whoever reads the output (the editor's build progress) sees it as it happens
+	// Daedalus: unbuffered, so whoever reads the output (the editor's build progress) sees it as it happens
 	setvbuf( stdout, NULL, _IONBF, 0 );
 
 	idLib::common = common;

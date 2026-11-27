@@ -2,7 +2,7 @@
 
 main.script
 
-GrizzTech4's main script. The game compiles it at startup, before any
+Daedalus's main script. The game compiles it at startup, before any
 level script. A project adds its own scripts by #including them below.
 
 ***********************************************************************/
@@ -10,7 +10,7 @@ level script. A project adds its own scripts by #including them below.
 // how many times a second scripts and game logic update
 float GAME_FPS = 60.0f;
 
-// script/grizz_defs.script (shared constants) is included automatically
+// script/daedalus_defs.script (shared constants) is included automatically
 // at the top of every script file
 
 // the default player's script object

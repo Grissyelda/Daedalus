@@ -1901,7 +1901,7 @@ bool idMapFile::Parse( const char* filename, bool ignoreRegion, bool osPath, boo
 ============
 idMapFile::WriteToFile
 
-GrizzTech4 editor: the map as Write() would save it, into an already open file
+Daedalus editor: the map as Write() would save it, into an already open file
 ============
 */
 bool idMapFile::WriteToFile( idFile* fp ) const
@@ -1932,7 +1932,7 @@ bool idMapFile::WriteToFile( idFile* fp ) const
 ============
 idMapFile::ParseFromMemory
 
-GrizzTech4 editor: parses .map text (as written by WriteToFile) without touching the disk.
+Daedalus editor: parses .map text (as written by WriteToFile) without touching the disk.
 Unlike Parse(), it applies no worldspawn options or _extra_ents files, so the map comes
 back exactly as it was written.
 ============

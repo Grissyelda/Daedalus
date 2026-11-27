@@ -221,7 +221,7 @@ public:
 
 	void SetWindowTitle( const char* title );
 
-	// GrizzTech4: swap chains for extra OS windows (editor panels dragged onto other monitors).
+	// Daedalus: swap chains for extra OS windows (editor panels dragged onto other monitors).
 	// The handles are opaque. Draw a frame with BeginExtraFrame, execute the command list that
 	// draws into its framebuffer right away (nothing else in between), then PresentExtra.
 	virtual void* CreateExtraSwapChain( void* windowHandle, int width, int height )

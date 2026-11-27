@@ -1,24 +1,24 @@
 /*
 ===========================================================================
 
-GrizzTech4 GPL Source Code
-Copyright (C) 2026 GrizzTech4 contributors
+Daedalus GPL Source Code
+Copyright (C) 2026 Daedalus contributors
 
-This file is part of GrizzTech4, which is based on RBDOOM-3-BFG and the
+This file is part of Daedalus, which is based on RBDOOM-3-BFG and the
 Doom 3 BFG Edition GPL Source Code.
 
-GrizzTech4 is free software: you can redistribute it and/or modify
+Daedalus is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-GrizzTech4 is distributed in the hope that it will be useful,
+Daedalus is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
+along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 ===========================================================================
 */
@@ -216,7 +216,7 @@ void* Sys_ExtraWindowCreate( const sysScreenRect_t& rect, void* owner )
 	SDL_SetHint( SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1" );
 
 	const Uint32 flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_SKIP_TASKBAR | SDL_WINDOW_VULKAN | SDL_WINDOW_ALLOW_HIGHDPI;
-	SDL_Window* sdlWindow = SDL_CreateWindow( "GrizzTech4", rect.x, rect.y, Max( 1, rect.w ), Max( 1, rect.h ), flags );
+	SDL_Window* sdlWindow = SDL_CreateWindow( "Daedalus", rect.x, rect.y, Max( 1, rect.w ), Max( 1, rect.h ), flags );
 	if( sdlWindow == NULL )
 	{
 		common->Warning( "Couldn't open a panel window: %s", SDL_GetError() );

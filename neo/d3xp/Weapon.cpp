@@ -359,7 +359,7 @@ void idWeapon::Save( idSaveGame* savefile ) const
 
 	savefile->WriteVec3( pushVelocity );
 
-	// GrizzTech4: weapons without a definition (a player with no weapons) save an empty name
+	// Daedalus: weapons without a definition (a player with no weapons) save an empty name
 	savefile->WriteString( weaponDef ? weaponDef->GetName() : "" );
 	savefile->WriteFloat( meleeDistance );
 	savefile->WriteString( meleeDefName );
@@ -533,7 +533,7 @@ void idWeapon::Restore( idRestoreGame* savefile )
 
 	idStr objectname;
 	savefile->ReadString( objectname );
-	// GrizzTech4: an empty name means this weapon had no definition when saved
+	// Daedalus: an empty name means this weapon had no definition when saved
 	weaponDef = objectname.IsEmpty() ? NULL : gameLocal.FindEntityDef( objectname );
 	meleeDef = weaponDef ? gameLocal.FindEntityDef( weaponDef->dict.GetString( "def_melee" ), false ) : NULL;
 
@@ -2863,7 +2863,7 @@ void idWeapon::PresentWeapon( bool showViewModel )
 
 	UpdateSound();
 
-	// GrizzTech4: a player can exist without any weapon, in which case there is no weaponDef
+	// Daedalus: a player can exist without any weapon, in which case there is no weaponDef
 	if( weaponDef == NULL )
 	{
 		return;

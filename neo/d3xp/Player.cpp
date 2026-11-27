@@ -5990,7 +5990,7 @@ void idPlayer::UpdateFlashlight()
 		return;
 	}
 
-	// GrizzTech4: the flashlight is optional; a project enables it by defining weapon_flashlight_new
+	// Daedalus: the flashlight is optional; a project enables it by defining weapon_flashlight_new
 	// (or weapon_flashlight for the classic one)
 	if( gameLocal.FindEntityDef( UsesClassicFlashlight() ? "weapon_flashlight" : "weapon_flashlight_new", false ) == NULL )
 	{
@@ -7403,7 +7403,7 @@ void idPlayer::SetCurrentHeartRate()
 
 		if( pct != zeroVol )
 		{
-			// GrizzTech4: a player def without "snd_heartbeat" starts nothing and has no
+			// Daedalus: a player def without "snd_heartbeat" starts nothing and has no
 			// sound emitter yet, so only adjust the volume when the sound really started
 			if( StartSound( "snd_heartbeat", SND_CHANNEL_HEART, SSF_PRIVATE_SOUND, false, NULL ) && refSound.referenceSound != NULL )
 			{

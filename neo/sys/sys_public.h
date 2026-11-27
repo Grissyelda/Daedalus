@@ -488,7 +488,7 @@ void			Sys_Error( const char* error, ... );
 const char* 	Sys_GetCmdLine();
 // DG: Sys_ReLaunch() doesn't need any options (and the old way is painful for POSIX systems)
 void			Sys_ReLaunch();
-// GrizzTech4: restart with extra command-line arguments after the original ones,
+// Daedalus: restart with extra command-line arguments after the original ones,
 // e.g. "+set fs_game MyGame" to open another project
 void			Sys_ReLaunchWithArgs( const char* const* extraArgs, int numExtraArgs );
 // DG end
@@ -616,15 +616,15 @@ void			Sys_EndJoystickInputEvents();
 // operation like map loading, the system can release the mouse cursor
 // when in windowed mode
 void			Sys_GrabMouseCursor( bool grabIt );
-// GrizzTech4: puts the mouse pointer at a position in the window (pixels from its top left)
+// Daedalus: puts the mouse pointer at a position in the window (pixels from its top left)
 void			Sys_WarpMouseInWindow( int x, int y );
 
-// GrizzTech4 editor mouse look: while captured the pointer stays at (x, y) and raw mouse
+// Daedalus editor mouse look: while captured the pointer stays at (x, y) and raw mouse
 // movement (no pointer acceleration) collects for Sys_GetMouseLookDelta, like in a game
 void			Sys_CaptureMouseForLook( bool capture, int x, int y );
 void			Sys_GetMouseLookDelta( float& dx, float& dy );	// movement since the last call
 
-// GrizzTech4: child processes. The editor builds levels in one, so it never freezes.
+// Daedalus: child processes. The editor builds levels in one, so it never freezes.
 // What the process prints (stdout and stderr) goes to the file at outputPath (an OS path, UTF-8).
 void* 			Sys_ProcessStart( const char* exePath, const char* const* args, int numArgs, const char* workingDir, const char* outputPath );
 bool			Sys_ProcessFinished( void* process, int& exitCode );	// true once it has ended; exitCode is then set
@@ -633,14 +633,14 @@ void			Sys_ProcessKill( void* process );
 void			Sys_ProcessFree( void* process );						// after it has finished or been killed
 const char* 	Sys_EXEPath();
 
-// GrizzTech4: the desktop. Paths are OS paths in UTF-8.
+// Daedalus: the desktop. Paths are OS paths in UTF-8.
 void			Sys_OpenFolder( const char* osPath );		// show a folder in the system's file browser
 // ask for a file to open; filter is "Label|*.a;*.b". False if cancelled, or if there's no such window here.
 bool			Sys_OpenFileDialog( const char* title, const char* filter, char* path, int pathSize );
 // called with each file dropped on the main window, on the thread that handles window messages
 extern void ( *Sys_FileDropped )( const char* osPath );
 
-// GrizzTech4: extra OS windows, for editor panels dragged out of the main window
+// Daedalus: extra OS windows, for editor panels dragged out of the main window
 // (e.g. onto another monitor). Rectangles are client areas in screen pixels.
 struct sysScreenRect_t
 {

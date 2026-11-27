@@ -40,8 +40,8 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 // default scripts
-#define SCRIPT_DEFAULTDEFS			"script/grizz_defs.script"	// GrizzTech4: included at the top of every script
-#define SCRIPT_DEFAULT				"script/main.script"	// GrizzTech4: the game's main script
+#define SCRIPT_DEFAULTDEFS			"script/daedalus_defs.script"	// Daedalus: included at the top of every script
+#define SCRIPT_DEFAULT				"script/main.script"	// Daedalus: the game's main script
 #define SCRIPT_DEFAULTFUNC			"doom_main"
 
 struct gameReturn_t
@@ -296,7 +296,7 @@ public:
 	virtual void				PlayerGetViewAngles( idAngles& angles ) const;
 	virtual void				PlayerGetEyePosition( idVec3& org ) const;
 	virtual bool				PlayerGetRenderView( renderView_t& rv ) const;
-	// GrizzTech4: puts the player where an eye at 'eye' would be, looking along 'angles';
+	// Daedalus: puts the player where an eye at 'eye' would be, looking along 'angles';
 	// false when the player doesn't fit there (inside a wall)
 	virtual bool				PlayerTeleport( const idVec3& eye, const idAngles& angles );
 

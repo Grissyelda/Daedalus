@@ -1,11 +1,11 @@
 /*
 ===========================================================================
 
-GrizzTech4 editor: bringing models in
+Daedalus editor: bringing models in
 
-Copyright (C) 2026 the GrizzTech4 authors
+Copyright (C) 2026 the Daedalus authors
 
-This file is part of GrizzTech4, which is based on the Doom 3 BFG Edition GPL
+This file is part of Daedalus, which is based on the Doom 3 BFG Edition GPL
 Source Code and RBDOOM-3-BFG. It is free software: you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
 published by the Free Software Foundation, either version 3 of the License,
@@ -14,8 +14,8 @@ or (at your option) any later version.
 ===========================================================================
 */
 
-#ifndef GRIZZ_EDITOR_IMPORT_H
-#define GRIZZ_EDITOR_IMPORT_H
+#ifndef DAEDALUS_EDITOR_IMPORT_H
+#define DAEDALUS_EDITOR_IMPORT_H
 
 /*
 ===============================================================================
@@ -39,7 +39,7 @@ or (at your option) any later version.
 ===============================================================================
 */
 
-namespace GrizzEditor
+namespace DaedalusEditor
 {
 namespace Import
 {
@@ -122,6 +122,6 @@ void			ShowFolder( const char* osPath );
 bool			BrowseForModel( idStr& osPath );
 
 } // namespace Import
-} // namespace GrizzEditor
+} // namespace DaedalusEditor
 
 #endif

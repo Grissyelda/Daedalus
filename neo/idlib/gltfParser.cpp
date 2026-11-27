@@ -2106,7 +2106,7 @@ bool GLTF_Parser::Load( idStr filename )
 	const ID_TIME_T fileTime = fileSystem->GetTimestamp( filename );
 	if( data != nullptr && fileTime != FILE_NOT_FOUND_TIMESTAMP && fileTime > data->SourceTime() )
 	{
-		// GrizzTech4: the file changed since it was read (an editor reload), so read it again
+		// Daedalus: the file changed since it was read (an editor reload), so read it again
 		delete data;
 		data = nullptr;
 	}
@@ -2355,7 +2355,7 @@ void gltfData::ClearData( idStr& fileName )
 
 	if( index != -1 )
 	{
-		// GrizzTech4: removing shifts every later entry down one, so the hash is rebuilt
+		// Daedalus: removing shifts every later entry down one, so the hash is rebuilt
 		// (RemoveIndex on the hash alone left the later files pointing one slot too far)
 		dataList.RemoveIndex( index );
 		dataList.Condense();	// AssureSizeAlloc only makes new entries past the capacity, so don't leave a freed one there

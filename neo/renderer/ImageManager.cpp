@@ -91,7 +91,7 @@ void R_ReloadImages_f( const idCmdArgs& args )
 ===============
 R_ReloadImage_f
 
-GrizzTech4: reload just the named images (the editor's importer uses it for
+Daedalus: reload just the named images (the editor's importer uses it for
 the pictures it rewrote); unlike reloadImages it leaves the framebuffers alone
 ===============
 */

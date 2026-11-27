@@ -1,5 +1,5 @@
 /*
-	GrizzTech4 default player
+	Daedalus default player
 
 	A first-person player with no body model and no weapons: enough to walk
 	around a level. Projects replace or extend it with their own player def
