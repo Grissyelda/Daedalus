@@ -118,6 +118,20 @@ bool		SearchField( const char* id, char* buffer, int bufferSize, const char* hin
 // a thin vertical divider between groups on one line
 void		VerticalDivider();
 
+// "Show me": widgets mark where they are each frame (tool tiles by their id, icon buttons by
+// theirs, mode tabs as "tab:<label>"); Highlight makes the one with that name glow for a while.
+void		Mark( const char* name );			// the last item
+void		MarkRect( const char* name, const ImVec2& min, const ImVec2& max );
+void		Highlight( const char* name, float seconds = 6.0f );
+void		DrawHighlights();					// once a frame, after everything else is drawn
+
+// Help pages: the shell connects these. A card's "?" opens "cards/<card id>" when that page exists.
+extern void	( *openHelpPage )( const char* page );
+extern bool	( *helpPageExists )( const char* page );
+
+// a small "?" button that opens a help page
+bool		HelpButton( const char* page, const char* tooltip = NULL );
+
 } // namespace UI
 } // namespace GrizzEditor
 

@@ -31,6 +31,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorShell.h"
 #include "EditorDocument.h"
 #include "EditorPrefabs.h"
+#include "EditorHelp.h"
 #include "EditorView.h"
 #include "EditorShapes.h"
 #include "EditorBrushOps.h"
@@ -212,7 +213,6 @@ static const char* WINDOW_INSPECTOR			= ICON_INSPECTOR "  Inspector###Inspector"
 static const char* WINDOW_CONTENT_BROWSER	= ICON_CONTENT "  Content###Content Browser";
 static const char* WINDOW_PROBLEMS			= ICON_PROBLEMS "  Problems###Problems";
 
-// quiet, wrapped hint text
 // pieces (see the Pieces section)
 static void SelectHit( const Selection& hit, bool toggle );
 static void SyncPiecesOnOpen();
@@ -230,6 +230,7 @@ static void DrawPartCard();
 static void PlacePiece( const char* name, const idVec3& point );
 static void DrawPieceProblems( bool& any );
 
+// quiet, wrapped hint text
 static void Hint( const char* text )
 {
 	UI::Hint( text );
@@ -631,6 +632,7 @@ static void PlayDocument( bool fromCamera )
 	{
 		FinishPieceEdit( PIECE_SAVE_ALL );	// play what's there, piece included
 	}
+	Help::Event( "play.start" );
 	if( document.IsDirty() && !document.Save() )
 	{
 		Status( "Couldn't save the level, so it can't be played" );
@@ -658,6 +660,10 @@ static void BuildDocument()
 
 static void Stop()
 {
+	if( IsPlaying() )
+	{
+		Help::Event( "play.stop" );
+	}
 	if( buildThen == BUILD_THEN_RELOAD )
 	{
 		buildThen = BUILD_THEN_NOTHING;		// the build carries on; nothing to reload into
@@ -948,6 +954,7 @@ static void PausePlay()
 		return;
 	}
 	playPaused = true;
+	Help::Event( "play.pause" );
 
 	// the editor camera takes over where the player was looking
 	if( gameEdit->PlayerIsValid() )
@@ -1038,6 +1045,7 @@ static void ResumePlay()
 	playPaused = false;
 	view.ClearOutlines();
 	FocusGame();
+	Help::Event( "play.resume" );
 }
 
 // a background build has finished (or is still going): deal with it
@@ -1088,6 +1096,7 @@ static void BuildUpdate()
 
 	const buildThen_t then = buildThen;
 	buildThen = BUILD_THEN_NOTHING;
+	Help::Event( buildLeaked ? "build.leak" : buildFailed ? "build.failed" : "build.done" );
 	if( buildFailed )
 	{
 		if( then == BUILD_THEN_PLAY )
@@ -1316,6 +1325,7 @@ static void EditorAddShape_f( const idCmdArgs& args )
 		if( MakeShape( ( shapeType_t )i, shapeSettings, box, "textures/dev/grid_wall", brushes ) )
 		{
 			document.AddBrushes( brushes, va( "Add %s", ShapeName( ( shapeType_t )i ) ) );
+			Help::Event( "shape.added" );
 		}
 		return;
 	}
@@ -1491,6 +1501,8 @@ static void EditorEditPiece_f( const idCmdArgs& args );
 static void EditorPiecePart_f( const idCmdArgs& args );
 static void EditorListPieces_f( const idCmdArgs& args );
 static void EditorDelete_f( const idCmdArgs& args );
+static void EditorHelp_f( const idCmdArgs& args );
+static void EditorShowMe_f( const idCmdArgs& args );
 static void EditorDuplicate_f( const idCmdArgs& args );
 
 static void RegisterCommands()
@@ -1535,6 +1547,8 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorPiecePart", EditorPiecePart_f, CMD_FL_SYSTEM, "the selected part of a copy: editorPiecePart revert | apply" );
 	cmdSystem->AddCommand( "editorListPieces", EditorListPieces_f, CMD_FL_SYSTEM, "lists copies of pieces and their overrides" );
 	cmdSystem->AddCommand( "editorDelete", EditorDelete_f, CMD_FL_SYSTEM, "deletes the selection" );
+	cmdSystem->AddCommand( "editorShowMe", EditorShowMe_f, CMD_FL_SYSTEM, "makes a control glow, as a lesson's Show me does: editorShowMe [tab/]control" );
+	cmdSystem->AddCommand( "editorHelp", EditorHelp_f, CMD_FL_SYSTEM, "opens the Help panel, on a page if given: editorHelp [page]" );
 	cmdSystem->AddCommand( "editorDuplicate", EditorDuplicate_f, CMD_FL_SYSTEM, "duplicates the selection: editorDuplicate <dx> <dy> <dz>" );
 
 	// F10 always gets back to the editor while playing
@@ -2118,7 +2132,9 @@ static void DrawOutliner()
 		return;
 	}
 
-	UI::SearchField( "##filter", outlinerFilter, sizeof( outlinerFilter ), "Search the level" );
+	UI::SearchField( "##filter", outlinerFilter, sizeof( outlinerFilter ), "Search the level", ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x );
+	ImGui::SameLine();
+	UI::HelpButton( "panels/outliner", "About the Outliner" );
 	ImGui::Spacing();
 
 	ImGui::BeginChild( "outliner_list" );
@@ -2984,6 +3000,10 @@ static void DrawEntityInspector( idMapEntity* ent )
 // the selection's name and what it is, above the cards
 static void DrawInspectorHeader( const char* icon, const char* title, const char* subtitle, const char* usage )
 {
+	const float startY = ImGui::GetCursorPosY();
+	ImGui::SetCursorPosX( ImGui::GetContentRegionMax().x - ImGui::GetFrameHeight() );
+	UI::HelpButton( "panels/inspector", "About the Inspector" );
+	ImGui::SetCursorPosY( startY );
 	ImGui::PushFont( UI::Font( UI::FONT_TITLE ) );
 	ImGui::TextColored( UI::Accent(), "%s", icon );
 	ImGui::SameLine();
@@ -3141,6 +3161,7 @@ static bool MakeAndAddShape( shapeType_t type, const idBounds& box )
 		return false;
 	}
 	document.AddBrushes( brushes, va( "Add %s", ShapeName( type ) ) );
+	Help::Event( "shape.added" );
 	return true;
 }
 
@@ -3226,8 +3247,13 @@ static void DrawContentBrowser()
 		return;
 	}
 
-	if( ImGui::BeginTabBar( "content_tabs" ) )
+	if( ImGui::BeginTabBar( "content_tabs", ImGuiTabBarFlags_None ) )
 	{
+		if( ImGui::TabItemButton( ICON_HELP "##contenthelp", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip ) )
+		{
+			Help::Open( "panels/content" );
+		}
+		UI::Tip( "About the Content panel" );
 		if( ImGui::BeginTabItem( ICON_MAP_FILE "  Levels" ) )
 		{
 			if( mapListDirty )
@@ -3450,6 +3476,12 @@ static void DrawProblems()
 		ImGui::End();
 		return;
 	}
+	{
+		const float startY = ImGui::GetCursorPosY();
+		ImGui::SetCursorPosX( ImGui::GetContentRegionMax().x - ImGui::GetFrameHeight() );
+		UI::HelpButton( "panels/problems", "About Problems" );
+		ImGui::SetCursorPosY( startY );
+	}
 
 	bool any = false;
 	const idMapFile* map = document.Map();
@@ -3609,7 +3641,7 @@ static void DrawWelcome()
 		ImGui::SameLine();
 		ImGui::TextUnformatted( "Welcome to GrizzTech4" );
 		ImGui::PopFont();
-		Hint( "A level in five steps. Everything here is also under Help." );
+		Hint( "A level in five steps. The lesson walks you through them in the Help panel and ticks each off as you do it." );
 		ImGui::Spacing();
 
 		struct step_t
@@ -3642,11 +3674,18 @@ static void DrawWelcome()
 			editor_showWelcome.SetBool( again );
 		}
 		const float buttonWidth = 120.0f * UI::Scale();
-		ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - buttonWidth );
-		if( UI::ColorButton( "Let's go", UI::Accent(), ImVec2( buttonWidth, 0 ) ) )
+		ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - buttonWidth * 1.3f - 70.0f * UI::Scale() );
+		if( ImGui::Button( "Close" ) )
 		{
 			showWelcome = false;
 		}
+		ImGui::SameLine();
+		if( UI::ColorButton( "Start the lesson", UI::Accent(), ImVec2( buttonWidth * 1.3f, 0 ) ) )
+		{
+			showWelcome = false;
+			Help::Open( "lessons/getting-started" );
+		}
+		UI::Tip( "Opens the Getting started lesson in the Help panel: it ticks off each step as you do it" );
 	}
 	ImGui::End();
 }
@@ -3667,6 +3706,10 @@ static void DrawAbout()
 		ImGui::TextWrapped( "Licensed under the GNU GPL v3 with id Software's additional terms." );
 		ImGui::TextWrapped( "Material path: %s", r_materialPath.GetString() );
 		ImGui::Separator();
+		ImGui::TextColored( UI::Accent(), ICON_HELP );
+		ImGui::SameLine();
+		ImGui::TextUnformatted( "F1 opens Help: a page for every part of the editor, and lessons that tick off as you go." );
+		ImGui::Spacing();
 		ImGui::Text( "Moving around" );
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
 		ImGui::Text( "Playing" );
@@ -3761,7 +3804,7 @@ static void DrawGizmo()
 	if( gizmoMode == GIZMO_ROTATE )
 	{
 		operation = ImGuizmo::ROTATE;
-		label = "Rotate";
+		label = "Turn";
 		snap[0] = snap[1] = snap[2] = 15.0f;
 	}
 	else if( gizmoMode == GIZMO_RESIZE )
@@ -4886,6 +4929,11 @@ static void SetTool( gizmoMode_t mode )
 	{
 		cornerSelection.Clear();
 	}
+	static const char* toolEvents[GIZMO_COUNT] = { "tool.move", "tool.turn", "tool.resize", "tool.cut", "tool.corners", "tool.draw", "tool.paint" };
+	if( mode >= 0 && mode < GIZMO_COUNT )
+	{
+		Help::Event( toolEvents[mode] );
+	}
 	gizmoMode = mode;
 	paintPicking = false;
 	if( mode == GIZMO_PAINT )
@@ -4900,6 +4948,11 @@ static void SetTool( gizmoMode_t mode )
 
 static void SetMode( editMode_t mode )
 {
+	static const char* modeEvents[] = { "mode.build", "mode.paint", "mode.logic", "mode.light", "mode.kits" };
+	if( mode >= 0 && mode < ( int )( sizeof( modeEvents ) / sizeof( modeEvents[0] ) ) )
+	{
+		Help::Event( modeEvents[mode] );
+	}
 	editMode = mode;
 	if( mode == MODE_PAINT )
 	{
@@ -4915,6 +4968,7 @@ static void SetMode( editMode_t mode )
 static void TogglePlanView()
 {
 	planView = !planView;
+	Help::Event( planView ? "view.top" : "view.3d" );
 	if( planView )
 	{
 		CenterPlanOnCamera();
@@ -5253,6 +5307,10 @@ static void SelectHit( const Selection& hit, bool toggle )
 		return;
 	}
 	SelectItems( items, toggle );
+	if( !document.selection.IsEmpty() )
+	{
+		Help::Event( "select.any" );
+	}
 }
 
 static void StartPieceEdit( int anchor )
@@ -5275,6 +5333,7 @@ static void StartPieceEdit( int anchor )
 	pieceAdopted.Clear();
 	document.selection.Clear();
 	UpdatePieceFocus();
+	Help::Event( "piece.edit" );
 	Status( va( "Editing the piece \"%s\". When you're done, save it to every copy or to this copy only.", pieceEditPrefab.c_str() ) );
 }
 
@@ -5300,6 +5359,7 @@ static void FinishPieceEdit( pieceEditEnd_t end )
 		{
 			copies += ( IsPrefabAnchor( map->GetEntity( e ) ) && pieceEditPrefab.Icmp( map->GetEntity( e )->epairs.GetString( KEY_PREFAB ) ) == 0 ) ? 1 : 0;
 		}
+		Help::Event( "piece.saved.all" );
 		Status( written ? va( "Saved the piece \"%s\": %d %s in this level updated (other levels update when they open). Undo puts the old piece back.", pieceEditPrefab.c_str(), copies, copies == 1 ? "copy" : "copies" ) : error.c_str() );
 	}
 	else if( end == PIECE_SAVE_COPY && anchor >= 0 )
@@ -5322,6 +5382,7 @@ static void FinishPieceEdit( pieceEditEnd_t end )
 		view.focusOwners.Clear();
 		document.EndChange();		// the change hook records what differs from the piece
 		document.ValidateSelection();
+		Help::Event( "piece.saved.copy" );
 		Status( va( "Saved to this copy only: the piece \"%s\" and its other copies are unchanged.", pieceEditPrefab.c_str() ) );
 	}
 	else
@@ -5404,6 +5465,22 @@ static void AdoptIntoEditedPiece( Document& doc, int anchor )
 	}
 }
 
+// things in copies of pieces that have changes of their own
+static int CountOverrides( const idMapFile* map )
+{
+	int n = 0;
+	for( int e = 1; e < map->GetNumEntities(); e++ )
+	{
+		n += map->GetEntity( e )->epairs.GetString( KEY_OVERRIDES )[0] != '\0' ? 1 : 0;
+	}
+	const idMapEntity* world = map->GetEntity( 0 );
+	for( int p = 0; p < world->GetNumPrimitives(); p++ )
+	{
+		n += world->GetPrimitive( p )->epairs.GetString( KEY_OVERRIDES )[0] != '\0' ? 1 : 0;
+	}
+	return n;
+}
+
 // after every change: keep copies linked and their overrides recorded
 static void PieceAfterChange( Document& doc )
 {
@@ -5416,7 +5493,13 @@ static void PieceAfterChange( Document& doc )
 	{
 		AdoptIntoEditedPiece( doc, editing );
 	}
+	const int overridesBefore = CountOverrides( doc.Map() );
 	TrackPrefabEdits( doc.Map(), editing >= 0 ? pieceEditing.c_str() : NULL, doc.duplicateRenames, doc.selection.items );
+	if( CountOverrides( doc.Map() ) > overridesBefore )
+	{
+		Help::Event( "piece.override" );
+	}
+	Help::Event( va( "did:%s", doc.ChangeLabel() ) );
 	doc.ValidateSelection();
 	if( editing >= 0 )
 	{
@@ -5435,6 +5518,37 @@ static void PieceFilesRestored()
 {
 	ForgetAllPrefabs();
 	pieceListDirty = true;
+}
+
+// "Show me" in a lesson: open the dock tab before the slash, make the control after it glow
+static void ShowMeFor( const char* target, float seconds )
+{
+	idStr name = target;
+	const int slash = name.Find( '/' );
+	if( slash > 0 )
+	{
+		static const char* modeNames[] = { "build", "paint", "logic", "light", "kits" };
+		const idStr mode = name.Left( slash );
+		for( int i = 0; i < ( int )( sizeof( modeNames ) / sizeof( modeNames[0] ) ); i++ )
+		{
+			if( mode.Icmp( modeNames[i] ) == 0 )
+			{
+				SetMode( ( editMode_t )i );
+			}
+		}
+		name = name.Right( name.Length() - slash - 1 );
+	}
+	UI::Highlight( name, seconds );
+}
+
+static void ShowMe( const char* target )
+{
+	ShowMeFor( target, 6.0f );
+}
+
+static void OpenHelpPage( const char* page )
+{
+	Help::Open( page );
 }
 
 // a level just opened: bring its copies up to date with their pieces
@@ -5478,6 +5592,7 @@ static void PlacePiece( const char* name, const idVec3& point )
 	PieceItems( document.Map(), anchor, items );
 	SelectItems( items, false );
 	document.EndChange();
+	Help::Event( "piece.placed" );
 }
 
 static void RefreshPieceList()
@@ -5562,6 +5677,7 @@ static void DrawMakePieceDialog()
 			SelectItems( items, false );
 			document.EndChange();
 			Status( va( "Made the piece \"%s\". Place more from Kits > My pieces.", name.c_str() ) );
+			Help::Event( "piece.made" );
 		}
 		else
 		{
@@ -6076,6 +6192,24 @@ static void EditorPiecePart_f( const idCmdArgs& args )
 	common->Printf( ok ? "done\n" : "%s\n", error.c_str() );
 }
 
+static void ShowMeFor( const char* target, float seconds );
+
+// for lesson writers: try a "Show me" target (it glows for a minute)
+static void EditorShowMe_f( const idCmdArgs& args )
+{
+	idStr target = args.Args( 1, -1 );
+	target.Replace( " ", "" );
+	ShowMeFor( target, 60.0f );
+}
+
+static void EditorHelp_f( const idCmdArgs& args )
+{
+	// page ids have dashes, which the console splits off: put the pieces back together
+	idStr page = args.Argc() > 1 ? args.Args( 1, -1 ) : "";
+	page.Replace( " ", "" );
+	Help::Open( page.Length() > 0 ? page.c_str() : NULL );
+}
+
 static void EditorDelete_f( const idCmdArgs& args )
 {
 	document.DeleteSelection();
@@ -6571,6 +6705,12 @@ static void DrawContextBar()
 			ImGui::TextColored( UI::Accent(), "%s", ToolInfo( gizmoMode ).icon );
 			ImGui::SameLine();
 			ImGui::TextUnformatted( hint.c_str() );
+			static const char* toolPages[GIZMO_COUNT] = { "tools/move", "tools/turn", "tools/resize", "tools/cut", "tools/corners", "tools/draw", "tools/paint" };
+			if( !planView && gizmoMode >= 0 && gizmoMode < GIZMO_COUNT )
+			{
+				ImGui::SameLine();
+				UI::HelpButton( toolPages[gizmoMode], va( "About %s", ToolInfo( gizmoMode ).label ) );
+			}
 			first = false;
 		}
 		if( clipOptions )
@@ -6839,6 +6979,7 @@ static void DrawViewOverlay()
 	DrawToolDock( central );
 	DrawContextBar();
 	DrawPieceEditBanner( central );
+	Help::DrawLessonStrip( ImVec2( central->Pos.x + central->Size.x, central->Pos.y ) );
 }
 
 static void HandleShortcuts()
@@ -6863,6 +7004,17 @@ static void HandleShortcuts()
 	else if( io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_Y, false ) )
 	{
 		document.Redo();
+	}
+	else if( ImGui::IsKeyPressed( ImGuiKey_F1, false ) )
+	{
+		if( Help::Visible() )
+		{
+			Help::Visible() = false;
+		}
+		else
+		{
+			Help::Open( NULL );
+		}
 	}
 	else if( io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_B, false ) )
 	{
@@ -7037,6 +7189,27 @@ static void HandleViewport()
 		view.orbitPivot = OrbitPivot();
 	}
 	const bool navigating = view.UpdateCamera( hovered && !dragging && !wheel );
+	if( navigating )
+	{
+		ImGuiIO& navIO = ImGui::GetIO();
+		if( navIO.MouseDown[ImGuiMouseButton_Right] )
+		{
+			Help::Event( "camera.look" );
+			if( ImGui::IsKeyDown( ImGuiKey_W ) || ImGui::IsKeyDown( ImGuiKey_A ) || ImGui::IsKeyDown( ImGuiKey_S ) || ImGui::IsKeyDown( ImGuiKey_D ) ||
+					ImGui::IsKeyDown( ImGuiKey_Q ) || ImGui::IsKeyDown( ImGuiKey_E ) )
+			{
+				Help::Event( "camera.fly" );
+			}
+		}
+		else if( navIO.MouseDown[ImGuiMouseButton_Middle] )
+		{
+			Help::Event( "camera.pan" );
+		}
+		else if( navIO.KeyAlt && navIO.MouseDown[ImGuiMouseButton_Left] )
+		{
+			Help::Event( "camera.orbit" );
+		}
+	}
 
 	if( gizmoMode == GIZMO_CLIP )
 	{
@@ -7129,6 +7302,7 @@ static void HandleViewport()
 			{
 				document.selection.Set( hit );	// just this part of the copy
 				Status( "Just this part: what you change now is this copy's alone" );
+				Help::Event( "select.part" );
 			}
 			else
 			{
@@ -7342,6 +7516,7 @@ void DrawMainMenuBar()
 	{
 		ImGui::MenuItem( WINDOW_OUTLINER, NULL, &showOutliner );
 		ImGui::MenuItem( WINDOW_INSPECTOR, NULL, &showInspector );
+		ImGui::MenuItem( Help::WINDOW_HELP, "F1", &Help::Visible() );
 		ImGui::MenuItem( WINDOW_CONTENT_BROWSER, NULL, &showContentBrowser );
 		ImGui::MenuItem( WINDOW_PROBLEMS, NULL, &showProblems );
 		ImGui::Separator();
@@ -7362,7 +7537,15 @@ void DrawMainMenuBar()
 
 	if( ImGui::BeginMenu( "Help" ) )
 	{
-		if( ImGui::MenuItem( ICON_LESSONS "  Getting started" ) )
+		if( ImGui::MenuItem( ICON_HELP "  Help", "F1" ) )
+		{
+			Help::Open( NULL );
+		}
+		if( ImGui::MenuItem( ICON_LESSONS "  Lessons" ) )
+		{
+			Help::Open( "lessons/getting-started" );
+		}
+		if( ImGui::MenuItem( ICON_SPARKLES "  Welcome" ) )
 		{
 			showWelcome = true;
 		}
@@ -7417,6 +7600,7 @@ void DrawMainMenuBar()
 			{
 				BuildDocument();
 			}
+			UI::Mark( "build" );
 			UI::Tip( "Build the level (Ctrl+B): turn it into what the game loads. Play does this for you when it's needed; it runs in the background, so you can keep editing." );
 			ImGui::EndDisabled();
 		}
@@ -7457,6 +7641,7 @@ void DrawMainMenuBar()
 		{
 			PlayDocument();
 		}
+		UI::Mark( "play" );
 		UI::Tip( fromCamera ? "Save and play, starting where the camera is (F5). Shift+click starts at the player start. Esc pauses to edit." :
 				 "Save and play from the player start (F5). Shift+click starts where the camera is. Esc pauses to edit." );
 		ImGui::SameLine( 0.0f, 2.0f * UI::Scale() );
@@ -7558,6 +7743,9 @@ void Draw( unsigned int mainDockSpaceId )
 	document.afterChange = PieceAfterChange;
 	document.filesRestored = PieceFilesRestored;
 	prefabFileWritten = PieceFileWritten;
+	UI::openHelpPage = OpenHelpPage;
+	UI::helpPageExists = Help::PageExists;
+	Help::showMe = ShowMe;
 
 	// reloading: wait for the old level to go before treating the game as the new one
 	const bool inGame = session != NULL && session->GetState() == idSession::INGAME && game != NULL && game->IsInGame();
@@ -7651,12 +7839,26 @@ void Draw( unsigned int mainDockSpaceId )
 	{
 		DrawProblems();
 	}
+	if( Help::Visible() )
+	{
+		// the first time, it joins the Inspector's tabs
+		if( ImGui::FindWindowByName( Help::WINDOW_HELP ) == NULL )
+		{
+			ImGuiWindow* inspector = ImGui::FindWindowByName( WINDOW_INSPECTOR );
+			if( inspector != NULL && inspector->DockId != 0 )
+			{
+				ImGui::SetNextWindowDockID( inspector->DockId, ImGuiCond_FirstUseEver );
+			}
+		}
+		Help::Draw();
+	}
 
 	DrawBuildLog();
 	DrawAbout();
 	DrawWelcome();
 	DrawNewProjectDialog();
 	DrawMakePieceDialog();
+	UI::DrawHighlights();
 	DrawOpenProjectDialog();
 	DrawMapNameDialog( "Save Map As", openSaveAsPopup, false );
 	DrawMapNameDialog( "New Map", openNewMapPopup, true );

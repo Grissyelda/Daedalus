@@ -426,6 +426,8 @@ static void DrawCentered( ImDrawList* draw, ImFont* font, const ImVec2& center, 
 	draw->AddText( font, font->FontSize, ImVec2( idMath::Rint( pos.x ), idMath::Rint( pos.y ) ), color, text );
 }
 
+void MarkRect( const char* name, const ImVec2& min, const ImVec2& max );
+
 bool ToolTile( const char* id, const char* icon, const char* label, bool active, const char* tooltip, bool enabled, float size )
 {
 	const float s = size > 0.0f ? size : TileSize();
@@ -471,6 +473,7 @@ bool ToolTile( const char* id, const char* icon, const char* label, bool active,
 		Tip( tooltip );
 	}
 	ImGui::PopID();
+	MarkRect( id, pos, max );
 	return pressed && enabled;
 }
 
@@ -502,6 +505,7 @@ bool IconButton( const char* id, const char* icon, const char* tooltip, bool act
 
 	Tip( tooltip );
 	ImGui::PopID();
+	MarkRect( id, pos, max );
 	return pressed && enabled;
 }
 
@@ -542,6 +546,7 @@ bool ModeTab( const char* icon, const char* label, bool active, const char* tool
 
 	Tip( tooltip );
 	ImGui::PopID();
+	MarkRect( va( "tab:%s", label ), pos, max );
 	return pressed;
 }
 
@@ -590,14 +595,30 @@ bool BeginCard( const char* id, const char* icon, const char* title, const char*
 	ImDrawList* draw = ImGui::GetWindowDrawList();
 	draw->AddRectFilled( card.start, ImVec2( card.start.x + card.width, card.start.y + lastHeight ), CardBg(), 8.0f * scale );
 
+	// the "?" sits left of the fold arrow; with a help page it opens that instead of folding
+	ImFont* bold = Font( FONT_BOLD );
+	const idStr helpPage = va( "cards/%s", id );
+	const bool hasPage = helpPageExists != NULL && helpPageExists( helpPage );
+	const float helpWidth = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.0f, ICON_HELP ).x;
+	const float chevronWidthPre = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.0f, ICON_CHEVRON_DOWN ).x;
+	const ImVec2 helpAt( card.start.x + card.width - pad - chevronWidthPre - helpWidth - pad, card.start.y + ( headerHeight - bold->FontSize ) * 0.5f );
+	const bool showHelp = ( help != NULL && help[0] != '\0' ) || hasPage;
+	const bool overHelp = showHelp && ImGui::IsMouseHoveringRect( ImVec2( helpAt.x - 4, helpAt.y - 4 ), ImVec2( helpAt.x + helpWidth + 4, helpAt.y + bold->FontSize + 4 ) );
+
 	// header: the whole row folds the card
 	if( ImGui::InvisibleButton( "##header", ImVec2( card.width, headerHeight ) ) )
 	{
-		*open = !*open;
+		if( overHelp && hasPage && openHelpPage != NULL )
+		{
+			openHelpPage( helpPage );
+		}
+		else
+		{
+			*open = !*open;
+		}
 	}
-	const bool headerHovered = ImGui::IsItemHovered();
+	const bool headerHovered = ImGui::IsItemHovered() && !overHelp;
 	const ImVec2 headerMin = ImGui::GetItemRectMin();
-	ImFont* bold = Font( FONT_BOLD );
 	const float textY = headerMin.y + ( headerHeight - bold->FontSize ) * 0.5f;
 	float x = headerMin.x + pad;
 	if( icon != NULL )
@@ -612,18 +633,22 @@ bool BeginCard( const char* id, const char* icon, const char* title, const char*
 	const char* chevron = *open ? ICON_CHEVRON_DOWN : ICON_CHEVRON_RIGHT;
 	const float chevronWidth = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.0f, chevron ).x;
 	draw->AddText( bold, bold->FontSize, ImVec2( right - chevronWidth, textY ), ImGui::ColorConvertFloat4ToU32( headerHovered ? TEXT_COLOR : MUTED ), chevron );
-	if( help != NULL && help[0] != '\0' )
+	if( showHelp )
 	{
-		const float helpWidth = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.0f, ICON_HELP ).x;
 		const ImVec2 helpMin( right - chevronWidth - helpWidth - pad, textY );
-		const ImVec2 helpMax( helpMin.x + helpWidth, helpMin.y + bold->FontSize );
-		const bool overHelp = ImGui::IsMouseHoveringRect( ImVec2( helpMin.x - 4, helpMin.y - 4 ), ImVec2( helpMax.x + 4, helpMax.y + 4 ) );
-		draw->AddText( bold, bold->FontSize, helpMin, ImGui::ColorConvertFloat4ToU32( overHelp ? TEXT_COLOR : MUTED ), ICON_HELP );
+		draw->AddText( bold, bold->FontSize, helpMin, overHelp ? ( hasPage ? AccentU32() : ImGui::ColorConvertFloat4ToU32( TEXT_COLOR ) ) : ImGui::ColorConvertFloat4ToU32( MUTED ), ICON_HELP );
 		if( overHelp )
 		{
 			ImGui::BeginTooltip();
 			ImGui::PushTextWrapPos( 340.0f * scale );
-			ImGui::TextUnformatted( help );
+			if( help != NULL && help[0] != '\0' )
+			{
+				ImGui::TextUnformatted( help );
+			}
+			if( hasPage )
+			{
+				ImGui::TextColored( Accent(), "Click for the help page" );
+			}
 			ImGui::PopTextWrapPos();
 			ImGui::EndTooltip();
 		}
@@ -691,6 +716,94 @@ void VerticalDivider()
 	ImGui::GetWindowDrawList()->AddLine( ImVec2( pos.x, pos.y + h * 0.2f ), ImVec2( pos.x, pos.y + h * 0.8f ), ImGui::ColorConvertFloat4ToU32( Grey( 0.26f ) ), 1.0f );
 	ImGui::Dummy( ImVec2( 1.0f, h ) );
 	ImGui::SameLine();
+}
+
+/*
+-------------------------------------------------------------------------------
+	marks and highlights ("Show me")
+-------------------------------------------------------------------------------
+*/
+
+struct mark_t
+{
+	idStr			name;
+	ImVec2			min, max;
+	ImGuiViewport* 	viewport;
+	int				frame;
+};
+static idList<mark_t> marks;
+static idStr		highlightName;
+static int			highlightUntil = 0;
+
+void ( *openHelpPage )( const char* page ) = NULL;
+bool ( *helpPageExists )( const char* page ) = NULL;
+
+void Mark( const char* name )
+{
+	MarkRect( name, ImGui::GetItemRectMin(), ImGui::GetItemRectMax() );
+}
+
+void MarkRect( const char* name, const ImVec2& min, const ImVec2& max )
+{
+	if( name == NULL || name[0] == '\0' )
+	{
+		return;
+	}
+	mark_t* mark = NULL;
+	for( int i = 0; i < marks.Num(); i++ )
+	{
+		if( marks[i].name == name )
+		{
+			mark = &marks[i];
+			break;
+		}
+	}
+	if( mark == NULL )
+	{
+		mark = &marks.Alloc();
+		mark->name = name;
+	}
+	mark->min = min;
+	mark->max = max;
+	mark->viewport = ImGui::GetWindowViewport();
+	mark->frame = ImGui::GetFrameCount();
+
+	// the glow is drawn with the widget, on top of it, in its own window
+	if( highlightName.Length() > 0 && Sys_Milliseconds() <= highlightUntil && highlightName == name )
+	{
+		const float t = Sys_Milliseconds() * 0.006f;
+		const float pulse = 0.5f + 0.5f * idMath::Sin( t );
+		const float grow = 2.0f * scale + pulse * 3.0f * scale;
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		ImGuiViewport* viewport = ImGui::GetWindowViewport();
+		draw->PushClipRect( viewport->Pos, ImVec2( viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y ), false );
+		draw->AddRectFilled( ImVec2( min.x - grow, min.y - grow ), ImVec2( max.x + grow, max.y + grow ), AccentU32( 0.10f + 0.12f * pulse ), 10.0f * scale );
+		draw->AddRect( ImVec2( min.x - grow, min.y - grow ), ImVec2( max.x + grow, max.y + grow ), AccentU32( 0.55f + 0.45f * pulse ), 10.0f * scale, 0, 2.5f * scale );
+		draw->PopClipRect();
+	}
+}
+
+void Highlight( const char* name, float seconds )
+{
+	highlightName = name != NULL ? name : "";
+	highlightUntil = Sys_Milliseconds() + ( int )( seconds * 1000.0f );
+}
+
+void DrawHighlights()
+{
+	// the glow is drawn as each widget marks itself (see MarkRect); kept for callers
+}
+
+bool HelpButton( const char* page, const char* tooltip )
+{
+	ImGui::PushID( page );
+	const bool pressed = IconButton( "help", ICON_HELP, tooltip != NULL ? tooltip : "Help on this" );
+	ImGui::PopID();
+	if( pressed && openHelpPage != NULL )
+	{
+		openHelpPage( page );
+	}
+	return pressed;
 }
 
 } // namespace UI

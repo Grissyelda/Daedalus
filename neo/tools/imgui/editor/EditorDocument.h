@@ -189,6 +189,10 @@ public:
 		return redoStack.Num() > 0;
 	}
 	const char* 		UndoLabel() const;
+	const char* 		ChangeLabel() const		// the change being made (for the afterChange hook)
+	{
+		return changeOpen ? pendingLabel.c_str() : UndoLabel();
+	}
 	const char* 		RedoLabel() const;
 	bool				Undo();
 	bool				Redo();
