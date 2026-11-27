@@ -50,11 +50,14 @@ Shaders compile into `content/renderprogs2` as part of the build. Every push als
 
 Run the executable from the repository root (or a package folder), next to `content/`. It opens the editor:
 
-- **Play** (top centre) runs the map selected in the Content Browser, or the test room if none is selected; double-clicking a map plays it too. Play compiles the map first when it's new or has changed. **F10** stops and returns to the editor.
-- **File → New Project** creates a project folder from `template/`. It asks whether the project starts with the stylized or the PBR look. (Opening a project from inside the editor comes later; for now start with `+set fs_game <project name>`.)
-- Start with `+set editor 0` to run as the game, without the editor.
+- The level fills the middle. The **tool dock** at the bottom has five tabs: **Build** (move, turn, resize, draw, cut, corners, and shapes to drag in), **Paint** (click surfaces to paint them), **Logic** (doors and the player start), **Light** and **Kits** (ready-made things to drop in). Keys 1 to 5 switch tabs; hold **Space** over the level for a wheel of every tool.
+- The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** panels dock around it.
+- **Play** (top centre) saves and runs the open level, compiling it first when it's new or has changed. **Esc** or **F10** returns to the editor.
+- **File → New Project** creates a project folder from `template/` and asks whether it starts with the stylized or the PBR look. **File → Open Project** switches to another project.
+- Start with `+set editor 0` to run as the game, without the editor. `editor_uiScale` makes the editor's text and controls bigger or smaller.
+- **Help → Getting started** walks through building a first level.
 
-`content/` holds the engine's own content: default materials, the `grizzsans` font (generated from DejaVu Sans), prototype grid textures, the default player and a test room. The scripts in `scripts/content/` regenerate the font, textures and test map.
+`content/` holds the engine's own content: default materials, the `grizzsans` font (generated from DejaVu Sans), prototype grid textures, the default player and a test room. The editor's UI fonts are [Inter](https://rsms.me/inter/) (SIL Open Font License) and [Lucide](https://lucide.dev) icons (ISC license), in `content/editor/fonts`. The scripts in `scripts/content/` regenerate the fonts, textures and test map.
 
 ## Contributing
 

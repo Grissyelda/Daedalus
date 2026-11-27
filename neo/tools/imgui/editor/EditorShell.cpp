@@ -33,6 +33,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorView.h"
 #include "EditorShapes.h"
 #include "EditorBrushOps.h"
+#include "EditorTheme.h"
 
 #include "../../imgui/BFGimgui.h"
 #include "../../libs/imgui/imgui_internal.h"	// DockBuilder API
@@ -94,8 +95,22 @@ enum gizmoMode_t
 	GIZMO_CLIP,			// cut brushes along a plane through clicked points
 	GIZMO_VERTEX,		// drag brush corners
 	GIZMO_BRUSH,		// draw new brushes by dragging
+	GIZMO_PAINT,		// click surfaces to put the current material on them
 	GIZMO_COUNT
 };
+
+// the tabs over the tool dock: each shows the tools for one kind of work
+enum editMode_t
+{
+	MODE_BUILD,
+	MODE_PAINT,
+	MODE_LOGIC,
+	MODE_LIGHT,
+	MODE_KITS,
+	MODE_COUNT
+};
+static editMode_t	editMode = MODE_BUILD;
+static bool			paintPicking = false;		// the next paint click picks a material up instead
 static gizmoMode_t	gizmoMode = GIZMO_MOVE;
 static bool			gizmoDragging = false;
 static unsigned int	dockspaceId = 0;
@@ -125,8 +140,9 @@ static float		drawAnchorHeight = 128.0f;
 static float		drawUnitsPerPixel = 1.0f;
 static idVec2		drawPressPos;
 
-// a shape being dragged out of the toolbar into the view
+// a shape or thing being dragged out of the tool dock into the view
 static int			draggingShape = -1;
+static idStr		draggingThing;			// entity class, or "light:<preset>"
 
 // top-down plan view
 static bool			planView = false;
@@ -188,17 +204,16 @@ static void CenterPlanOnCamera();
 static void BeginCornerMove();
 static void MoveCorners( const idVec3& delta );
 
-static const char* WINDOW_OUTLINER			= "Outliner";
-static const char* WINDOW_INSPECTOR			= "Inspector";
-static const char* WINDOW_CONTENT_BROWSER	= "Content Browser";
-static const char* WINDOW_PROBLEMS			= "Problems";
+// titles carry an icon; the part after ### is the window's ID, which stays the same
+static const char* WINDOW_OUTLINER			= ICON_OUTLINER "  Outliner###Outliner";
+static const char* WINDOW_INSPECTOR			= ICON_INSPECTOR "  Inspector###Inspector";
+static const char* WINDOW_CONTENT_BROWSER	= ICON_CONTENT "  Content###Content Browser";
+static const char* WINDOW_PROBLEMS			= ICON_PROBLEMS "  Problems###Problems";
 
 // quiet, wrapped hint text
 static void Hint( const char* text )
 {
-	ImGui::PushStyleColor( ImGuiCol_Text, ImGui::GetStyleColorVec4( ImGuiCol_TextDisabled ) );
-	ImGui::TextWrapped( "%s", text );
-	ImGui::PopStyleColor();
+	UI::Hint( text );
 }
 
 static void Status( const char* text )
@@ -524,15 +539,20 @@ static void EditorMoveCorner_f( const idCmdArgs& args )
 	document.EndChange();
 }
 
-// editorTool <brush|move|rotate|resize|clip|corners> [top|3d]
+static void SetTool( gizmoMode_t mode );
+static void SetMode( editMode_t mode );
+static void DragOut( int shape, const char* classname );
+static void PlaceThing( const char* classname );
+
+// editorTool <brush|move|rotate|resize|clip|corners|paint> [top|3d]
 static void EditorTool_f( const idCmdArgs& args )
 {
-	static const char* names[GIZMO_COUNT] = { "move", "rotate", "resize", "clip", "corners", "brush" };
+	static const char* names[GIZMO_COUNT] = { "move", "rotate", "resize", "clip", "corners", "brush", "paint" };
 	for( int i = 0; i < GIZMO_COUNT && args.Argc() > 1; i++ )
 	{
 		if( idStr::Icmp( args.Argv( 1 ), names[i] ) == 0 )
 		{
-			gizmoMode = ( gizmoMode_t )i;
+			SetTool( ( gizmoMode_t )i );
 		}
 	}
 	if( args.Argc() > 2 )
@@ -1167,8 +1187,8 @@ static void BuildDefaultLayout( ImGuiID dockId )
 
 	ImGui::DockBuilderDockWindow( WINDOW_OUTLINER, left );
 	ImGui::DockBuilderDockWindow( WINDOW_INSPECTOR, right );
-	ImGui::DockBuilderDockWindow( WINDOW_CONTENT_BROWSER, bottom );
 	ImGui::DockBuilderDockWindow( WINDOW_PROBLEMS, bottom );
+	ImGui::DockBuilderDockWindow( WINDOW_CONTENT_BROWSER, bottom );
 	ImGui::DockBuilderFinish( dockId );
 }
 
@@ -1182,6 +1202,9 @@ static idStr EntityLabel( const idMapEntity* ent, int index )
 	}
 	return va( "%s %d", classname, index );
 }
+
+static const char* ThingIcon( const idDeclEntityDef* def );
+static const char* ThingLabel( const idDeclEntityDef* def );
 
 static void FocusSelection()
 {
@@ -1205,6 +1228,14 @@ static void ClickSelect( const Selection& sel )
 	}
 }
 
+// a row's type, right-aligned and quiet
+static void RowType( const char* text )
+{
+	const float width = ImGui::CalcTextSize( text ).x;
+	ImGui::SameLine( Max( ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - width - 4.0f * UI::Scale() ) );
+	ImGui::TextDisabled( "%s", text );
+}
+
 static void DrawOutliner()
 {
 	if( !ImGui::Begin( WINDOW_OUTLINER, &showOutliner ) )
@@ -1216,14 +1247,13 @@ static void DrawOutliner()
 	const idMapFile* map = document.Map();
 	if( map == NULL )
 	{
-		Hint( "No level open. Use File > New Map or double-click a map in the Content Browser." );
+		Hint( "No level open. Use File > New Map, or double-click a map in Content." );
 		ImGui::End();
 		return;
 	}
 
-	ImGui::SetNextItemWidth( -1 );
-	ImGui::InputTextWithHint( "##filter", "Search", outlinerFilter, sizeof( outlinerFilter ) );
-	ImGui::Separator();
+	UI::SearchField( "##filter", outlinerFilter, sizeof( outlinerFilter ), "Search the level" );
+	ImGui::Spacing();
 
 	ImGui::BeginChild( "outliner_list" );
 
@@ -1231,14 +1261,15 @@ static void DrawOutliner()
 	const idMapEntity* world = map->GetEntity( 0 );
 	if( outlinerFilter[0] == '\0' )
 	{
-		const bool open = ImGui::TreeNodeEx( "Level geometry", ImGuiTreeNodeFlags_SpanAvailWidth, "Level geometry  (%d brushes)", world->GetNumPrimitives() );
+		const bool open = ImGui::TreeNodeEx( "Level geometry", ImGuiTreeNodeFlags_SpanAvailWidth, ICON_BRUSH "  Level geometry" );
+		RowType( va( "%d", world->GetNumPrimitives() ) );
 		if( open )
 		{
 			for( int p = 0; p < world->GetNumPrimitives(); p++ )
 			{
 				const bool isBrush = world->GetPrimitive( p )->GetType() == idMapPrimitive::TYPE_BRUSH;
 				const bool selected = document.selection.Contains( Selection( 0, p ) );
-				if( ImGui::Selectable( va( "%s %d##prim%d", isBrush ? "Brush" : "Patch", p, p ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
+				if( ImGui::Selectable( va( "%s  %s %d##prim%d", isBrush ? ICON_BRUSH : ICON_PATCH, isBrush ? "Brush" : "Patch", p, p ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 				{
 					ClickSelect( Selection( 0, p ) );
 					if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
@@ -1260,8 +1291,11 @@ static void DrawOutliner()
 		{
 			continue;
 		}
+		const char* classname = ent->epairs.GetString( "classname", "?" );
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+		const char* name = ent->epairs.GetString( "name", classname );
 		const bool selected = document.selection.Contains( Selection( i ) );
-		if( ImGui::Selectable( va( "%s##ent%d", label.c_str(), i ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
+		if( ImGui::Selectable( va( "%s  %s##ent%d", def != NULL ? ThingIcon( def ) : ICON_WARNING, name, i ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 		{
 			ClickSelect( Selection( i ) );
 			if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
@@ -1269,6 +1303,7 @@ static void DrawOutliner()
 				FocusSelection();
 			}
 		}
+		RowType( def != NULL ? ThingLabel( def ) : classname );
 	}
 
 	ImGui::EndChild();
@@ -1310,304 +1345,315 @@ static bool IsColorKey( const char* key, const idDeclEntityDef* def )
 	return def != NULL && def->dict.FindKey( va( "editor_color %s", key ) ) != NULL;
 }
 
-// the door's settings in plain terms; the raw keys are still in the table below
-static void DrawDoorPanel( idMapEntity* ent, const idDeclEntityDef* def )
+static const char* ThingIcon( const idDeclEntityDef* def );
+static const char* ThingLabel( const idDeclEntityDef* def );
+static idStr ShortMaterialName( const char* name );
+
+// the door's settings in plain terms; the raw keys are under Advanced
+static void DrawDoorCard( idMapEntity* ent, const idDeclEntityDef* def )
 {
-	idDict args;
-	if( def != NULL )
+	if( UI::BeginCard( "door", ICON_DOOR, "Door", "The green arrow in the view shows where the door slides to. It opens when the player comes near, unless it's locked." ) )
 	{
-		args.Copy( def->dict );
-	}
-	args.Copy( ent->epairs );
-
-	ImGui::Separator();
-	ImGui::Text( "Door" );
-	Hint( "The green arrow in the view shows where it slides to. It opens when the player comes near." );
-
-	static const char* directions[] = { "Up", "Down", "East (+X)", "North (+Y)", "West (-X)", "South (-Y)" };
-	static const float dirValues[] = { -1, -2, 0, 90, 180, 270 };
-	const float current = args.GetFloat( "movedir", args.GetString( "angle", "0" ) );
-	int dirIndex = 0;
-	for( int i = 0; i < 6; i++ )
-	{
-		if( idMath::Fabs( current - dirValues[i] ) < 0.5f )
+		idDict args;
+		if( def != NULL )
 		{
-			dirIndex = i;
+			args.Copy( def->dict );
 		}
-	}
-	ImGui::SetNextItemWidth( 140.0f );
-	if( ImGui::Combo( "Opens", &dirIndex, directions, 6 ) )
-	{
-		document.BeginChange( "Door direction" );
-		ent->epairs.SetFloat( "movedir", dirValues[dirIndex] );
-		ent->epairs.Delete( "angle" );
-		document.EndChange();
-	}
+		args.Copy( ent->epairs );
 
-	float speed = args.GetFloat( "speed", "160" );
-	ImGui::SetNextItemWidth( 140.0f );
-	if( ImGui::SliderFloat( "Speed", &speed, 20.0f, 800.0f, "%.0f units/s" ) )
-	{
-		ent->epairs.SetFloat( "speed", idMath::Rint( speed ) );
-		document.EndChange();
-	}
-	UndoBracket( "Door speed" );
-
-	float wait = args.GetFloat( "wait", "3" );
-	bool staysOpen = wait < 0.0f;
-	if( ImGui::Checkbox( "Stays open", &staysOpen ) )
-	{
-		document.BeginChange( "Door wait" );
-		ent->epairs.SetFloat( "wait", staysOpen ? -1.0f : 3.0f );
-		document.EndChange();
-	}
-	if( !staysOpen )
-	{
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth( 120.0f );
-		if( ImGui::SliderFloat( "##closes", &wait, 0.5f, 30.0f, "closes after %.1f s" ) )
+		static const char* directions[] = { "Up", "Down", "East (+X)", "North (+Y)", "West (-X)", "South (-Y)" };
+		static const float dirValues[] = { -1, -2, 0, 90, 180, 270 };
+		const float current = args.GetFloat( "movedir", args.GetString( "angle", "0" ) );
+		int dirIndex = 0;
+		for( int i = 0; i < 6; i++ )
 		{
-			ent->epairs.SetFloat( "wait", idMath::Rint( wait * 10.0f ) / 10.0f );
+			if( idMath::Fabs( current - dirValues[i] ) < 0.5f )
+			{
+				dirIndex = i;
+			}
+		}
+		UI::FieldLabel( "Opens" );
+		if( ImGui::Combo( "##opens", &dirIndex, directions, 6 ) )
+		{
+			document.BeginChange( "Door direction" );
+			ent->epairs.SetFloat( "movedir", dirValues[dirIndex] );
+			ent->epairs.Delete( "angle" );
 			document.EndChange();
 		}
-		UndoBracket( "Door wait" );
-	}
 
-	bool startOpen = args.GetBool( "start_open" );
-	if( ImGui::Checkbox( "Starts open", &startOpen ) )
-	{
-		document.BeginChange( "Door start open" );
-		ent->epairs.SetBool( "start_open", startOpen );
-		document.EndChange();
+		float speed = args.GetFloat( "speed", "160" );
+		UI::FieldLabel( "Speed" );
+		if( ImGui::SliderFloat( "##speed", &speed, 20.0f, 800.0f, "%.0f units/s" ) )
+		{
+			ent->epairs.SetFloat( "speed", idMath::Rint( speed ) );
+			document.EndChange();
+		}
+		UndoBracket( "Door speed" );
+
+		float wait = args.GetFloat( "wait", "3" );
+		bool staysOpen = wait < 0.0f;
+		if( !staysOpen )
+		{
+			UI::FieldLabel( "Closes after" );
+			if( ImGui::SliderFloat( "##closes", &wait, 0.5f, 30.0f, "%.1f s" ) )
+			{
+				ent->epairs.SetFloat( "wait", idMath::Rint( wait * 10.0f ) / 10.0f );
+				document.EndChange();
+			}
+			UndoBracket( "Door wait" );
+		}
+		if( ImGui::Checkbox( "Stays open", &staysOpen ) )
+		{
+			document.BeginChange( "Door wait" );
+			ent->epairs.SetFloat( "wait", staysOpen ? -1.0f : 3.0f );
+			document.EndChange();
+		}
+		ImGui::SameLine();
+		bool startOpen = args.GetBool( "start_open" );
+		if( ImGui::Checkbox( "Starts open", &startOpen ) )
+		{
+			document.BeginChange( "Door start open" );
+			ent->epairs.SetBool( "start_open", startOpen );
+			document.EndChange();
+		}
+		ImGui::SameLine();
+		bool locked = args.GetInt( "locked" ) != 0;
+		if( ImGui::Checkbox( "Locked", &locked ) )
+		{
+			document.BeginChange( "Door locked" );
+			ent->epairs.SetInt( "locked", locked ? 1 : 0 );
+			document.EndChange();
+		}
 	}
-	ImGui::SameLine();
-	bool locked = args.GetInt( "locked" ) != 0;
-	if( ImGui::Checkbox( "Locked", &locked ) )
-	{
-		document.BeginChange( "Door locked" );
-		ent->epairs.SetInt( "locked", locked ? 1 : 0 );
-		document.EndChange();
-	}
+	UI::EndCard();
 }
 
-static void DrawEntityInspector( idMapEntity* ent )
+// colour, reach and shadows of a point light
+static void DrawLightCard( idMapEntity* ent )
 {
-	const char* classname = ent->epairs.GetString( "classname" );
-	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
-
-	ImGui::Text( "%s", classname );
-	if( def != NULL && def->dict.GetString( "editor_usage" )[0] != '\0' )
+	if( UI::BeginCard( "light", ICON_LIGHT, "Light", "How the light looks. The reach is how far it lights in each direction." ) )
 	{
-		Hint( def->dict.GetString( "editor_usage" ) );
-	}
-	else if( def == NULL && document.selection.Primary().entity != 0 )
-	{
-		ImGui::TextColored( ImVec4( 1.0f, 0.6f, 0.3f, 1.0f ), "No entity definition called \"%s\" exists.", classname );
-	}
-	if( ent->GetNumPrimitives() > 0 )
-	{
-		ImGui::TextDisabled( "%d brushes", ent->GetNumPrimitives() );
-		if( document.selection.Primary().entity != 0 )
+		idVec3 color = ent->epairs.GetVector( "_color", "1 1 1" );
+		UI::FieldLabel( "Colour" );
+		if( ImGui::ColorEdit3( "##color", color.ToFloatPtr(), ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel ) )
 		{
-			ImGui::SameLine();
-			if( ImGui::SmallButton( "Return brushes to the level" ) )
-			{
-				document.UngroupSelection();
-				ImGui::Separator();
-				return;
-			}
-		}
-	}
-	if( idStr::Icmp( classname, "func_door" ) == 0 )
-	{
-		DrawDoorPanel( ent, def );
-	}
-
-	// which way a point entity faces, as a compass angle
-	if( ent->GetNumPrimitives() == 0 && document.selection.Primary().entity != 0 )
-	{
-		idMat3 axis;
-		EntityAxis( ent, axis );
-		float yaw = RAD2DEG( atan2( axis[0].y, axis[0].x ) );
-		ImGui::SetNextItemWidth( 140.0f );
-		if( ImGui::DragFloat( "Facing", &yaw, 1.0f, -360.0f, 360.0f, "%.0f deg" ) )
-		{
-			yaw = idMath::AngleNormalize360( idMath::Rint( yaw ) );
-			ent->epairs.Delete( "rotation" );
-			ent->epairs.SetFloat( "angle", yaw );
+			ent->epairs.Set( "_color", color.ToString( 3 ) );
 			document.EndChange();
 		}
-		UndoBracket( "Facing" );
-		if( ImGui::IsItemHovered() )
+		UndoBracket( "Light colour" );
+
+		if( ent->epairs.FindKey( "light_target" ) == NULL )
 		{
-			ImGui::SetTooltip( "0 faces +X (east), 90 faces +Y (north). The arrow in the view shows it." );
-		}
-	}
-	ImGui::Separator();
-
-	int deleteIndex = -1;
-
-	if( ImGui::BeginTable( "keys", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg ) )
-	{
-		ImGui::TableSetupColumn( "Key", ImGuiTableColumnFlags_WidthStretch, 0.4f );
-		ImGui::TableSetupColumn( "Value", ImGuiTableColumnFlags_WidthStretch, 0.6f );
-		ImGui::TableSetupColumn( "", ImGuiTableColumnFlags_WidthFixed, 20.0f );
-
-		for( int i = 0; i < ent->epairs.GetNumKeyVals(); i++ )
-		{
-			const idKeyValue* kv = ent->epairs.GetKeyVal( i );
-			const idStr key = kv->GetKey();
-			const idStr value = kv->GetValue();
-
-			ImGui::PushID( i );
-			ImGui::TableNextRow();
-			ImGui::TableNextColumn();
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted( key.c_str() );
-			if( def != NULL && ImGui::IsItemHovered() )
+			idVec3 radius = ent->epairs.GetVector( "light_radius", "300 300 300" );
+			float reach = Max( radius.x, Max( radius.y, radius.z ) );
+			const bool even = idMath::Fabs( radius.x - radius.y ) < 0.5f && idMath::Fabs( radius.y - radius.z ) < 0.5f;
+			UI::FieldLabel( "Reach" );
+			if( even )
 			{
-				const char* help = def->dict.GetString( va( "editor_var %s", key.c_str() ) );
-				if( help[0] == '\0' )
+				if( ImGui::SliderFloat( "##reach", &reach, 16.0f, 2048.0f, "%.0f units", ImGuiSliderFlags_Logarithmic ) )
 				{
-					help = def->dict.GetString( va( "editor_color %s", key.c_str() ) );
-				}
-				if( help[0] != '\0' )
-				{
-					ImGui::SetTooltip( "%s", help );
-				}
-			}
-
-			ImGui::TableNextColumn();
-			ImGui::SetNextItemWidth( -1 );
-
-			const bool isWorld = document.selection.Primary().entity == 0;
-			if( key.Icmp( "classname" ) == 0 && isWorld )
-			{
-				ImGui::TextDisabled( "%s", value.c_str() );
-			}
-			else if( IsColorKey( key, def ) )
-			{
-				idVec3 color = ent->epairs.GetVector( key );
-				if( ImGui::ColorEdit3( "##v", color.ToFloatPtr(), ImGuiColorEditFlags_Float ) )
-				{
-					ent->epairs.Set( key, color.ToString( 3 ) );
+					reach = idMath::Rint( reach );
+					ent->epairs.Set( "light_radius", idVec3( reach, reach, reach ).ToString( 0 ) );
 					document.EndChange();
 				}
-				UndoBracket( va( "Edit %s", key.c_str() ) );
-			}
-			else if( IsVectorKey( key ) )
-			{
-				idVec3 v = ent->epairs.GetVector( key );
-				if( ImGui::DragFloat3( "##v", v.ToFloatPtr(), 1.0f ) )
-				{
-					if( key.Icmp( "origin" ) == 0 )
-					{
-						// move the brushes with the origin so the entity stays in one piece
-						document.TranslateSelection( v - ent->epairs.GetVector( "origin" ) );
-						ent->epairs.Set( "origin", v.ToString( 2 ) );
-					}
-					else
-					{
-						ent->epairs.Set( key, v.ToString( 2 ) );
-					}
-					document.EndChange();
-				}
-				UndoBracket( va( "Edit %s", key.c_str() ) );
+				UndoBracket( "Light reach" );
 			}
 			else
 			{
-				char buffer[1024];
-				idStr::Copynz( buffer, value.c_str(), sizeof( buffer ) );
-				if( ImGui::InputText( "##v", buffer, sizeof( buffer ) ) )
+				if( ImGui::DragFloat3( "##reach3", radius.ToFloatPtr(), 2.0f, 1.0f, 8192.0f, "%.0f" ) )
 				{
-					// a brush entity's model is named after it, so renaming moves the model name too
-					if( key.Icmp( "name" ) == 0 && ent->GetNumPrimitives() > 0 && value.Icmp( ent->epairs.GetString( "model" ) ) == 0 )
-					{
-						ent->epairs.Set( "model", buffer );
-					}
-					ent->epairs.Set( key, buffer );
+					ent->epairs.Set( "light_radius", radius.ToString( 0 ) );
 					document.EndChange();
 				}
-				UndoBracket( va( "Edit %s", key.c_str() ) );
+				UndoBracket( "Light reach" );
+				UI::Tip( "Reach along x, y and z" );
 			}
-
-			ImGui::TableNextColumn();
-			const bool protectedKey = key.Icmp( "classname" ) == 0;
-			if( !protectedKey && ImGui::SmallButton( "x" ) )
-			{
-				deleteIndex = i;
-			}
-			if( !protectedKey && ImGui::IsItemHovered() )
-			{
-				ImGui::SetTooltip( "Remove %s", key.c_str() );
-			}
-			ImGui::PopID();
 		}
-		ImGui::EndTable();
-	}
-
-	if( deleteIndex >= 0 )
-	{
-		const idStr key = ent->epairs.GetKeyVal( deleteIndex )->GetKey();
-		document.BeginChange( va( "Remove %s", key.c_str() ) );
-		ent->epairs.Delete( key );
-		document.EndChange();
-	}
-
-	// add a key
-	ImGui::Spacing();
-	ImGui::TextDisabled( "Add a property" );
-	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x * 0.4f );
-	ImGui::InputTextWithHint( "##newkey", "key", newKeyName, sizeof( newKeyName ), ImGuiInputTextFlags_CharsNoBlank );
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x - 48.0f );
-	ImGui::InputTextWithHint( "##newvalue", "value", newKeyValue, sizeof( newKeyValue ) );
-	ImGui::SameLine();
-	ImGui::BeginDisabled( newKeyName[0] == '\0' );
-	if( ImGui::Button( "Add" ) )
-	{
-		document.BeginChange( va( "Add %s", newKeyName ) );
-		ent->epairs.Set( newKeyName, newKeyValue );
-		document.EndChange();
-		newKeyName[0] = '\0';
-		newKeyValue[0] = '\0';
-	}
-	ImGui::EndDisabled();
-
-	// properties the definition documents but the entity doesn't set yet
-	if( def != NULL )
-	{
-		bool header = false;
-		for( int i = 0; i < def->dict.GetNumKeyVals(); i++ )
+		else
 		{
-			const idKeyValue* kv = def->dict.GetKeyVal( i );
-			idStr key = kv->GetKey();
-			if( !key.StripLeadingOnce( "editor_var " ) || ent->epairs.FindKey( key ) != NULL )
+			UI::Hint( "A projected light (it has a target); its shape is under Advanced." );
+		}
+
+		bool shadows = !ent->epairs.GetBool( "noshadows" );
+		if( ImGui::Checkbox( "Casts shadows", &shadows ) )
+		{
+			document.BeginChange( "Light shadows" );
+			if( shadows )
 			{
-				continue;
+				ent->epairs.Delete( "noshadows" );
 			}
-			if( !header )
+			else
 			{
-				ImGui::Spacing();
-				ImGui::TextDisabled( "Also available" );
-				header = true;
+				ent->epairs.SetBool( "noshadows", true );
 			}
-			ImGui::PushID( key.c_str() );
-			if( ImGui::SmallButton( "+" ) )
-			{
-				document.BeginChange( va( "Add %s", key.c_str() ) );
-				ent->epairs.Set( key, def->dict.GetString( key ) );
-				document.EndChange();
-			}
-			ImGui::SameLine();
-			ImGui::TextUnformatted( key.c_str() );
-			if( ImGui::IsItemHovered() )
-			{
-				ImGui::SetTooltip( "%s", kv->GetValue().c_str() );
-			}
-			ImGui::PopID();
+			document.EndChange();
 		}
 	}
+	UI::EndCard();
+}
+
+// every key and value, for when the friendly cards don't cover something
+static void DrawAdvancedCard( idMapEntity* ent, const idDeclEntityDef* def )
+{
+	if( UI::BeginCard( "advanced", ICON_ADVANCED, "Advanced", "Every setting this thing has, as the raw keys and values the game reads.", false ) )
+	{
+		int deleteIndex = -1;
+		const bool isWorld = document.selection.Primary().entity == 0;
+
+		if( ImGui::BeginTable( "keys", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg ) )
+		{
+			ImGui::TableSetupColumn( "Key", ImGuiTableColumnFlags_WidthStretch, 0.4f );
+			ImGui::TableSetupColumn( "Value", ImGuiTableColumnFlags_WidthStretch, 0.6f );
+			ImGui::TableSetupColumn( "", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() );
+
+			for( int i = 0; i < ent->epairs.GetNumKeyVals(); i++ )
+			{
+				const idKeyValue* kv = ent->epairs.GetKeyVal( i );
+				const idStr key = kv->GetKey();
+				const idStr value = kv->GetValue();
+
+				ImGui::PushID( i );
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextDisabled( "%s", key.c_str() );
+				if( def != NULL && ImGui::IsItemHovered() )
+				{
+					const char* help = def->dict.GetString( va( "editor_var %s", key.c_str() ) );
+					if( help[0] == '\0' )
+					{
+						help = def->dict.GetString( va( "editor_color %s", key.c_str() ) );
+					}
+					if( help[0] != '\0' )
+					{
+						ImGui::SetTooltip( "%s", help );
+					}
+				}
+
+				ImGui::TableNextColumn();
+				ImGui::SetNextItemWidth( -FLT_MIN );
+
+				if( key.Icmp( "classname" ) == 0 && isWorld )
+				{
+					ImGui::TextDisabled( "%s", value.c_str() );
+				}
+				else if( IsColorKey( key, def ) )
+				{
+					idVec3 color = ent->epairs.GetVector( key );
+					if( ImGui::ColorEdit3( "##v", color.ToFloatPtr(), ImGuiColorEditFlags_Float ) )
+					{
+						ent->epairs.Set( key, color.ToString( 3 ) );
+						document.EndChange();
+					}
+					UndoBracket( va( "Edit %s", key.c_str() ) );
+				}
+				else if( IsVectorKey( key ) )
+				{
+					idVec3 v = ent->epairs.GetVector( key );
+					if( ImGui::DragFloat3( "##v", v.ToFloatPtr(), 1.0f ) )
+					{
+						if( key.Icmp( "origin" ) == 0 )
+						{
+							// move the brushes with the origin so the entity stays in one piece
+							document.TranslateSelection( v - ent->epairs.GetVector( "origin" ) );
+							ent->epairs.Set( "origin", v.ToString( 2 ) );
+						}
+						else
+						{
+							ent->epairs.Set( key, v.ToString( 2 ) );
+						}
+						document.EndChange();
+					}
+					UndoBracket( va( "Edit %s", key.c_str() ) );
+				}
+				else
+				{
+					char buffer[1024];
+					idStr::Copynz( buffer, value.c_str(), sizeof( buffer ) );
+					if( ImGui::InputText( "##v", buffer, sizeof( buffer ) ) )
+					{
+						// a brush entity's model is named after it, so renaming moves the model name too
+						if( key.Icmp( "name" ) == 0 && ent->GetNumPrimitives() > 0 && value.Icmp( ent->epairs.GetString( "model" ) ) == 0 )
+						{
+							ent->epairs.Set( "model", buffer );
+						}
+						ent->epairs.Set( key, buffer );
+						document.EndChange();
+					}
+					UndoBracket( va( "Edit %s", key.c_str() ) );
+				}
+
+				ImGui::TableNextColumn();
+				if( key.Icmp( "classname" ) != 0 && UI::IconButton( "remove", ICON_CLOSE, va( "Remove %s", key.c_str() ) ) )
+				{
+					deleteIndex = i;
+				}
+				ImGui::PopID();
+			}
+			ImGui::EndTable();
+		}
+
+		if( deleteIndex >= 0 )
+		{
+			const idStr key = ent->epairs.GetKeyVal( deleteIndex )->GetKey();
+			document.BeginChange( va( "Remove %s", key.c_str() ) );
+			ent->epairs.Delete( key );
+			document.EndChange();
+		}
+
+		// add a key
+		ImGui::Spacing();
+		UI::SectionLabel( "Add a setting" );
+		const float buttonWidth = ImGui::GetFrameHeight();
+		ImGui::SetNextItemWidth( ( ImGui::GetContentRegionAvail().x - buttonWidth ) * 0.4f );
+		ImGui::InputTextWithHint( "##newkey", "key", newKeyName, sizeof( newKeyName ), ImGuiInputTextFlags_CharsNoBlank );
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x - buttonWidth - ImGui::GetStyle().ItemSpacing.x );
+		ImGui::InputTextWithHint( "##newvalue", "value", newKeyValue, sizeof( newKeyValue ) );
+		ImGui::SameLine();
+		if( UI::IconButton( "add", ICON_PLUS, "Add this setting", false, newKeyName[0] != '\0' ) )
+		{
+			document.BeginChange( va( "Add %s", newKeyName ) );
+			ent->epairs.Set( newKeyName, newKeyValue );
+			document.EndChange();
+			newKeyName[0] = '\0';
+			newKeyValue[0] = '\0';
+		}
+
+		// settings the definition documents but the entity doesn't set yet
+		if( def != NULL )
+		{
+			bool header = false;
+			for( int i = 0; i < def->dict.GetNumKeyVals(); i++ )
+			{
+				const idKeyValue* kv = def->dict.GetKeyVal( i );
+				idStr key = kv->GetKey();
+				if( !key.StripLeadingOnce( "editor_var " ) || ent->epairs.FindKey( key ) != NULL )
+				{
+					continue;
+				}
+				if( !header )
+				{
+					ImGui::Spacing();
+					UI::SectionLabel( "Also available" );
+					header = true;
+				}
+				ImGui::PushID( key.c_str() );
+				if( UI::IconButton( "addvar", ICON_PLUS, va( "Add %s: %s", key.c_str(), kv->GetValue().c_str() ) ) )
+				{
+					document.BeginChange( va( "Add %s", key.c_str() ) );
+					ent->epairs.Set( key, def->dict.GetString( key ) );
+					document.EndChange();
+				}
+				ImGui::SameLine();
+				ImGui::AlignTextToFramePadding();
+				ImGui::TextUnformatted( key.c_str() );
+				UI::Tip( kv->GetValue().c_str() );
+				ImGui::PopID();
+			}
+		}
+	}
+	UI::EndCard();
 }
 
 // Resizes about the bottom centre, so things stay on the floor they stand on.
@@ -1631,7 +1677,8 @@ static void ResizeSelection( const idBounds& bounds, const idVec3& size )
 	document.TransformSelection( linear, translation );
 }
 
-static void DrawTransformFields()
+// position and size of the selection, and which way a lone point entity faces
+static void DrawPlacementCard()
 {
 	idBounds bounds;
 	if( !document.CanTransformSelection() || !document.SelectionBounds( bounds ) )
@@ -1639,42 +1686,66 @@ static void DrawTransformFields()
 		return;
 	}
 
-	const float grid = editor_snap.GetBool() ? GridSize() : 1.0f;
+	if( UI::BeginCard( "placement", ICON_MOVE, "Placement", "Where it is and how big. Position is the bottom centre, where things stand. Drag a number or click it to type." ) )
+	{
+		const float grid = editor_snap.GetBool() ? GridSize() : 1.0f;
 
-	// position: the bottom centre, which is where things stand
-	idVec3 position( ( bounds[0].x + bounds[1].x ) * 0.5f, ( bounds[0].y + bounds[1].y ) * 0.5f, bounds[0].z );
-	const idVec3 oldPosition = position;
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextDisabled( "Position" );
-	ImGui::SameLine( 70.0f );
-	ImGui::SetNextItemWidth( -1 );
-	// these drags are bracketed by UndoBracket: one undo step per drag
-	if( ImGui::DragFloat3( "##position", position.ToFloatPtr(), grid * 0.25f, 0, 0, "%.0f" ) )
-	{
-		document.TranslateSelection( position - oldPosition );
-		document.EndChange();
-	}
-	UndoBracket( "Move" );
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Position of the bottom centre" );
-	}
+		idVec3 position( ( bounds[0].x + bounds[1].x ) * 0.5f, ( bounds[0].y + bounds[1].y ) * 0.5f, bounds[0].z );
+		const idVec3 oldPosition = position;
+		UI::FieldLabel( "Position" );
+		// these drags are bracketed by UndoBracket: one undo step per drag
+		if( ImGui::DragFloat3( "##position", position.ToFloatPtr(), grid * 0.25f, 0, 0, "%.0f" ) )
+		{
+			document.TranslateSelection( position - oldPosition );
+			document.EndChange();
+		}
+		UndoBracket( "Move" );
 
-	idVec3 size = bounds[1] - bounds[0];
-	ImGui::AlignTextToFramePadding();
-	ImGui::TextDisabled( "Size" );
-	ImGui::SameLine( 70.0f );
-	ImGui::SetNextItemWidth( -1 );
-	if( ImGui::DragFloat3( "##size", size.ToFloatPtr(), grid * 0.25f, 1.0f, 65536.0f, "%.0f" ) )
-	{
-		ResizeSelection( bounds, size );
-		document.EndChange();
+		const bool pointEntity = document.selection.Num() == 1 && document.selection.Primary().primitive < 0 &&
+								 document.selection.Primary().entity != 0 && document.SelectedEntity()->GetNumPrimitives() == 0;
+		if( !pointEntity )
+		{
+			idVec3 size = bounds[1] - bounds[0];
+			UI::FieldLabel( "Size" );
+			if( ImGui::DragFloat3( "##size", size.ToFloatPtr(), grid * 0.25f, 1.0f, 65536.0f, "%.0f" ) )
+			{
+				ResizeSelection( bounds, size );
+				document.EndChange();
+			}
+			UndoBracket( "Resize" );
+			UI::Tip( "Width, depth and height" );
+		}
+		else
+		{
+			// which way it faces, as a compass angle
+			idMapEntity* ent = document.SelectedEntity();
+			idMat3 axis;
+			EntityAxis( ent, axis );
+			float yaw = RAD2DEG( atan2( axis[0].y, axis[0].x ) );
+			UI::FieldLabel( "Facing" );
+			ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x - ( ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x ) * 2.0f );
+			if( ImGui::DragFloat( "##facing", &yaw, 1.0f, -360.0f, 360.0f, "%.0f deg" ) )
+			{
+				yaw = idMath::AngleNormalize360( idMath::Rint( yaw ) );
+				ent->epairs.Delete( "rotation" );
+				ent->epairs.SetFloat( "angle", yaw );
+				document.EndChange();
+			}
+			UndoBracket( "Facing" );
+			UI::Tip( "0 faces east (+X), 90 north (+Y). The arrow in the view shows it." );
+			ImGui::SameLine();
+			if( UI::IconButton( "turnl", ICON_TURN_LEFT, "Turn 90 degrees left (,)" ) )
+			{
+				TurnSelection( 90.0f );
+			}
+			ImGui::SameLine();
+			if( UI::IconButton( "turnr", ICON_TURN_RIGHT, "Turn 90 degrees right (.)" ) )
+			{
+				TurnSelection( -90.0f );
+			}
+		}
 	}
-	UndoBracket( "Resize" );
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Size (width, depth, height)" );
-	}
+	UI::EndCard();
 }
 
 static void DrawMaterialField( const char* current, int key )
@@ -1685,15 +1756,25 @@ static void DrawMaterialField( const char* current, int key )
 		brushMaterialFor = key;
 	}
 
-	ImGui::Text( "Material" );
-	ImGui::SetNextItemWidth( -60.0f );
-	const bool entered = ImGui::InputText( "##material", brushMaterialBuffer, sizeof( brushMaterialBuffer ), ImGuiInputTextFlags_EnterReturnsTrue );
+	ImGui::PushFont( UI::Font( UI::FONT_BOLD ) );
+	ImGui::TextUnformatted( ShortMaterialName( current ).c_str() );
+	ImGui::PopFont();
+	ImGui::TextDisabled( "%s", current );
+
+	const float buttonWidth = ImGui::GetFrameHeight();
+	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x - ( buttonWidth + ImGui::GetStyle().ItemSpacing.x ) * 2.0f );
+	const bool entered = ImGui::InputTextWithHint( "##material", "material name", brushMaterialBuffer, sizeof( brushMaterialBuffer ), ImGuiInputTextFlags_EnterReturnsTrue );
 	ImGui::SameLine();
-	if( ImGui::Button( "Apply" ) || entered )
+	if( UI::IconButton( "apply", ICON_OK, "Use the material typed here (Enter)" ) || entered )
 	{
 		document.SetMaterial( brushMaterialBuffer );
 	}
-	Hint( "Or click a material in the Content Browser's Materials tab." );
+	ImGui::SameLine();
+	if( UI::IconButton( "usecurrent", ICON_PAINT, va( "Use the paint material (%s)", currentMaterial.c_str() ) ) )
+	{
+		document.SetMaterial( currentMaterial );
+		idStr::Copynz( brushMaterialBuffer, currentMaterial.c_str(), sizeof( brushMaterialBuffer ) );
+	}
 }
 
 static void FitSelectedFaces()
@@ -1735,153 +1816,145 @@ static void EditFaces( const char* label, func_t edit, bool live = false )
 static void DrawFaceInspector()
 {
 	idMapBrushSide* face = document.SelectedFace();
-	const int count = document.selection.Num();
-	ImGui::Text( count > 1 ? "%d faces" : "Face", count );
-	Hint( "Shift+click more faces to add them; click without Shift to go back to whole objects." );
-	ImGui::Separator();
-
 	const Selection primary = document.selection.Primary();
-	DrawMaterialField( face->GetMaterial(), ( primary.entity * 1000 + primary.primitive ) * 100 + primary.side + 50000000 );
-	ImGui::Separator();
 
-	ImGui::Text( "Texture" );
-	ImGui::Checkbox( "Texture lock", &document.textureLock );
-	if( ImGui::IsItemHovered() )
+	if( UI::BeginCard( "facematerial", ICON_PAINT, "Material", "What the selected faces are made of. The Paint tab (2) paints faces by clicking them." ) )
 	{
-		ImGui::SetTooltip( "Keep textures in place on surfaces when you move, turn or resize brushes." );
+		DrawMaterialField( face->GetMaterial(), ( primary.entity * 1000 + primary.primitive ) * 100 + primary.side + 50000000 );
 	}
+	UI::EndCard();
 
-	const TextureAlign align = GetTextureAlign( face );
-	const float grid = GridSize();
+	if( UI::BeginCard( "texture", ICON_FIT, "Texture", "How the material's texture lies on the face: shift it, change how big it repeats, or turn it." ) )
+	{
+		const TextureAlign align = GetTextureAlign( face );
+		const float grid = GridSize();
 
-	idVec2 offset = align.offset;
-	ImGui::SetNextItemWidth( -80.0f );
-	if( ImGui::DragFloat2( "Offset", offset.ToFloatPtr(), 1.0f, 0, 0, "%.1f" ) )
-	{
-		const idVec2 delta = offset - align.offset;
-		EditFaces( "Texture offset", [&]( TextureAlign & a )
+		idVec2 offset = align.offset;
+		UI::FieldLabel( "Offset" );
+		if( ImGui::DragFloat2( "##offset", offset.ToFloatPtr(), 1.0f, 0, 0, "%.1f" ) )
 		{
-			a.offset += delta;
-		}, true );
-	}
-	UndoBracket( "Texture offset" );
+			const idVec2 delta = offset - align.offset;
+			EditFaces( "Texture offset", [&]( TextureAlign & a )
+			{
+				a.offset += delta;
+			}, true );
+		}
+		UndoBracket( "Texture offset" );
 
-	idVec2 tile = align.tile;
-	ImGui::SetNextItemWidth( -80.0f );
-	if( ImGui::DragFloat2( "Tile size", tile.ToFloatPtr(), 1.0f, -4096.0f, 4096.0f, "%.1f" ) )
-	{
-		EditFaces( "Texture size", [&]( TextureAlign & a )
+		idVec2 tile = align.tile;
+		UI::FieldLabel( "Tile size" );
+		if( ImGui::DragFloat2( "##tile", tile.ToFloatPtr(), 1.0f, -4096.0f, 4096.0f, "%.1f" ) )
 		{
-			a.tile = tile;
-		}, true );
-	}
-	UndoBracket( "Texture size" );
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Map units covered by one copy of the texture. Negative flips it." );
-	}
+			EditFaces( "Texture size", [&]( TextureAlign & a )
+			{
+				a.tile = tile;
+			}, true );
+		}
+		UndoBracket( "Texture size" );
+		UI::Tip( "Map units covered by one copy of the texture. Negative flips it." );
 
-	float rotation = align.rotation;
-	ImGui::SetNextItemWidth( -80.0f );
-	if( ImGui::DragFloat( "Rotation", &rotation, 1.0f, -360.0f, 360.0f, "%.1f deg" ) )
-	{
-		EditFaces( "Texture rotation", [&]( TextureAlign & a )
+		float rotation = align.rotation;
+		UI::FieldLabel( "Rotation" );
+		if( ImGui::DragFloat( "##rotation", &rotation, 1.0f, -360.0f, 360.0f, "%.1f deg" ) )
 		{
-			a.rotation = rotation;
-		}, true );
-	}
-	UndoBracket( "Texture rotation" );
+			EditFaces( "Texture rotation", [&]( TextureAlign & a )
+			{
+				a.rotation = rotation;
+			}, true );
+		}
+		UndoBracket( "Texture rotation" );
 
-	// nudges by the grid, for lining up without dragging
-	ImGui::TextDisabled( "Nudge" );
-	ImGui::SameLine();
-	if( ImGui::ArrowButton( "##left", ImGuiDir_Left ) )
-	{
-		EditFaces( "Texture offset", [&]( TextureAlign & a )
+		// nudges by the grid, for lining up without dragging
+		UI::FieldLabel( "Nudge" );
+		ImGui::Dummy( ImVec2( 0, 0 ) );
+		ImGui::SameLine( 0.0f, 0.0f );
+		if( ImGui::ArrowButton( "##left", ImGuiDir_Left ) )
 		{
-			a.offset.x -= grid;
-		} );
-	}
-	ImGui::SameLine();
-	if( ImGui::ArrowButton( "##right", ImGuiDir_Right ) )
-	{
-		EditFaces( "Texture offset", [&]( TextureAlign & a )
+			EditFaces( "Texture offset", [&]( TextureAlign & a )
+			{
+				a.offset.x -= grid;
+			} );
+		}
+		ImGui::SameLine();
+		if( ImGui::ArrowButton( "##right", ImGuiDir_Right ) )
 		{
-			a.offset.x += grid;
-		} );
-	}
-	ImGui::SameLine();
-	if( ImGui::ArrowButton( "##up", ImGuiDir_Up ) )
-	{
-		EditFaces( "Texture offset", [&]( TextureAlign & a )
+			EditFaces( "Texture offset", [&]( TextureAlign & a )
+			{
+				a.offset.x += grid;
+			} );
+		}
+		ImGui::SameLine();
+		if( ImGui::ArrowButton( "##up", ImGuiDir_Up ) )
 		{
-			a.offset.y -= grid;
-		} );
-	}
-	ImGui::SameLine();
-	if( ImGui::ArrowButton( "##down", ImGuiDir_Down ) )
-	{
-		EditFaces( "Texture offset", [&]( TextureAlign & a )
+			EditFaces( "Texture offset", [&]( TextureAlign & a )
+			{
+				a.offset.y -= grid;
+			} );
+		}
+		ImGui::SameLine();
+		if( ImGui::ArrowButton( "##down", ImGuiDir_Down ) )
 		{
-			a.offset.y += grid;
-		} );
-	}
-	ImGui::SameLine();
-	if( ImGui::Button( "Turn 90" ) )
-	{
-		EditFaces( "Texture rotation", [&]( TextureAlign & a )
+			EditFaces( "Texture offset", [&]( TextureAlign & a )
+			{
+				a.offset.y += grid;
+			} );
+		}
+		ImGui::SameLine();
+		if( UI::IconButton( "turn90", ICON_TURN_RIGHT, "Turn the texture 90 degrees" ) )
 		{
-			a.rotation = idMath::AngleNormalize180( a.rotation + 90.0f );
-		} );
-	}
+			EditFaces( "Texture rotation", [&]( TextureAlign & a )
+			{
+				a.rotation = idMath::AngleNormalize180( a.rotation + 90.0f );
+			} );
+		}
 
-	if( ImGui::Button( "Flip U" ) )
-	{
-		EditFaces( "Flip texture", [&]( TextureAlign & a )
+		ImGui::Spacing();
+		if( ImGui::Button( "Flip across" ) )
 		{
-			a.tile.x = -a.tile.x;
-		} );
-	}
-	ImGui::SameLine();
-	if( ImGui::Button( "Flip V" ) )
-	{
-		EditFaces( "Flip texture", [&]( TextureAlign & a )
+			EditFaces( "Flip texture", [&]( TextureAlign & a )
+			{
+				a.tile.x = -a.tile.x;
+			} );
+		}
+		ImGui::SameLine();
+		if( ImGui::Button( "Flip up-down" ) )
 		{
-			a.tile.y = -a.tile.y;
-		} );
-	}
-	ImGui::SameLine();
-	if( ImGui::Button( "Reset" ) )
-	{
-		EditFaces( "Reset texture", [&]( TextureAlign & a )
+			EditFaces( "Flip texture", [&]( TextureAlign & a )
+			{
+				a.tile.y = -a.tile.y;
+			} );
+		}
+		ImGui::SameLine();
+		if( ImGui::Button( "Reset" ) )
 		{
-			a.offset.Zero();
-			a.tile.Set( 128.0f, 128.0f );
-			a.rotation = 0.0f;
-		} );
-	}
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Straight, unshifted, one copy per 128 units" );
-	}
+			EditFaces( "Reset texture", [&]( TextureAlign & a )
+			{
+				a.offset.Zero();
+				a.tile.Set( 128.0f, 128.0f );
+				a.rotation = 0.0f;
+			} );
+		}
+		UI::Tip( "Straight, unshifted, one copy per 128 units" );
 
-	if( ImGui::Button( "Fit" ) )
-	{
-		FitSelectedFaces();
+		if( ImGui::Button( ICON_FIT "  Fit" ) )
+		{
+			FitSelectedFaces();
+		}
+		UI::Tip( "Stretch the texture to cover the face exactly this many times across and up" );
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x );
+		ImGui::InputInt2( "##times", faceRepeats );
+		faceRepeats[0] = idMath::ClampInt( 1, 64, faceRepeats[0] );
+		faceRepeats[1] = idMath::ClampInt( 1, 64, faceRepeats[1] );
+
+		ImGui::Checkbox( "Texture lock", &document.textureLock );
+		UI::Tip( "Keep textures in place on surfaces when you move, turn or resize brushes." );
 	}
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Stretch the texture to cover the face exactly the number of times set here" );
-	}
-	ImGui::SameLine();
-	ImGui::SetNextItemWidth( 90.0f );
-	ImGui::InputInt2( "times", faceRepeats );
-	faceRepeats[0] = idMath::ClampInt( 1, 64, faceRepeats[0] );
-	faceRepeats[1] = idMath::ClampInt( 1, 64, faceRepeats[1] );
+	UI::EndCard();
 }
 
-// carve, and turning level brushes into doors and other brush entities
-static void DrawBrushTools()
+// carve, cut, corners, and turning level brushes into doors and other brush things
+static void DrawShapeCard()
 {
 	idList<Selection> brushes;
 	document.SelectedBrushes( brushes );
@@ -1890,114 +1963,157 @@ static void DrawBrushTools()
 		return;
 	}
 
-	ImGui::Separator();
-	if( ImGui::Button( "Carve" ) )
+	if( UI::BeginCard( "shape", ICON_CORNERS, "Shape", "Ways to reshape brushes. Carve cuts the selection out of whatever it overlaps: put a box through a wall and carve it for a doorway." ) )
 	{
-		const int pieces = document.SubtractSelection();
-		Status( pieces > 0 ? va( "Carved out; %d pieces left around it.", pieces ) : "Nothing to carve: the selection doesn't overlap any other brush." );
-		return;
-	}
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Cut the selected brushes out of every brush they overlap, then remove them.\nUse it for doorways, windows and alcoves." );
-	}
-	ImGui::SameLine();
-	if( ImGui::Button( "Clip..." ) )
-	{
-		gizmoMode = GIZMO_CLIP;
-		clipPoints.Clear();
-	}
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Cut the selected brushes in two along a line you click (C)" );
-	}
-	ImGui::SameLine();
-	if( ImGui::Button( "Corners..." ) )
-	{
-		gizmoMode = GIZMO_VERTEX;
-		cornerSelection.Clear();
-	}
-	if( ImGui::IsItemHovered() )
-	{
-		ImGui::SetTooltip( "Drag the corners of the selected brushes (V)" );
-	}
-
-	// only the level's own brushes can be turned into something
-	bool allLevel = true;
-	for( int i = 0; i < document.selection.Num(); i++ )
-	{
-		allLevel &= ( document.selection[i].entity == 0 );
-	}
-	if( !allLevel )
-	{
-		return;
-	}
-
-	ImGui::TextDisabled( "Turn into" );
-	const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
-	int shown = 0;
-	for( int i = 0; i < count; i++ )
-	{
-		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
-		if( def == NULL || !def->dict.GetBool( "editor_brushes" ) )
+		if( ImGui::Button( ICON_CARVE "  Carve" ) )
 		{
-			continue;
+			const int pieces = document.SubtractSelection();
+			Status( pieces > 0 ? va( "Carved out; %d pieces left around it.", pieces ) : "Nothing to carve: the selection doesn't overlap any other brush." );
+			UI::EndCard();
+			return;
 		}
-		if( shown++ > 0 )
+		UI::Tip( "Cut the selected brushes out of every brush they overlap, then remove them. For doorways, windows and alcoves." );
+		ImGui::SameLine();
+		if( ImGui::Button( ICON_CLIP "  Cut" ) )
 		{
-			ImGui::SameLine();
+			SetTool( GIZMO_CLIP );
 		}
-		if( ImGui::Button( def->dict.GetString( "editor_label", def->GetName() ) ) )
+		UI::Tip( "Cut the selected brushes in two along a line you click (C)" );
+		ImGui::SameLine();
+		if( ImGui::Button( ICON_CORNERS "  Corners" ) )
 		{
-			if( document.GroupSelection( def->GetName() ) >= 0 )
+			SetTool( GIZMO_VERTEX );
+		}
+		UI::Tip( "Drag the corners of the selected brushes (V)" );
+
+		// only the level's own brushes can be turned into something
+		bool allLevel = true;
+		for( int i = 0; i < document.selection.Num(); i++ )
+		{
+			allLevel &= ( document.selection[i].entity == 0 );
+		}
+		if( allLevel )
+		{
+			ImGui::Spacing();
+			UI::SectionLabel( "Turn into" );
+			const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
+			int shown = 0;
+			for( int i = 0; i < count; i++ )
 			{
-				Status( va( "Made a %s.", def->dict.GetString( "editor_label", def->GetName() ) ) );
+				const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
+				if( def == NULL || !def->dict.GetBool( "editor_brushes" ) )
+				{
+					continue;
+				}
+				if( shown++ > 0 )
+				{
+					ImGui::SameLine();
+				}
+				if( ImGui::Button( va( "%s  %s", ThingIcon( def ), ThingLabel( def ) ) ) )
+				{
+					if( document.GroupSelection( def->GetName() ) >= 0 )
+					{
+						Status( va( "Made a %s.", ThingLabel( def ) ) );
+					}
+				}
+				UI::Tip( def->dict.GetString( "editor_usage" ) );
 			}
 		}
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( "%s", def->dict.GetString( "editor_usage" ) );
-		}
 	}
+	UI::EndCard();
 }
 
 static void DrawPrimitiveInspector( idMapPrimitive* prim )
 {
 	const bool isBrush = prim->GetType() == idMapPrimitive::TYPE_BRUSH;
-	const int count = document.selection.Num();
-	if( count > 1 )
-	{
-		ImGui::Text( "%d selected", count );
-	}
-	else
-	{
-		ImGui::Text( isBrush ? "Brush" : "Patch" );
-	}
-	DrawTransformFields();
-	DrawBrushTools();
-	ImGui::Separator();
+	DrawPlacementCard();
+	DrawShapeCard();
 
-	const Selection primary = document.selection.Primary();
-	const char* current = isBrush ? static_cast<idMapBrush*>( prim )->GetSide( 0 )->GetMaterial() : static_cast<idMapPatch*>( prim )->GetMaterial();
-	DrawMaterialField( current, primary.entity * 100000 + primary.primitive );
-
-	if( isBrush )
+	if( UI::BeginCard( "look", ICON_PAINT, "Material", "What the brush is made of. Shift+click a single face in the view to change just that face; the Paint tab (2) paints by clicking." ) )
 	{
-		idMapBrush* brush = static_cast<idMapBrush*>( prim );
-		Hint( "Shift+click a face in the view to change just that face." );
-		if( ImGui::TreeNode( "Faces", "Faces (%d)", brush->GetNumSides() ) )
+		const Selection primary = document.selection.Primary();
+		const char* current = isBrush ? static_cast<idMapBrush*>( prim )->GetSide( 0 )->GetMaterial() : static_cast<idMapPatch*>( prim )->GetMaterial();
+		DrawMaterialField( current, primary.entity * 100000 + primary.primitive );
+
+		if( isBrush )
 		{
-			for( int s = 0; s < brush->GetNumSides(); s++ )
+			idMapBrush* brush = static_cast<idMapBrush*>( prim );
+			if( ImGui::TreeNode( "Faces", "Faces (%d)", brush->GetNumSides() ) )
 			{
-				const idVec3 n = brush->GetSide( s )->GetPlane().Normal();
-				if( ImGui::Selectable( va( "%d  (%.2f %.2f %.2f)  %s##face%d", s, n.x, n.y, n.z, brush->GetSide( s )->GetMaterial(), s ) ) )
+				for( int s = 0; s < brush->GetNumSides(); s++ )
 				{
-					document.selection.Set( Selection( primary.entity, primary.primitive, s ) );
+					if( ImGui::Selectable( va( "%d   %s##face%d", s, ShortMaterialName( brush->GetSide( s )->GetMaterial() ).c_str(), s ) ) )
+					{
+						document.selection.Set( Selection( primary.entity, primary.primitive, s ) );
+					}
+					UI::Tip( brush->GetSide( s )->GetMaterial() );
 				}
+				ImGui::TreePop();
 			}
-			ImGui::TreePop();
 		}
 	}
+	UI::EndCard();
+}
+
+static void DrawEntityInspector( idMapEntity* ent )
+{
+	const char* classname = ent->epairs.GetString( "classname" );
+	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+	const bool isWorld = document.selection.Primary().entity == 0;
+
+	if( def == NULL && !isWorld )
+	{
+		ImGui::TextColored( UI::Warn(), ICON_WARNING "  No type called \"%s\" exists, so this won't appear in the game.", classname );
+	}
+
+	if( !isWorld )
+	{
+		DrawPlacementCard();
+	}
+	if( idStr::Icmp( classname, "func_door" ) == 0 )
+	{
+		DrawDoorCard( ent, def );
+	}
+	if( idStr::Icmp( classname, "light" ) == 0 )
+	{
+		DrawLightCard( ent );
+	}
+	if( ent->GetNumPrimitives() > 0 && !isWorld )
+	{
+		if( UI::BeginCard( "brushes", ICON_BRUSH, "Brushes", "This thing is made of brushes. Giving them back turns them into plain level geometry again." ) )
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text( "%d brushes", ent->GetNumPrimitives() );
+			ImGui::SameLine();
+			if( ImGui::Button( ICON_UNGROUP "  Back to plain brushes" ) )
+			{
+				document.UngroupSelection();
+				UI::EndCard();
+				return;
+			}
+		}
+		UI::EndCard();
+	}
+	DrawAdvancedCard( ent, def );
+}
+
+// the selection's name and what it is, above the cards
+static void DrawInspectorHeader( const char* icon, const char* title, const char* subtitle, const char* usage )
+{
+	ImGui::PushFont( UI::Font( UI::FONT_TITLE ) );
+	ImGui::TextColored( UI::Accent(), "%s", icon );
+	ImGui::SameLine();
+	ImGui::TextUnformatted( title );
+	ImGui::PopFont();
+	if( subtitle != NULL && subtitle[0] != '\0' )
+	{
+		ImGui::TextDisabled( "%s", subtitle );
+	}
+	if( usage != NULL && usage[0] != '\0' )
+	{
+		UI::Hint( usage );
+	}
+	ImGui::Spacing();
 }
 
 static void DrawInspector()
@@ -2010,10 +2126,24 @@ static void DrawInspector()
 
 	if( !document.SelectionIsValid() )
 	{
-		ImGui::TextDisabled( "Nothing selected" );
-		ImGui::Separator();
-		Hint( "Click something in the view or in the Outliner to see and change its properties. Ctrl+click adds to the selection; Shift+click picks a single face." );
-		if( document.IsOpen() && ImGui::Button( "Level settings" ) )
+		// an empty state that says what to do
+		const float width = ImGui::GetContentRegionAvail().x;
+		ImGui::Dummy( ImVec2( 0.0f, 24.0f * UI::Scale() ) );
+		ImFont* iconFont = UI::Font( UI::FONT_ICON );
+		const float iconWidth = iconFont->CalcTextSizeA( iconFont->FontSize, FLT_MAX, 0.0f, ICON_SELECT ).x;
+		ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( width - iconWidth ) * 0.5f );
+		ImGui::PushFont( iconFont );
+		ImGui::TextDisabled( ICON_SELECT );
+		ImGui::PopFont();
+		ImGui::PushFont( UI::Font( UI::FONT_BOLD ) );
+		const float textWidth = ImGui::CalcTextSize( "Nothing selected" ).x;
+		ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( width - textWidth ) * 0.5f );
+		ImGui::TextUnformatted( "Nothing selected" );
+		ImGui::PopFont();
+		ImGui::Spacing();
+		UI::Hint( "Click something in the view or the Outliner to see and change it. Ctrl+click adds to the selection; Shift+click picks a single face." );
+		ImGui::Spacing();
+		if( document.IsOpen() && ImGui::Button( ICON_SETTINGS "  Level settings", ImVec2( -FLT_MIN, 0 ) ) )
 		{
 			document.selection.Set( Selection( 0 ) );
 		}
@@ -2021,24 +2151,40 @@ static void DrawInspector()
 		return;
 	}
 
+	const int count = document.selection.Num();
 	if( document.selection.IsFaces() )
 	{
+		DrawInspectorHeader( ICON_PAINT, count > 1 ? va( "%d faces", count ) : "Face", "Shift+click more faces to add them", NULL );
 		DrawFaceInspector();
 	}
 	else if( document.selection.Primary().IsPrimitive() )
 	{
+		const bool isBrush = document.SelectedPrimitive()->GetType() == idMapPrimitive::TYPE_BRUSH;
+		DrawInspectorHeader( isBrush ? ICON_BRUSH : ICON_PATCH, count > 1 ? va( "%d selected", count ) : ( isBrush ? "Brush" : "Patch" ),
+							 document.selection.Primary().entity == 0 ? "Part of the level" : "Part of a brush thing", NULL );
 		DrawPrimitiveInspector( document.SelectedPrimitive() );
 	}
 	else
 	{
-		if( document.selection.Num() > 1 )
+		idMapEntity* ent = document.SelectedEntity();
+		const char* classname = ent->epairs.GetString( "classname" );
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
+		if( document.selection.Primary().entity == 0 )
 		{
-			ImGui::Text( "%d selected", document.selection.Num() );
-			DrawTransformFields();
-			ImGui::Separator();
-			ImGui::TextDisabled( "Showing the last one picked:" );
+			DrawInspectorHeader( ICON_SETTINGS, "Level settings", "worldspawn", "Settings for the whole level. The level's own brushes are listed under Level geometry in the Outliner." );
 		}
-		DrawEntityInspector( document.SelectedEntity() );
+		else
+		{
+			const char* name = ent->epairs.GetString( "name", classname );
+			const char* typeLabel = def != NULL ? ThingLabel( def ) : classname;
+			idStr subtitle = typeLabel;
+			if( count > 1 )
+			{
+				subtitle = va( "%s  -  %d selected, showing the last one picked", typeLabel, count );
+			}
+			DrawInspectorHeader( def != NULL ? ThingIcon( def ) : ICON_ENTITY, name, subtitle.c_str(), def != NULL ? def->dict.GetString( "editor_usage" ) : NULL );
+		}
+		DrawEntityInspector( ent );
 	}
 
 	ImGui::End();
@@ -2166,6 +2312,21 @@ static void TurnSelection( float degrees )
 	document.EndChange();
 }
 
+// lays tiles out in rows that fit the panel
+static void TileFlow( int index, float tile )
+{
+	if( index == 0 )
+	{
+		return;
+	}
+	const float spacing = ImGui::GetStyle().ItemSpacing.x;
+	const float lineEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+	if( lineEnd + spacing + tile <= ImGui::GetWindowContentRegionMax().x )
+	{
+		ImGui::SameLine();
+	}
+}
+
 static void DrawContentBrowser()
 {
 	if( !ImGui::Begin( WINDOW_CONTENT_BROWSER, &showContentBrowser ) )
@@ -2176,30 +2337,30 @@ static void DrawContentBrowser()
 
 	if( ImGui::BeginTabBar( "content_tabs" ) )
 	{
-		if( ImGui::BeginTabItem( "Maps" ) )
+		if( ImGui::BeginTabItem( ICON_MAP_FILE "  Levels" ) )
 		{
 			if( mapListDirty )
 			{
 				RefreshMapList();
 			}
-			if( ImGui::Button( "New map" ) )
+			if( ImGui::Button( ICON_NEW "  New level" ) )
 			{
 				openNewMapPopup = true;
 			}
 			ImGui::SameLine();
-			if( ImGui::Button( "Refresh" ) )
+			if( UI::IconButton( "refresh", ICON_UNDO, "Look for new levels" ) )
 			{
 				RefreshMapList();
 			}
 			ImGui::SameLine();
-			Hint( "Double-click a map to open it." );
-			ImGui::Separator();
+			ImGui::AlignTextToFramePadding();
+			Hint( "Double-click a level to open it." );
 
 			ImGui::BeginChild( "maps" );
 			for( int i = 0; i < mapList.Num(); i++ )
 			{
 				const bool isOpen = document.IsOpen() && mapList[i].Icmp( document.Name() ) == 0;
-				if( ImGui::Selectable( va( "%s%s", mapList[i].c_str(), isOpen ? "   (open)" : "" ), selectedMap == i, ImGuiSelectableFlags_AllowDoubleClick ) )
+				if( ImGui::Selectable( va( ICON_MAP_FILE "  %s##map%d", mapList[i].c_str(), i ), selectedMap == i || isOpen, ImGuiSelectableFlags_AllowDoubleClick ) )
 				{
 					selectedMap = i;
 					if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) && !isOpen )
@@ -2207,22 +2368,26 @@ static void DrawContentBrowser()
 						OpenMap( mapList[i].c_str() );
 					}
 				}
+				if( isOpen )
+				{
+					RowType( "open" );
+				}
 			}
 			if( mapList.Num() == 0 )
 			{
-				Hint( "No maps in this project yet." );
+				Hint( "No levels in this project yet." );
 			}
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}
 
-		if( ImGui::BeginTabItem( "Materials" ) )
+		if( ImGui::BeginTabItem( ICON_MATERIAL "  Materials" ) )
 		{
-			ImGui::SetNextItemWidth( 240.0f );
-			ImGui::InputTextWithHint( "##matfilter", "Filter", materialFilter, sizeof( materialFilter ) );
+			UI::SearchField( "##matfilter", materialFilter, sizeof( materialFilter ), "Find a material", 260.0f * UI::Scale() );
 			ImGui::SameLine();
-			Hint( !document.selection.IsEmpty() ? "Click a material to put it on the selection; new brushes will use it too." : "Click a material to use it for new brushes, or select brushes or faces first to change them." );
-			ImGui::Separator();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled( ICON_PAINT "  %s", ShortMaterialName( currentMaterial ).c_str() );
+			UI::Tip( va( "Painting with %s. Clicking a material here makes it the paint material, and puts it on anything selected.", currentMaterial.c_str() ) );
 
 			ImGui::BeginChild( "materials" );
 			const int count = declManager->GetNumDecls( DECL_MATERIAL );
@@ -2237,7 +2402,7 @@ static void DrawContentBrowser()
 				{
 					continue;
 				}
-				if( ImGui::Selectable( decl->GetName(), currentMaterial.Icmp( decl->GetName() ) == 0 ) )
+				if( ImGui::Selectable( va( ICON_MATERIAL "  %s", decl->GetName() ), currentMaterial.Icmp( decl->GetName() ) == 0 ) )
 				{
 					// new brushes use it from now on; selected ones get it straight away
 					currentMaterial = decl->GetName();
@@ -2248,7 +2413,7 @@ static void DrawContentBrowser()
 					}
 					else
 					{
-						Status( va( "New brushes will use %s.", decl->GetName() ) );
+						Status( va( "Painting with %s.", ShortMaterialName( decl->GetName() ).c_str() ) );
 					}
 				}
 			}
@@ -2256,52 +2421,48 @@ static void DrawContentBrowser()
 			ImGui::EndTabItem();
 		}
 
-		if( ImGui::BeginTabItem( "Place" ) )
+		if( ImGui::BeginTabItem( ICON_MODE_KITS "  Place" ) )
 		{
 			const bool canPlace = document.IsOpen();
-			Hint( "New things land on whatever is in the middle of the view." );
+			Hint( "Click to add one in the middle of the view, or drag it into the view." );
+			ImGui::Spacing();
 
-			ImGui::TextDisabled( "Shapes" );
-			ImGui::BeginDisabled( !canPlace );
+			const float tile = UI::TileSize();
+			UI::SectionLabel( "Shapes" );
+			static const char* shapeIcons[SHAPE_COUNT] = { ICON_SHAPE_BOX, ICON_SHAPE_ROOM, ICON_SHAPE_RAMP, ICON_SHAPE_CYLINDER, ICON_SHAPE_CONE, ICON_SHAPE_STAIRS, ICON_SHAPE_ARCH };
 			for( int i = 0; i < SHAPE_COUNT; i++ )
 			{
-				if( i > 0 )
-				{
-					ImGui::SameLine();
-				}
-				if( ImGui::Button( ShapeName( ( shapeType_t )i ) ) )
+				TileFlow( i, tile );
+				if( UI::ToolTile( ShapeName( ( shapeType_t )i ), shapeIcons[i], ShapeName( ( shapeType_t )i ), false, draggingShape < 0 ? ShapeHelp( ( shapeType_t )i ) : NULL, canPlace, tile ) )
 				{
 					PlaceShape( ( shapeType_t )i );
 				}
-				if( ImGui::IsItemHovered() )
-				{
-					ImGui::SetTooltip( "%s", ShapeHelp( ( shapeType_t )i ) );
-				}
+				DragOut( i, NULL );
 			}
-			ImGui::EndDisabled();
 
 			if( ImGui::TreeNode( "Shape settings" ) )
 			{
-				ImGui::SetNextItemWidth( 160.0f );
-				ImGui::SliderInt( "Sides (cylinder, cone)", &shapeSettings.sides, 3, 32 );
-				ImGui::SetNextItemWidth( 160.0f );
-				ImGui::SliderInt( "Steps (stairs)", &shapeSettings.steps, 2, 32 );
-				ImGui::SetNextItemWidth( 160.0f );
-				ImGui::SliderInt( "Segments (arch)", &shapeSettings.segments, 2, 24 );
-				ImGui::SetNextItemWidth( 160.0f );
-				ImGui::DragFloat( "Thickness (arch, room)", &shapeSettings.thickness, 1.0f, 1.0f, 256.0f, "%.0f" );
-				Hint( "Resize shapes afterwards in the Inspector or with the resize tool (R)." );
+				UI::FieldLabel( "Sides", 120.0f * UI::Scale() );
+				ImGui::SliderInt( "##sides", &shapeSettings.sides, 3, 32 );
+				UI::Tip( "Cylinders and cones" );
+				UI::FieldLabel( "Steps", 120.0f * UI::Scale() );
+				ImGui::SliderInt( "##steps", &shapeSettings.steps, 2, 32 );
+				UI::Tip( "Stairs" );
+				UI::FieldLabel( "Segments", 120.0f * UI::Scale() );
+				ImGui::SliderInt( "##segments", &shapeSettings.segments, 2, 24 );
+				UI::Tip( "Arches" );
+				UI::FieldLabel( "Thickness", 120.0f * UI::Scale() );
+				ImGui::DragFloat( "##thickness", &shapeSettings.thickness, 1.0f, 1.0f, 256.0f, "%.0f" );
+				UI::Tip( "Arches and rooms" );
 				ImGui::TreePop();
 			}
-			ImGui::Separator();
-			ImGui::TextDisabled( "Things" );
 
-			ImGui::SetNextItemWidth( 240.0f );
-			ImGui::InputTextWithHint( "##entfilter", "Filter entity types", entityFilter, sizeof( entityFilter ) );
-			ImGui::Separator();
-
+			ImGui::Spacing();
+			UI::SectionLabel( "Things" );
+			UI::SearchField( "##entfilter", entityFilter, sizeof( entityFilter ), "Find a type" );
 			ImGui::BeginChild( "entities" );
 			const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
+			int shown = 0;
 			for( int i = 0; i < count; i++ )
 			{
 				const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
@@ -2311,28 +2472,20 @@ static void DrawContentBrowser()
 				}
 				// only types meant for levels: they document themselves for the editor
 				const char* usage = def->dict.GetString( "editor_usage" );
-				if( usage[0] == '\0' || idStr::Icmp( def->GetName(), "worldspawn" ) == 0 || idStr::Icmp( def->GetName(), "player" ) == 0 )
+				if( usage[0] == '\0' || def->dict.GetBool( "editor_brushes" ) || idStr::Icmp( def->GetName(), "worldspawn" ) == 0 || idStr::Icmp( def->GetName(), "player" ) == 0 )
 				{
 					continue;
 				}
-				if( entityFilter[0] != '\0' && idStr::FindText( def->GetName(), entityFilter, false ) < 0 )
+				if( entityFilter[0] != '\0' && idStr::FindText( def->GetName(), entityFilter, false ) < 0 && idStr::FindText( ThingLabel( def ), entityFilter, false ) < 0 )
 				{
 					continue;
 				}
-				ImGui::PushID( i );
-				ImGui::BeginDisabled( !canPlace );
-				if( ImGui::SmallButton( "Place" ) )
+				TileFlow( shown++, tile );
+				if( UI::ToolTile( def->GetName(), ThingIcon( def ), ThingLabel( def ), false, va( "%s\n%s", def->GetName(), usage ), canPlace, tile ) )
 				{
-					document.AddEntity( def->GetName(), PlacementPoint() );
+					PlaceThing( def->GetName() );
 				}
-				ImGui::EndDisabled();
-				ImGui::SameLine();
-				ImGui::TextUnformatted( def->GetName() );
-				if( ImGui::IsItemHovered() )
-				{
-					ImGui::SetTooltip( "%s", usage );
-				}
-				ImGui::PopID();
+				DragOut( -1, def->GetName() );
 			}
 			ImGui::EndChild();
 			ImGui::EndTabItem();
@@ -2342,6 +2495,13 @@ static void DrawContentBrowser()
 	}
 
 	ImGui::End();
+}
+
+static void ProblemRow( const char* text )
+{
+	ImGui::TextColored( UI::Warn(), ICON_WARNING );
+	ImGui::SameLine();
+	ImGui::TextWrapped( "%s", text );
 }
 
 static void DrawProblems()
@@ -2369,40 +2529,49 @@ static void DrawProblems()
 			{
 				any = true;
 				ImGui::PushID( i + 100000 );
-				if( ImGui::SmallButton( "Fix" ) )
+				if( ImGui::SmallButton( ICON_OK " Fix" ) )
 				{
 					document.BeginChange( "Fix model name" );
 					map->GetEntity( i )->epairs.Set( "model", ent->epairs.GetString( "name" ) );
 					document.EndChange();
 				}
 				ImGui::SameLine();
-				ImGui::TextWrapped( "\"%s\" is made of brushes, but its 'model' doesn't match its name, so it won't appear in the game.", EntityLabel( ent, i ).c_str() );
+				ProblemRow( va( "\"%s\" is made of brushes, but its 'model' doesn't match its name, so it won't appear in the game.", EntityLabel( ent, i ).c_str() ) );
 				ImGui::PopID();
 			}
 			if( declManager->FindType( DECL_ENTITYDEF, classname, false ) == NULL )
 			{
 				any = true;
 				ImGui::PushID( i );
-				if( ImGui::SmallButton( "Show" ) )
+				if( ImGui::SmallButton( ICON_FOCUS " Show" ) )
 				{
 					document.selection.Set( Selection( i ) );
 					FocusSelection();
 				}
 				ImGui::SameLine();
-				ImGui::TextWrapped( "\"%s\" uses the type \"%s\", which doesn't exist. It won't appear in the game.", EntityLabel( ent, i ).c_str(), classname );
+				ProblemRow( va( "\"%s\" uses the type \"%s\", which doesn't exist. It won't appear in the game.", EntityLabel( ent, i ).c_str(), classname ) );
 				ImGui::PopID();
 			}
 		}
 		if( !hasStart )
 		{
 			any = true;
-			ImGui::TextWrapped( "The level has no player start (info_player_start), so Play has nowhere to put you. Add one from the Content Browser's Place tab." );
+			ImGui::PushID( "start" );
+			if( ImGui::SmallButton( ICON_PLUS " Add" ) )
+			{
+				PlaceThing( "info_player_start" );
+			}
+			ImGui::SameLine();
+			ProblemRow( "The level has no player start, so Play has nowhere to put you." );
+			ImGui::PopID();
 		}
 	}
 
 	if( !any )
 	{
-		ImGui::TextDisabled( "No problems found." );
+		ImGui::TextColored( UI::Good(), ICON_OK );
+		ImGui::SameLine();
+		ImGui::TextUnformatted( "No problems found." );
 		Hint( "Leaks and compile errors are reported in the console (the ~ key) when you press Play." );
 	}
 
@@ -2425,30 +2594,53 @@ static void DrawWelcome()
 		return;
 	}
 
-	ImGui::SetNextWindowSize( ImVec2( 520, 0 ), ImGuiCond_Appearing );
+	ImGui::SetNextWindowSize( ImVec2( 560.0f * UI::Scale(), 0 ), ImGuiCond_Appearing );
 	ImGui::SetNextWindowPos( ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2( 0.5f, 0.5f ) );
-	if( ImGui::Begin( "Getting started", &showWelcome, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse ) )
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 20.0f * UI::Scale(), 18.0f * UI::Scale() ) );
+	const bool open = ImGui::Begin( "Getting started", &showWelcome, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar );
+	ImGui::PopStyleVar();
+	if( open )
 	{
-		ImGui::TextWrapped( "Welcome to GrizzTech4. Building a level takes five steps:" );
+		ImGui::PushFont( UI::Font( UI::FONT_TITLE ) );
+		ImGui::TextColored( UI::Accent(), ICON_SPARKLES );
+		ImGui::SameLine();
+		ImGui::TextUnformatted( "Welcome to GrizzTech4" );
+		ImGui::PopFont();
+		Hint( "A level in five steps. Everything here is also under Help." );
 		ImGui::Spacing();
-		ImGui::Text( "1. Look around" );
-		Hint( "Hold the right mouse button and move the mouse to look; while holding it, WASD flies and Q/E go down and up. Middle button pans, Alt + left button orbits, the wheel moves forward and back." );
-		ImGui::Text( "2. Draw rooms and walls" );
-		Hint( "Press B (Brush) and drag on the floor to draw a footprint, let go, move the mouse up for height, click. Press T for a top-down plan; drawing works there too. The Add row in the toolbar has ready-made shapes: click one to draw it, or drag it into the view." );
-		ImGui::Text( "3. Shape them" );
-		Hint( "Click to select, then W moves, E turns, R resizes. The Turn buttons (or , and .) turn by 90 degrees. Carve in the Inspector cuts doorways and windows." );
-		ImGui::Text( "4. Dress them" );
-		Hint( "Pick a material in the Content Browser's Materials tab: selected brushes take it, and new ones use it. Shift+click a single face to texture just that face. Add lights and a player start from the toolbar." );
-		ImGui::Text( "5. Play" );
-		Hint( "Press Play at the top. Esc (or F10) brings you back." );
+
+		struct step_t
+		{
+			const char* icon;
+			const char* title;
+			const char* text;
+		};
+		static const step_t steps[] =
+		{
+			{ ICON_EYE,			"Look around",		"Hold the right mouse button and move the mouse to look; while holding it, WASD flies and Q/E go down and up. Middle button pans, Alt + left button orbits, the wheel moves forward and back." },
+			{ ICON_MODE_BUILD,	"Build rooms",		"The dock at the bottom has the tools. In Build, pick Draw (B) and drag a footprint on the floor, let go, move the mouse for height, click. Or drag a shape from the dock into the view. T flips to a top-down plan." },
+			{ ICON_ROTATE,		"Shape them",		"Click to select. Move (W), Turn (E) and Resize (R) put handles on it; the bar above the dock turns by 90, carves doorways and more. Hold Space for a wheel of every tool." },
+			{ ICON_PAINT,		"Paint and light",	"The Paint tab (2) paints surfaces by clicking them. The Light tab (4) adds lights; the Logic tab (3) makes doors and the player start." },
+			{ ICON_PLAY,		"Play",				"Press Play at the top. Esc brings you back." },
+		};
+		for( int i = 0; i < ( int )( sizeof( steps ) / sizeof( steps[0] ) ); i++ )
+		{
+			if( UI::BeginCard( va( "step%d", i ), steps[i].icon, va( "%d.  %s", i + 1, steps[i].title ) ) )
+			{
+				ImGui::TextUnformatted( steps[i].text );
+			}
+			UI::EndCard();
+		}
+
 		ImGui::Spacing();
 		bool again = editor_showWelcome.GetBool();
 		if( ImGui::Checkbox( "Show this when the editor opens", &again ) )
 		{
 			editor_showWelcome.SetBool( again );
 		}
-		ImGui::SameLine( ImGui::GetWindowWidth() - 90.0f );
-		if( ImGui::Button( "Let's go" ) )
+		const float buttonWidth = 120.0f * UI::Scale();
+		ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - buttonWidth );
+		if( UI::ColorButton( "Let's go", UI::Accent(), ImVec2( buttonWidth, 0 ) ) )
 		{
 			showWelcome = false;
 		}
@@ -2475,7 +2667,7 @@ static void DrawAbout()
 		ImGui::Text( "Moving around" );
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
 		ImGui::Text( "Editing" );
-		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces for texturing. W, E and R switch between moving, turning and resizing; C clips brushes and V drags their corners; [ and ] change the grid. Carve (in the Inspector) cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
+		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces. W, E and R move, turn and resize; B draws brushes, C cuts them, V drags their corners, P paints and I picks a material up. Hold Space for the tool wheel. 1 to 5 switch the dock's tabs (Build, Paint, Logic, Light, Kits). [ and ] change the grid. Carve cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
 	}
 	ImGui::End();
 }
@@ -3621,115 +3813,211 @@ static void DrawPlanView( bool hovered )
 ===============================================================================
 */
 
-static void HandleShapeDrag()
+
+/*
+===============================================================================
+
+	Viewport overlay: view bar, mode tabs and tool dock, context bar, tool wheel
+
+===============================================================================
+*/
+
+struct toolInfo_t
 {
-	if( draggingShape < 0 )
-	{
-		return;
-	}
-	ImGuiIO& io = ImGui::GetIO();
-	ImGui::GetForegroundDrawList()->AddText( ImVec2( io.MousePos.x + 14.0f, io.MousePos.y + 10.0f ), IM_COL32( 255, 255, 255, 255 ), ShapeName( ( shapeType_t )draggingShape ) );
+	gizmoMode_t		mode;
+	const char* 	icon;
+	const char* 	label;
+	const char* 	key;
+	const char* 	tip;
+};
 
-	if( ImGui::IsMouseDown( ImGuiMouseButton_Left ) )
-	{
-		return;
-	}
+static const toolInfo_t toolInfo[] =
+{
+	{ GIZMO_MOVE,	ICON_MOVE,		"Move",		"W", "Select things and drag the arrows to move them" },
+	{ GIZMO_ROTATE,	ICON_ROTATE,	"Turn",		"E", "Drag the rings to turn the selection. It snaps to 15 degrees; , and . turn by 90" },
+	{ GIZMO_RESIZE,	ICON_RESIZE,	"Resize",	"R", "Drag the dots on the box edges to resize" },
+	{ GIZMO_BRUSH,	ICON_DRAW,		"Draw",		"B", "Draw new brushes: drag a footprint on the floor, let go, move the mouse for the height, click" },
+	{ GIZMO_CLIP,	ICON_CLIP,		"Cut",		"C", "Cut the selected brushes in two: click two or three points on them, then press Enter" },
+	{ GIZMO_VERTEX,	ICON_CORNERS,	"Corners",	"V", "Drag the corners of the selected brushes to reshape them" },
+	{ GIZMO_PAINT,	ICON_PAINT,		"Paint",	"P", "Click surfaces to paint them with the current material. Ctrl+click paints a whole brush" },
+};
+static const int NUM_TOOLS = sizeof( toolInfo ) / sizeof( toolInfo[0] );
 
-	// dropped: over the view (not over a panel) places it there
-	const bool overPanel = ImGui::IsWindowHovered( ImGuiHoveredFlags_AnyWindow | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem );
-	if( !overPanel )
+static const toolInfo_t& ToolInfo( gizmoMode_t mode )
+{
+	for( int i = 0; i < NUM_TOOLS; i++ )
 	{
-		if( planView )
+		if( toolInfo[i].mode == mode )
 		{
-			ImVec2 mins, maxs;
-			if( PlanViewRect( mins, maxs ) )
-			{
-				const idVec2 p = ScreenToPlan( io.MousePos, mins, maxs );
-				const idVec3 size = ShapeDefaultSize( ( shapeType_t )draggingShape );
-				const idVec3 corner = SnapToGrid( idVec3( p.x - size.x * 0.5f, p.y - size.y * 0.5f, view.gridZ ) );
-				MakeAndAddShape( ( shapeType_t )draggingShape, idBounds( corner, corner + size ) );
-			}
-		}
-		else
-		{
-			PlaceShapeAt( ( shapeType_t )draggingShape, io.MousePos.x, io.MousePos.y );
+			return toolInfo[i];
 		}
 	}
-	draggingShape = -1;
+	return toolInfo[0];
 }
 
-// lays toolbar items out left to right, starting a new line when the next one won't fit
-static float toolbarMaxWidth = 800.0f;
-static void Flow( const char* label, float extra = 0.0f )
+struct modeInfo_t
 {
-	const ImGuiStyle& style = ImGui::GetStyle();
-	const float width = ImGui::CalcTextSize( label, NULL, true ).x + style.FramePadding.x * 2.0f + extra;
-	const float lineEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
-	if( lineEnd + style.ItemSpacing.x + width <= toolbarMaxWidth )
+	const char* 	icon;
+	const char* 	label;
+	const char* 	tip;
+};
+
+static const modeInfo_t modeInfo[MODE_COUNT] =
+{
+	{ ICON_MODE_BUILD,	"Build",	"Draw, shape, cut and arrange the level's brushes (1)" },
+	{ ICON_MODE_PAINT,	"Paint",	"Put materials on surfaces (2)" },
+	{ ICON_MODE_LOGIC,	"Logic",	"Make things do things: doors, the player start, and later rule cards (3)" },
+	{ ICON_MODE_LIGHT,	"Light",	"Add and set up lights (4)" },
+	{ ICON_MODE_KITS,	"Kits",		"Ready-made pieces to drop into the level (5)" },
+};
+
+static void SetTool( gizmoMode_t mode )
+{
+	if( mode == GIZMO_CLIP && gizmoMode != GIZMO_CLIP )
 	{
+		clipPoints.Clear();
+	}
+	if( mode == GIZMO_VERTEX && gizmoMode != GIZMO_VERTEX )
+	{
+		cornerSelection.Clear();
+	}
+	gizmoMode = mode;
+	paintPicking = false;
+	if( mode == GIZMO_PAINT )
+	{
+		editMode = MODE_PAINT;
+	}
+	else if( editMode == MODE_PAINT )
+	{
+		editMode = MODE_BUILD;
+	}
+}
+
+static void SetMode( editMode_t mode )
+{
+	editMode = mode;
+	if( mode == MODE_PAINT )
+	{
+		SetTool( GIZMO_PAINT );
+	}
+	else if( gizmoMode == GIZMO_PAINT )
+	{
+		gizmoMode = GIZMO_MOVE;
+		paintPicking = false;
+	}
+}
+
+static void TogglePlanView()
+{
+	planView = !planView;
+	if( planView )
+	{
+		CenterPlanOnCamera();
+	}
+}
+
+// a short, readable name for a material: its last path part
+static idStr ShortMaterialName( const char* name )
+{
+	idStr s = name;
+	const int slash = s.Last( '/' );
+	if( slash >= 0 )
+	{
+		s = s.Right( s.Length() - slash - 1 );
+	}
+	return s;
+}
+
+// paints the face under the cursor (Ctrl: the whole brush), or picks its material up
+static void PaintClick( float x, float y, bool wholeBrush )
+{
+	const Selection face = view.Pick( document, x, y, true );
+	if( !face.IsFace() )
+	{
+		return;
+	}
+	idMapPrimitive* prim = document.Map()->GetEntity( face.entity )->GetPrimitive( face.primitive );
+	if( prim->GetType() != idMapPrimitive::TYPE_BRUSH )
+	{
+		return;
+	}
+	idMapBrush* brush = static_cast<idMapBrush*>( prim );
+
+	if( paintPicking )
+	{
+		currentMaterial = brush->GetSide( face.side )->GetMaterial();
+		paintPicking = false;
+		Status( va( "Painting with %s.", currentMaterial.c_str() ) );
+		return;
+	}
+
+	if( !wholeBrush && idStr::Icmp( brush->GetSide( face.side )->GetMaterial(), currentMaterial ) == 0 )
+	{
+		return;
+	}
+	document.BeginChange( "Paint" );
+	for( int s = 0; s < brush->GetNumSides(); s++ )
+	{
+		if( wholeBrush || s == face.side )
+		{
+			brush->GetSide( s )->SetMaterial( currentMaterial );
+		}
+	}
+	document.EndChange();
+}
+
+/*
+-------------------------------------------------------------------------------
+	floating panels over the view share these flags
+-------------------------------------------------------------------------------
+*/
+
+static const ImGuiWindowFlags OVERLAY_FLAGS = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+		ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+
+static bool BeginOverlay( const char* id, const ImVec2& pos, const ImVec2& pivot, float rounding )
+{
+	ImGui::SetNextWindowPos( pos, ImGuiCond_Always, pivot );
+	ImGui::SetNextWindowBgAlpha( 0.94f );
+	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 4.0f * UI::Scale(), 6.0f * UI::Scale() ) );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, rounding );
+	ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 8.0f * UI::Scale(), 8.0f * UI::Scale() ) );
+	const bool open = ImGui::Begin( id, NULL, OVERLAY_FLAGS );
+	ImGui::PopStyleVar( 2 );		// item spacing stays until EndOverlay
+	return open;
+}
+
+static void EndOverlay()
+{
+	ImGui::End();
+	ImGui::PopStyleVar();
+}
+
+/*
+-------------------------------------------------------------------------------
+	view bar: top left of the view
+-------------------------------------------------------------------------------
+*/
+
+static void DrawViewBar( const ImGuiDockNode* central )
+{
+	const float pad = 10.0f * UI::Scale();
+	if( BeginOverlay( "##view_bar", ImVec2( central->Pos.x + pad, central->Pos.y + pad ), ImVec2( 0, 0 ), 10.0f * UI::Scale() ) )
+	{
+		if( UI::IconButton( "3d", ICON_VIEW_3D, "3D view (T switches)", !planView ) && planView )
+		{
+			TogglePlanView();
+		}
 		ImGui::SameLine();
-	}
-}
-
-// the strip of tool buttons across the top of the 3D view
-static void DrawViewportToolbar()
-{
-	ImGuiDockNode* central = ( dockspaceId != 0 ) ? ImGui::DockBuilderGetCentralNode( dockspaceId ) : NULL;
-	if( central == NULL )
-	{
-		return;
-	}
-
-	ImGui::SetNextWindowPos( ImVec2( central->Pos.x + 8.0f, central->Pos.y + 8.0f ) );
-	ImGui::SetNextWindowBgAlpha( 0.75f );
-	toolbarMaxWidth = Max( 200.0f, central->Size.x - 16.0f - ImGui::GetStyle().WindowPadding.x * 2.0f );
-	ImGui::SetNextWindowSizeConstraints( ImVec2( 0, 0 ), ImVec2( central->Size.x - 16.0f, central->Size.y - 16.0f ) );
-	const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
-								   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-	if( ImGui::Begin( "##viewport_toolbar", NULL, flags ) )
-	{
-		// tools, in the order people reach for them
-		static const gizmoMode_t order[] = { GIZMO_BRUSH, GIZMO_MOVE, GIZMO_ROTATE, GIZMO_RESIZE, GIZMO_CLIP, GIZMO_VERTEX };
-		const char* modes[GIZMO_COUNT] = { "Move (W)", "Rotate (E)", "Resize (R)", "Clip (C)", "Corners (V)", "Brush (B)" };
-		const char* tips[GIZMO_COUNT] =
+		if( UI::IconButton( "top", ICON_TOP_VIEW, "Top view: lay out rooms from above (T switches)", planView ) && !planView )
 		{
-			"Drag the arrows to move the selection",
-			"Drag the rings to turn the selection; snaps to 15 degrees. The Turn buttons (, and .) turn by 90",
-			"Drag the dots on the box edges to resize",
-			"Cut the selected brushes: click two or three points on surfaces, then press Enter",
-			"Drag the corners of the selected brushes: click a dot (Ctrl+click for more), then drag the arrows",
-			"Draw new brushes: drag a footprint on the floor, release, move the mouse to set the height, click to finish"
-		};
-		for( int k = 0; k < GIZMO_COUNT; k++ )
-		{
-			const int i = order[k];
-			if( k > 0 )
-			{
-				ImGui::SameLine();
-			}
-			const bool active = ( gizmoMode == i );
-			if( active )
-			{
-				ImGui::PushStyleColor( ImGuiCol_Button, ImGui::GetStyleColorVec4( ImGuiCol_ButtonActive ) );
-			}
-			if( ImGui::Button( modes[i] ) )
-			{
-				gizmoMode = ( gizmoMode_t )i;
-			}
-			if( active )
-			{
-				ImGui::PopStyleColor();
-			}
-			if( ImGui::IsItemHovered() )
-			{
-				ImGui::SetTooltip( "%s", tips[i] );
-			}
+			TogglePlanView();
 		}
+		UI::VerticalDivider();
 
-		Flow( "", 64.0f );
-		ImGui::SetNextItemWidth( 64.0f );
 		static const int gridSizes[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
-		if( ImGui::BeginCombo( "##grid", va( "Grid %d", editor_gridSize.GetInteger() ) ) )
+		ImGui::SetNextItemWidth( 84.0f * UI::Scale() );
+		if( ImGui::BeginCombo( "##grid", va( ICON_GRID "  %d", editor_gridSize.GetInteger() ), ImGuiComboFlags_HeightLarge ) )
 		{
 			for( int i = 0; i < 9; i++ )
 			{
@@ -3740,184 +4028,808 @@ static void DrawViewportToolbar()
 			}
 			ImGui::EndCombo();
 		}
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( "Grid size. [ and ] make it smaller and bigger." );
-		}
-
-		Flow( "Snap", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
+		UI::Tip( "Grid size. [ and ] make it smaller and bigger." );
+		ImGui::SameLine();
 		bool snap = editor_snap.GetBool();
-		if( ImGui::Checkbox( "Snap", &snap ) )
+		if( UI::IconToggle( "snap", ICON_SNAP, NULL, &snap, "Snap to the grid" ) )
 		{
 			editor_snap.SetBool( snap );
 		}
-		Flow( "Texture lock", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
-		ImGui::Checkbox( "Texture lock", &document.textureLock );
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( "Keep textures in place on surfaces when you move, turn or resize brushes" );
-		}
-		Flow( "Wireframe", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
-		ImGui::Checkbox( "Wireframe", &view.wireframe );
-		Flow( "Floor grid", ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x );
-		ImGui::Checkbox( "Floor grid", &view.showGrid );
+		ImGui::SameLine();
+		UI::IconToggle( "texlock", ICON_LOCK, ICON_UNLOCK, &document.textureLock, "Texture lock: textures stay put on surfaces when you move, turn or resize brushes" );
+		UI::VerticalDivider();
+		UI::IconToggle( "outlines", ICON_WIREFRAME, NULL, &view.wireframe, "Brush outlines" );
+		ImGui::SameLine();
+		UI::IconToggle( "floor", ICON_GRID, NULL, &view.showGrid, "Floor grid" );
+	}
+	EndOverlay();
+}
 
-		// second row: quick turns, the view, and things to add
-		ImGui::BeginDisabled( !document.CanTransformSelection() );
-		if( ImGui::Button( "Turn left" ) )
-		{
-			TurnSelection( 90.0f );
-		}
-		if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
-		{
-			ImGui::SetTooltip( "Turn the selection 90 degrees to the left (,)" );
-		}
-		Flow( "Turn right" );
-		if( ImGui::Button( "Turn right" ) )
-		{
-			TurnSelection( -90.0f );
-		}
-		if( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) )
-		{
-			ImGui::SetTooltip( "Turn the selection 90 degrees to the right (.)" );
-		}
-		ImGui::EndDisabled();
-		Flow( "Top view (T)" );
-		if( ImGui::Button( planView ? "3D view (T)" : "Top view (T)" ) )
-		{
-			planView = !planView;
-			if( planView )
-			{
-				CenterPlanOnCamera();
-			}
-		}
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( planView ? "Back to the 3D view" : "Look at the level from above, flat, to lay out rooms" );
-		}
-		Flow( "Add:" );
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled( "Add:" );
-		for( int i = 0; i < SHAPE_COUNT; i++ )
-		{
-			Flow( ShapeName( ( shapeType_t )i ) );
-			const bool active = ( drawShape == i && gizmoMode == GIZMO_BRUSH );
-			if( active )
-			{
-				ImGui::PushStyleColor( ImGuiCol_Button, ImGui::GetStyleColorVec4( ImGuiCol_ButtonActive ) );
-			}
-			if( ImGui::Button( ShapeName( ( shapeType_t )i ) ) )
-			{
-				// a click picks the shape to draw with the Brush tool
-				drawShape = i;
-				gizmoMode = GIZMO_BRUSH;
-			}
-			if( active )
-			{
-				ImGui::PopStyleColor();
-			}
-			if( ImGui::IsItemActive() && ImGui::IsMouseDragging( ImGuiMouseButton_Left, 6.0f ) )
-			{
-				draggingShape = i;
-			}
-			if( ImGui::IsItemHovered() && draggingShape < 0 )
-			{
-				ImGui::SetTooltip( "%s\nClick, then drag in the view to draw one any size.\nOr drag this button into the view to drop one at its usual size.", ShapeHelp( ( shapeType_t )i ) );
-			}
-		}
-		Flow( "Light" );
-		if( ImGui::Button( "Light" ) )
-		{
-			document.AddEntity( "light", PlacementPoint() + idVec3( 0, 0, 64 ) );
-		}
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( "Add a light where the view is pointing" );
-		}
-		Flow( "Player start" );
-		if( ImGui::Button( "Player start" ) )
-		{
-			document.AddEntity( "info_player_start", PlacementPoint() );
-		}
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( "Add a place for the player to start" );
-		}
-		Flow( va( "Material: %s", currentMaterial.c_str() ) );
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextDisabled( "Material: %s", currentMaterial.c_str() );
-		if( ImGui::IsItemHovered() )
-		{
-			ImGui::SetTooltip( "New brushes use this. Pick another in the Content Browser's Materials tab." );
-		}
+/*
+-------------------------------------------------------------------------------
+	tool dock: mode tabs over a row of big tool tiles, bottom centre of the view
+-------------------------------------------------------------------------------
+*/
 
-		ImGui::PushTextWrapPos( toolbarMaxWidth );
-		if( planView )
-		{
-			Hint( va( "Top view: drag things to move them. Wheel zooms, right or middle drag pans.%s", gizmoMode == GIZMO_BRUSH ? " Drag on empty space to draw." : "" ) );
-			if( gizmoMode == GIZMO_BRUSH )
-			{
-				ImGui::SameLine();
-				ImGui::SetNextItemWidth( 120.0f );
-				ImGui::DragFloat( "##height", &drawHeight, 1.0f, 1.0f, 4096.0f, "height %.0f" );
-				ImGui::SameLine();
-				ImGui::SetNextItemWidth( 120.0f );
-				ImGui::DragFloat( "##floor", &view.gridZ, 1.0f, -65536.0f, 65536.0f, "floor at %.0f" );
-			}
-		}
-		else if( gizmoMode == GIZMO_BRUSH )
-		{
-			Hint( "Brush: drag a footprint on the floor, release, move the mouse up or down for height, click to finish. Esc cancels." );
-		}
-		ImGui::PopTextWrapPos();
+static float dockTile = 62.0f;
 
-		// what the clip and corner tools need from you right now
-		if( gizmoMode == GIZMO_CLIP )
+static void TileDivider()
+{
+	ImGui::SameLine( 0.0f, 8.0f * UI::Scale() );
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::GetWindowDrawList()->AddLine( ImVec2( pos.x, pos.y + dockTile * 0.18f ), ImVec2( pos.x, pos.y + dockTile * 0.82f ), ImGui::GetColorU32( ImGuiCol_Separator ), 1.0f );
+	ImGui::Dummy( ImVec2( 1.0f, dockTile ) );
+	ImGui::SameLine( 0.0f, 8.0f * UI::Scale() );
+}
+
+// starts dragging a piece out of the dock when the tile just pressed is pulled
+static void DragOut( int shape, const char* classname )
+{
+	if( ImGui::IsItemActive() && ImGui::IsMouseDragging( ImGuiMouseButton_Left, 6.0f ) )
+	{
+		draggingShape = shape;
+		draggingThing = classname != NULL ? classname : "";
+	}
+}
+
+static bool ToolTileFor( const toolInfo_t& tool )
+{
+	const bool active = ( gizmoMode == tool.mode ) && !( tool.mode == GIZMO_PAINT && paintPicking );
+	if( UI::ToolTile( tool.label, tool.icon, tool.label, active, va( "%s (%s)\n%s", tool.label, tool.key, tool.tip ), true, dockTile ) )
+	{
+		SetTool( tool.mode );
+		return true;
+	}
+	return false;
+}
+
+// things that go in the level as entities: what the Kits and Logic tabs offer
+static const char* ThingIcon( const idDeclEntityDef* def )
+{
+	const char* name = def->GetName();
+	if( idStr::FindText( name, "light" ) >= 0 )
+	{
+		return ICON_LIGHT;
+	}
+	if( idStr::FindText( name, "player" ) >= 0 )
+	{
+		return ICON_PLAYER;
+	}
+	if( idStr::FindText( name, "door" ) >= 0 )
+	{
+		return ICON_DOOR;
+	}
+	if( def->dict.GetBool( "editor_brushes" ) )
+	{
+		return ICON_BRUSH;
+	}
+	return ICON_ENTITY;
+}
+
+static const char* ThingLabel( const idDeclEntityDef* def )
+{
+	const char* label = def->dict.GetString( "editor_label" );
+	if( label[0] != '\0' )
+	{
+		return label;
+	}
+	if( idStr::Icmp( def->GetName(), "info_player_start" ) == 0 )
+	{
+		return "Player start";
+	}
+	if( idStr::Icmp( def->GetName(), "light" ) == 0 )
+	{
+		return "Light";
+	}
+	return def->GetName();
+}
+
+static void PlaceThing( const char* classname )
+{
+	if( document.IsOpen() )
+	{
+		const idVec3 lift = idStr::Icmp( classname, "light" ) == 0 ? idVec3( 0, 0, 64 ) : vec3_origin;
+		document.AddEntity( classname, PlacementPoint() + lift );
+	}
+}
+
+struct lightPreset_t
+{
+	const char* 	label;
+	const char* 	tip;
+	float			radius;
+	idVec3			color;
+};
+
+static const lightPreset_t lightPresets[] =
+{
+	{ "Small",	"A small light: a lamp or a candle's glow",	160.0f,	idVec3( 1.0f, 1.0f, 1.0f ) },
+	{ "Room",	"Lights a normal room",						320.0f,	idVec3( 1.0f, 1.0f, 1.0f ) },
+	{ "Big",	"Lights a hall or a yard",					640.0f,	idVec3( 1.0f, 1.0f, 1.0f ) },
+	{ "Warm",	"A room light with a warm, yellow tint",	320.0f,	idVec3( 1.0f, 0.84f, 0.62f ) },
+	{ "Cool",	"A room light with a cool, blue tint",		320.0f,	idVec3( 0.70f, 0.82f, 1.0f ) },
+};
+
+static void PlaceLight( const lightPreset_t& preset, const idVec3& point )
+{
+	if( !document.IsOpen() )
+	{
+		return;
+	}
+	idDict keys;
+	keys.Set( "light_radius", idVec3( preset.radius, preset.radius, preset.radius ).ToString( 0 ) );
+	keys.Set( "_color", preset.color.ToString( 2 ) );
+	document.AddEntity( "light", point + idVec3( 0, 0, 64 ), &keys );
+}
+
+static void DrawBuildTiles()
+{
+	for( int i = 0; i < NUM_TOOLS; i++ )
+	{
+		if( toolInfo[i].mode == GIZMO_PAINT )
 		{
-			idList<Selection> brushes;
-			document.SelectedBrushes( brushes );
-			if( brushes.Num() == 0 )
+			continue;
+		}
+		if( i > 0 )
+		{
+			ImGui::SameLine();
+		}
+		ToolTileFor( toolInfo[i] );
+	}
+	TileDivider();
+	static const char* shapeIcons[SHAPE_COUNT] = { ICON_SHAPE_BOX, ICON_SHAPE_ROOM, ICON_SHAPE_RAMP, ICON_SHAPE_CYLINDER, ICON_SHAPE_CONE, ICON_SHAPE_STAIRS, ICON_SHAPE_ARCH };
+	for( int i = 0; i < SHAPE_COUNT; i++ )
+	{
+		if( i > 0 )
+		{
+			ImGui::SameLine();
+		}
+		const bool active = ( drawShape == i && gizmoMode == GIZMO_BRUSH );
+		const char* name = ShapeName( ( shapeType_t )i );
+		if( UI::ToolTile( name, shapeIcons[i], name, active, draggingShape < 0 ? va( "%s\n\nClick, then drag in the view to draw one any size. Or drag this into the view to drop one.", ShapeHelp( ( shapeType_t )i ) ) : NULL, document.IsOpen(), dockTile ) )
+		{
+			drawShape = i;
+			SetTool( GIZMO_BRUSH );
+		}
+		DragOut( i, NULL );
+	}
+}
+
+static void DrawPaintTiles()
+{
+	ToolTileFor( ToolInfo( GIZMO_PAINT ) );
+	ImGui::SameLine();
+	if( UI::ToolTile( "pick", ICON_PICK, "Pick", paintPicking, "Pick up a material: click a surface to paint with what's on it (I)", true, dockTile ) )
+	{
+		SetTool( GIZMO_PAINT );
+		paintPicking = true;
+	}
+	ImGui::SameLine();
+	const idStr shortName = ShortMaterialName( currentMaterial );
+	if( UI::ToolTile( "material", ICON_MATERIAL, shortName.c_str(), false, va( "Painting with %s\nClick to choose another", currentMaterial.c_str() ), true, dockTile ) )
+	{
+		ImGui::OpenPopup( "##material_picker" );
+	}
+	if( ImGui::BeginPopup( "##material_picker" ) )
+	{
+		UI::SearchField( "##pickfilter", materialFilter, sizeof( materialFilter ), "Find a material", 320.0f * UI::Scale() );
+		ImGui::BeginChild( "##picklist", ImVec2( 320.0f * UI::Scale(), 300.0f * UI::Scale() ) );
+		const int count = declManager->GetNumDecls( DECL_MATERIAL );
+		for( int i = 0; i < count; i++ )
+		{
+			const idDecl* decl = declManager->DeclByIndex( DECL_MATERIAL, i, false );
+			if( decl == NULL || decl->GetName()[0] == '_' || ( materialFilter[0] != '\0' && idStr::FindText( decl->GetName(), materialFilter, false ) < 0 ) )
 			{
-				ImGui::TextColored( ImVec4( 1.0f, 0.75f, 0.3f, 1.0f ), "Select the brushes to cut first (Esc, then click one), then come back to Clip." );
+				continue;
 			}
-			else
+			if( ImGui::Selectable( decl->GetName(), currentMaterial.Icmp( decl->GetName() ) == 0 ) )
 			{
-				ImGui::Text( "Clip: %d of 2-3 points placed.", clipPoints.Num() );
-				ImGui::SameLine();
-				static const char* keepNames[] = { "Keep both", "Keep yellow", "Keep blue" };
-				ImGui::SetNextItemWidth( 110.0f );
-				ImGui::Combo( "##keep", &clipKeep, keepNames, 3 );
-				if( ImGui::IsItemHovered() )
-				{
-					ImGui::SetTooltip( "Which side of the cut stays (Tab cycles)" );
-				}
-				ImGui::SameLine();
-				ImGui::BeginDisabled( clipPoints.Num() < 2 );
-				if( ImGui::Button( "Cut (Enter)" ) )
-				{
-					ApplyClip();
-				}
-				ImGui::EndDisabled();
-				ImGui::SameLine();
-				if( ImGui::Button( "Start over (Esc)" ) )
-				{
-					clipPoints.Clear();
-				}
+				currentMaterial = decl->GetName();
+				ImGui::CloseCurrentPopup();
 			}
 		}
-		else if( gizmoMode == GIZMO_VERTEX )
+		ImGui::EndChild();
+		ImGui::EndPopup();
+	}
+	TileDivider();
+	if( UI::ToolTile( "apply", ICON_PAINT, "Apply", false, "Put the current material on everything selected (whole brushes, or just the selected faces)", !document.selection.IsEmpty(), dockTile ) )
+	{
+		document.SetMaterial( currentMaterial );
+	}
+	ImGui::SameLine();
+	if( UI::ToolTile( "fit", ICON_FIT, "Fit", false, "Stretch the texture to cover each selected face once (Shift+click faces to select them)", document.selection.IsFaces(), dockTile ) )
+	{
+		FitSelectedFaces();
+	}
+	ImGui::SameLine();
+	if( UI::ToolTile( "texlock", document.textureLock ? ICON_LOCK : ICON_UNLOCK, "Tex lock", document.textureLock, "Texture lock: textures stay put on surfaces when you move, turn or resize brushes", true, dockTile ) )
+	{
+		document.textureLock = !document.textureLock;
+	}
+}
+
+static void DrawLogicTiles()
+{
+	// level brushes can be turned into things that move or act
+	idList<Selection> brushes;
+	document.SelectedBrushes( brushes );
+	bool allLevel = brushes.Num() > 0;
+	for( int i = 0; i < document.selection.Num(); i++ )
+	{
+		allLevel &= ( document.selection[i].entity == 0 );
+	}
+
+	int shown = 0;
+	const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
+	for( int i = 0; i < count; i++ )
+	{
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
+		if( def == NULL || !def->dict.GetBool( "editor_brushes" ) )
 		{
-			if( cornerSelection.Num() == 0 )
+			continue;
+		}
+		if( shown++ > 0 )
+		{
+			ImGui::SameLine();
+		}
+		const char* label = ThingLabel( def );
+		if( UI::ToolTile( def->GetName(), ThingIcon( def ), label, false,
+						  va( "Turn the selected brushes into a %s.\n%s%s", label, def->dict.GetString( "editor_usage" ), allLevel ? "" : "\n\nSelect some of the level's brushes first." ), allLevel, dockTile ) )
+		{
+			if( document.GroupSelection( def->GetName() ) >= 0 )
 			{
-				ImGui::TextDisabled( "Corners: click a dot to pick it, Ctrl+click for more, then drag the arrows." );
-			}
-			else
-			{
-				ImGui::Text( "Corners: %d picked. Drag the arrows; the brush reshapes around them.", cornerSelection.Num() );
+				Status( va( "Made a %s.", label ) );
 			}
 		}
 	}
-	ImGui::End();
+
+	const bool brushEntity = document.selection.Num() == 1 && document.selection.Primary().entity > 0 && !document.selection.Primary().IsPrimitive() &&
+							 document.SelectedEntity() != NULL && document.SelectedEntity()->GetNumPrimitives() > 0;
+	ImGui::SameLine();
+	if( UI::ToolTile( "ungroup", ICON_UNGROUP, "Undo it", false, "Turn the selected door (or other brush thing) back into plain level brushes", brushEntity, dockTile ) )
+	{
+		document.UngroupSelection();
+	}
+
+	TileDivider();
+	if( UI::ToolTile( "start", ICON_PLAYER, "Start", false, "Add the place where the player starts. Click to add it in the middle of the view, or drag it in.", document.IsOpen(), dockTile ) )
+	{
+		PlaceThing( "info_player_start" );
+	}
+	DragOut( -1, "info_player_start" );
+	ImGui::SameLine();
+	UI::ToolTile( "rules", ICON_CARDS, "Rules", false, "Rule cards: \"When the player walks in, Do open the door\". Coming in Phase 3.", false, dockTile );
+}
+
+static void DrawLightTiles()
+{
+	for( int i = 0; i < ( int )( sizeof( lightPresets ) / sizeof( lightPresets[0] ) ); i++ )
+	{
+		if( i > 0 )
+		{
+			ImGui::SameLine();
+		}
+		const lightPreset_t& preset = lightPresets[i];
+		if( UI::ToolTile( preset.label, ICON_LIGHT, preset.label, false, va( "%s.\nClick to add one in the middle of the view, or drag it in. Change its colour and reach in the Inspector.", preset.tip ), document.IsOpen(), dockTile ) )
+		{
+			PlaceLight( preset, PlacementPoint() );
+		}
+		DragOut( -1, va( "light:%d", i ) );
+	}
+}
+
+static void DrawKitTiles()
+{
+	int shown = 0;
+	const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
+	for( int i = 0; i < count; i++ )
+	{
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
+		if( def == NULL || def->dict.GetString( "editor_usage" )[0] == '\0' || def->dict.GetBool( "editor_brushes" ) ||
+				idStr::Icmp( def->GetName(), "worldspawn" ) == 0 || idStr::Icmp( def->GetName(), "player" ) == 0 )
+		{
+			continue;
+		}
+		if( shown++ > 0 )
+		{
+			ImGui::SameLine();
+		}
+		if( UI::ToolTile( def->GetName(), ThingIcon( def ), ThingLabel( def ), false, va( "%s\n\nClick to add one in the middle of the view, or drag it in.", def->dict.GetString( "editor_usage" ) ), document.IsOpen(), dockTile ) )
+		{
+			PlaceThing( def->GetName() );
+		}
+		DragOut( -1, def->GetName() );
+	}
+	TileDivider();
+	UI::ToolTile( "mine", ICON_MODE_KITS, "My pieces", false, "Save your own builds, behaviour included, as pieces to reuse. Coming in Phase 2.", false, dockTile );
+}
+
+static ImVec2 dockTopCenter( 0, 0 );
+
+static int CountDefs( bool brushThings )
+{
+	int n = 0;
+	const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
+	for( int i = 0; i < count; i++ )
+	{
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
+		if( def == NULL )
+		{
+			continue;
+		}
+		if( brushThings )
+		{
+			n += def->dict.GetBool( "editor_brushes" ) ? 1 : 0;
+		}
+		else if( def->dict.GetString( "editor_usage" )[0] != '\0' && !def->dict.GetBool( "editor_brushes" ) &&
+				 idStr::Icmp( def->GetName(), "worldspawn" ) != 0 && idStr::Icmp( def->GetName(), "player" ) != 0 )
+		{
+			n++;
+		}
+	}
+	return n;
+}
+
+// how wide a row of tiles is
+static float TileRowWidth( int tiles, int dividers )
+{
+	const float spacing = ImGui::GetStyle().ItemSpacing.x;
+	return tiles * dockTile + Max( 0, tiles - 1 ) * spacing + dividers * ( 17.0f * UI::Scale() - spacing );
+}
+
+static float ModeRowWidth( editMode_t mode )
+{
+	switch( mode )
+	{
+		case MODE_BUILD:
+			return TileRowWidth( 6 + SHAPE_COUNT, 1 );
+		case MODE_PAINT:
+			return TileRowWidth( 6, 1 );
+		case MODE_LOGIC:
+			return TileRowWidth( CountDefs( true ) + 3, 1 );
+		case MODE_LIGHT:
+			return TileRowWidth( 5, 0 );
+		default:
+			return TileRowWidth( CountDefs( false ) + 1, 1 );
+	}
+}
+
+static void DrawToolDock( const ImGuiDockNode* central )
+{
+	// tiles shrink to fit narrow views; Build has the most: 13, a divider, the spacing and the padding
+	const float s = UI::Scale();
+	const float avail = central->Size.x - 24.0f * s;
+	dockTile = idMath::ClampFloat( 36.0f * s, UI::TileSize(), ( avail - 12.0f * 4.0f * s - 17.0f * s - 16.0f * s ) / 13.0f );
+
+	const ImVec2 pos( central->Pos.x + central->Size.x * 0.5f, central->Pos.y + central->Size.y - 12.0f * UI::Scale() );
+	// the dock keeps the width of its widest tab, so the tabs don't jump about
+	float widest = 0.0f;
+	for( int i = 0; i < MODE_COUNT; i++ )
+	{
+		widest = Max( widest, ModeRowWidth( ( editMode_t )i ) );
+	}
+	ImGui::SetNextWindowSizeConstraints( ImVec2( widest + 16.0f * UI::Scale(), 0.0f ), ImVec2( FLT_MAX, FLT_MAX ) );
+	if( BeginOverlay( "##tool_dock", pos, ImVec2( 0.5f, 1.0f ), 14.0f * UI::Scale() ) )
+	{
+		// mode tabs, centred over the tiles
+		float tabsWidth = 0.0f;
+		for( int i = 0; i < MODE_COUNT; i++ )
+		{
+			tabsWidth += ImGui::CalcTextSize( va( "%s  %s", modeInfo[i].icon, modeInfo[i].label ) ).x + 28.0f * UI::Scale() + ( i > 0 ? ImGui::GetStyle().ItemSpacing.x : 0.0f );
+		}
+		const float windowWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
+		if( windowWidth > tabsWidth )
+		{
+			ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( windowWidth - tabsWidth ) * 0.5f );
+		}
+		for( int i = 0; i < MODE_COUNT; i++ )
+		{
+			if( i > 0 )
+			{
+				ImGui::SameLine();
+			}
+			if( UI::ModeTab( modeInfo[i].icon, modeInfo[i].label, editMode == i, modeInfo[i].tip ) )
+			{
+				SetMode( ( editMode_t )i );
+			}
+		}
+
+		// the row of tiles, centred
+		const float rowWidth = ModeRowWidth( editMode );
+		if( windowWidth > rowWidth )
+		{
+			ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( windowWidth - rowWidth ) * 0.5f );
+		}
+		switch( editMode )
+		{
+			case MODE_BUILD:
+				DrawBuildTiles();
+				break;
+			case MODE_PAINT:
+				DrawPaintTiles();
+				break;
+			case MODE_LOGIC:
+				DrawLogicTiles();
+				break;
+			case MODE_LIGHT:
+				DrawLightTiles();
+				break;
+			default:
+				DrawKitTiles();
+				break;
+		}
+		dockTopCenter = ImVec2( ImGui::GetWindowPos().x + ImGui::GetWindowSize().x * 0.5f, ImGui::GetWindowPos().y );
+	}
+	EndOverlay();
+}
+
+/*
+-------------------------------------------------------------------------------
+	context bar: what the tool needs from you, and quick actions on the selection
+-------------------------------------------------------------------------------
+*/
+
+static void DrawSelectionActions()
+{
+	const bool canTransform = document.CanTransformSelection();
+	if( !canTransform )
+	{
+		return;
+	}
+	ImGui::AlignTextToFramePadding();
+	const int count = document.selection.Num();
+	ImGui::TextDisabled( count == 1 ? "1 selected" : "%d selected", count );
+	ImGui::SameLine();
+	if( UI::IconButton( "turnl", ICON_TURN_LEFT, "Turn 90 degrees left (,)" ) )
+	{
+		TurnSelection( 90.0f );
+	}
+	ImGui::SameLine();
+	if( UI::IconButton( "turnr", ICON_TURN_RIGHT, "Turn 90 degrees right (.)" ) )
+	{
+		TurnSelection( -90.0f );
+	}
+	idList<Selection> brushes;
+	document.SelectedBrushes( brushes );
+	ImGui::SameLine();
+	if( UI::IconButton( "carve", ICON_CARVE, "Carve: cut the selected brushes out of everything they overlap, then remove them. For doorways and windows.", false, brushes.Num() > 0 ) )
+	{
+		const int pieces = document.SubtractSelection();
+		Status( pieces > 0 ? va( "Carved out; %d pieces left around it.", pieces ) : "Nothing to carve: the selection doesn't overlap any other brush." );
+	}
+	ImGui::SameLine();
+	if( UI::IconButton( "dup", ICON_DUPLICATE, "Duplicate (Ctrl+D)" ) )
+	{
+		document.DuplicateSelection( idVec3( GridSize() * 4.0f, GridSize() * 4.0f, 0.0f ) );
+	}
+	ImGui::SameLine();
+	if( UI::IconButton( "focus", ICON_FOCUS, "Frame the selection (F)" ) )
+	{
+		FocusSelection();
+	}
+	ImGui::SameLine();
+	if( UI::IconButton( "delete", ICON_DELETE, "Delete (Del)" ) )
+	{
+		document.DeleteSelection();
+	}
+}
+
+static void DrawContextBar()
+{
+	if( dockTopCenter.y <= 0.0f || !document.IsOpen() )
+	{
+		return;
+	}
+
+	// what to say, and which controls, for the tool in hand
+	idStr hint;
+	bool clipOptions = false;
+	bool drawOptions = false;
+	if( gizmoMode == GIZMO_BRUSH )
+	{
+		hint = planView ? "Drag on empty space to draw. Drag things to move them." : "Drag a footprint on the floor, let go, move the mouse for height, click. Esc cancels.";
+		drawOptions = planView;
+	}
+	else if( gizmoMode == GIZMO_CLIP )
+	{
+		idList<Selection> brushes;
+		document.SelectedBrushes( brushes );
+		if( brushes.Num() == 0 )
+		{
+			hint = "Select the brushes to cut first: Esc, then click one.";
+		}
+		else
+		{
+			hint = va( "%d of 2-3 points placed. Click on the brushes to place points.", clipPoints.Num() );
+			clipOptions = true;
+		}
+	}
+	else if( gizmoMode == GIZMO_VERTEX )
+	{
+		hint = cornerSelection.Num() == 0 ? "Click a corner dot to pick it, Ctrl+click for more, then drag the arrows." : va( "%d corners picked. Drag the arrows; the brush reshapes around them.", cornerSelection.Num() );
+	}
+	else if( gizmoMode == GIZMO_PAINT )
+	{
+		hint = paintPicking ? "Click a surface to pick up its material." : va( "Click surfaces to paint them with %s. Ctrl+click paints the whole brush; I picks a material up.", ShortMaterialName( currentMaterial ).c_str() );
+	}
+	else if( planView )
+	{
+		hint = "Top view: drag things to move them. Wheel zooms, right or middle drag pans.";
+	}
+	const bool actions = document.CanTransformSelection() && ( gizmoMode == GIZMO_MOVE || gizmoMode == GIZMO_ROTATE || gizmoMode == GIZMO_RESIZE );
+	if( hint.IsEmpty() && !actions )
+	{
+		return;
+	}
+
+	if( BeginOverlay( "##context_bar", ImVec2( dockTopCenter.x, dockTopCenter.y - 8.0f * UI::Scale() ), ImVec2( 0.5f, 1.0f ), 20.0f * UI::Scale() ) )
+	{
+		bool first = true;
+		if( !hint.IsEmpty() )
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextColored( UI::Accent(), "%s", ToolInfo( gizmoMode ).icon );
+			ImGui::SameLine();
+			ImGui::TextUnformatted( hint.c_str() );
+			first = false;
+		}
+		if( clipOptions )
+		{
+			ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
+			static const char* keepNames[] = { "Keep both", "Keep yellow", "Keep blue" };
+			ImGui::SetNextItemWidth( 120.0f * UI::Scale() );
+			ImGui::Combo( "##keep", &clipKeep, keepNames, 3 );
+			UI::Tip( "Which side of the cut stays (Tab cycles)" );
+			ImGui::SameLine();
+			ImGui::BeginDisabled( clipPoints.Num() < 2 );
+			if( UI::ColorButton( ICON_CLIP "  Cut", UI::Accent() ) )
+			{
+				ApplyClip();
+			}
+			ImGui::EndDisabled();
+			UI::Tip( "Cut (Enter)" );
+			ImGui::SameLine();
+			if( UI::IconButton( "restart", ICON_UNDO, "Start over (Esc)" ) )
+			{
+				clipPoints.Clear();
+			}
+		}
+		if( drawOptions )
+		{
+			ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
+			ImGui::SetNextItemWidth( 120.0f * UI::Scale() );
+			ImGui::DragFloat( "##height", &drawHeight, 1.0f, 1.0f, 4096.0f, "height %.0f" );
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth( 120.0f * UI::Scale() );
+			ImGui::DragFloat( "##floor", &view.gridZ, 1.0f, -65536.0f, 65536.0f, "floor at %.0f" );
+		}
+		if( actions )
+		{
+			if( !first )
+			{
+				UI::VerticalDivider();
+			}
+			DrawSelectionActions();
+		}
+	}
+	EndOverlay();
+}
+
+/*
+-------------------------------------------------------------------------------
+	tool wheel: hold Space for a ring of tools around the cursor
+-------------------------------------------------------------------------------
+*/
+
+struct wheelItem_t
+{
+	const char* 	icon;
+	const char* 	label;
+	int				tool;		// gizmoMode_t, or -1 for the top view switch
+};
+
+static const wheelItem_t wheelItems[] =
+{
+	{ ICON_MOVE,		"Move",		GIZMO_MOVE },
+	{ ICON_ROTATE,		"Turn",		GIZMO_ROTATE },
+	{ ICON_RESIZE,		"Resize",	GIZMO_RESIZE },
+	{ ICON_DRAW,		"Draw",		GIZMO_BRUSH },
+	{ ICON_PAINT,		"Paint",	GIZMO_PAINT },
+	{ ICON_CORNERS,		"Corners",	GIZMO_VERTEX },
+	{ ICON_CLIP,		"Cut",		GIZMO_CLIP },
+	{ ICON_TOP_VIEW,	"Top view",	-1 },
+};
+static const int NUM_WHEEL_ITEMS = sizeof( wheelItems ) / sizeof( wheelItems[0] );
+
+static bool		wheelOpen = false;
+static ImVec2	wheelCenter;
+
+// returns true while the wheel has the mouse
+static bool HandleToolWheel( bool hovered )
+{
+	ImGuiIO& io = ImGui::GetIO();
+	const bool spaceDown = ImGui::IsKeyDown( ImGuiKey_Space ) && !io.WantTextInput;
+	if( !wheelOpen )
+	{
+		if( spaceDown && hovered && !ImGui::IsMouseDown( ImGuiMouseButton_Right ) && !ImGui::IsMouseDown( ImGuiMouseButton_Left ) && drawStage == DRAW_NONE )
+		{
+			wheelOpen = true;
+			wheelCenter = io.MousePos;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	const float s = UI::Scale();
+	const float outer = 118.0f * s;
+	const float inner = 38.0f * s;
+	const ImVec2 d( io.MousePos.x - wheelCenter.x, io.MousePos.y - wheelCenter.y );
+	const float dist = sqrtf( d.x * d.x + d.y * d.y );
+	int hot = -1;
+	const float step = idMath::TWO_PI / NUM_WHEEL_ITEMS;
+	if( dist > inner * 0.8f )
+	{
+		// item 0 is straight up; going clockwise
+		float angle = atan2f( d.x, -d.y );
+		if( angle < 0.0f )
+		{
+			angle += idMath::TWO_PI;
+		}
+		hot = ( int )( ( angle + step * 0.5f ) / step ) % NUM_WHEEL_ITEMS;
+	}
+
+	ImDrawList* draw = ImGui::GetForegroundDrawList();
+	draw->AddCircleFilled( wheelCenter, outer + 6.0f * s, IM_COL32( 20, 21, 24, 225 ), 64 );
+	draw->AddCircle( wheelCenter, outer + 6.0f * s, ImGui::GetColorU32( ImGuiCol_Border ), 64, 1.0f );
+	for( int i = 0; i < NUM_WHEEL_ITEMS; i++ )
+	{
+		const wheelItem_t& item = wheelItems[i];
+		const float a = i * step;
+		const ImVec2 dir( sinf( a ), -cosf( a ) );
+		const float r = ( outer + inner ) * 0.5f;
+		const ImVec2 c( wheelCenter.x + dir.x * r, wheelCenter.y + dir.y * r );
+		const bool current = ( item.tool >= 0 && gizmoMode == item.tool ) || ( item.tool < 0 && planView );
+		if( i == hot )
+		{
+			// the slice under the mouse
+			// ImGui measures angles from +X; ours start straight up
+			const float a0 = a - idMath::HALF_PI - step * 0.5f + 0.03f;
+			const float a1 = a - idMath::HALF_PI + step * 0.5f - 0.03f;
+			draw->PathArcTo( wheelCenter, ( outer + inner ) * 0.5f, a0, a1, 24 );
+			draw->PathStroke( UI::AccentU32( 0.85f ), 0, outer - inner );
+		}
+		ImFont* iconFont = UI::Font( UI::FONT_ICON );
+		const ImVec2 iconSize = iconFont->CalcTextSizeA( iconFont->FontSize, FLT_MAX, 0.0f, item.icon );
+		const ImU32 color = ( i == hot ) ? IM_COL32( 20, 20, 22, 255 ) : current ? UI::AccentU32() : IM_COL32( 230, 231, 234, 255 );
+		draw->AddText( iconFont, iconFont->FontSize, ImVec2( c.x - iconSize.x * 0.5f, c.y - iconSize.y * 0.5f - 7.0f * s ), color, item.icon );
+		ImFont* small = UI::Font( UI::FONT_SMALL );
+		const ImVec2 labelSize = small->CalcTextSizeA( small->FontSize, FLT_MAX, 0.0f, item.label );
+		draw->AddText( small, small->FontSize, ImVec2( c.x - labelSize.x * 0.5f, c.y + iconSize.y * 0.5f - 4.0f * s ), color, item.label );
+	}
+	draw->AddCircleFilled( wheelCenter, inner - 4.0f * s, IM_COL32( 32, 33, 37, 255 ), 32 );
+	ImFont* small = UI::Font( UI::FONT_SMALL );
+	const char* centerText = hot >= 0 ? wheelItems[hot].label : "Space";
+	const ImVec2 centerSize = small->CalcTextSizeA( small->FontSize, FLT_MAX, 0.0f, centerText );
+	draw->AddText( small, small->FontSize, ImVec2( wheelCenter.x - centerSize.x * 0.5f, wheelCenter.y - centerSize.y * 0.5f ), IM_COL32( 200, 201, 205, 255 ), centerText );
+
+	if( !spaceDown || ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+	{
+		if( hot >= 0 )
+		{
+			if( wheelItems[hot].tool < 0 )
+			{
+				TogglePlanView();
+			}
+			else
+			{
+				SetTool( ( gizmoMode_t )wheelItems[hot].tool );
+			}
+		}
+		wheelOpen = false;
+	}
+	return true;
+}
+
+// a shape or thing let go of after dragging it out of the dock
+static void HandleShapeDrag()
+{
+	if( draggingShape < 0 && draggingThing.IsEmpty() )
+	{
+		return;
+	}
+	ImGuiIO& io = ImGui::GetIO();
+	idStr label;
+	if( draggingShape >= 0 )
+	{
+		label = ShapeName( ( shapeType_t )draggingShape );
+	}
+	else if( draggingThing.Cmpn( "light:", 6 ) == 0 )
+	{
+		label = "Light";
+	}
+	else
+	{
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, draggingThing, false ) );
+		label = def != NULL ? ThingLabel( def ) : draggingThing.c_str();
+	}
+	ImDrawList* fg = ImGui::GetForegroundDrawList();
+	const ImVec2 textSize = ImGui::CalcTextSize( label.c_str() );
+	const ImVec2 at( io.MousePos.x + 16.0f, io.MousePos.y + 12.0f );
+	fg->AddRectFilled( ImVec2( at.x - 8.0f, at.y - 4.0f ), ImVec2( at.x + textSize.x + 8.0f, at.y + textSize.y + 4.0f ), UI::AccentU32( 0.92f ), 6.0f );
+	fg->AddText( at, IM_COL32( 20, 20, 22, 255 ), label.c_str() );
+
+	if( ImGui::IsMouseDown( ImGuiMouseButton_Left ) )
+	{
+		return;
+	}
+
+	// dropped: over the view (not over a panel) places it there
+	const bool overPanel = ImGui::IsWindowHovered( ImGuiHoveredFlags_AnyWindow | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem );
+	if( !overPanel )
+	{
+		idVec3 point;
+		bool havePoint = false;
+		if( planView )
+		{
+			ImVec2 mins, maxs;
+			if( PlanViewRect( mins, maxs ) )
+			{
+				const idVec2 p = ScreenToPlan( io.MousePos, mins, maxs );
+				point = SnapToGrid( idVec3( p.x, p.y, view.gridZ ) );
+				havePoint = true;
+				if( draggingShape >= 0 )
+				{
+					const idVec3 size = ShapeDefaultSize( ( shapeType_t )draggingShape );
+					const idVec3 corner = SnapToGrid( idVec3( p.x - size.x * 0.5f, p.y - size.y * 0.5f, view.gridZ ) );
+					MakeAndAddShape( ( shapeType_t )draggingShape, idBounds( corner, corner + size ) );
+				}
+			}
+		}
+		else
+		{
+			if( draggingShape >= 0 )
+			{
+				PlaceShapeAt( ( shapeType_t )draggingShape, io.MousePos.x, io.MousePos.y );
+			}
+			point = PlacementPointAt( io.MousePos.x, io.MousePos.y );
+			havePoint = true;
+		}
+
+		if( havePoint && draggingShape < 0 && document.IsOpen() )
+		{
+			if( draggingThing.Cmpn( "light:", 6 ) == 0 )
+			{
+				const int preset = idMath::ClampInt( 0, ( int )( sizeof( lightPresets ) / sizeof( lightPresets[0] ) ) - 1, atoi( draggingThing.c_str() + 6 ) );
+				PlaceLight( lightPresets[preset], point );
+			}
+			else
+			{
+				document.AddEntity( draggingThing, point );
+			}
+		}
+	}
+	draggingShape = -1;
+	draggingThing.Clear();
+}
+
+/*
+-------------------------------------------------------------------------------
+	everything over the view
+-------------------------------------------------------------------------------
+*/
+
+static void DrawViewOverlay()
+{
+	ImGuiDockNode* central = ( dockspaceId != 0 ) ? ImGui::DockBuilderGetCentralNode( dockspaceId ) : NULL;
+	if( central == NULL || !document.IsOpen() )
+	{
+		return;
+	}
+	DrawViewBar( central );
+	DrawToolDock( central );
+	DrawContextBar();
 }
 
 static void HandleShortcuts()
@@ -3996,15 +4908,20 @@ static void HandleShortcuts()
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_B, false ) )
 	{
-		gizmoMode = GIZMO_BRUSH;
+		SetTool( GIZMO_BRUSH );
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_P, false ) )
+	{
+		SetTool( GIZMO_PAINT );
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_I, false ) )
+	{
+		SetTool( GIZMO_PAINT );
+		paintPicking = true;
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_T, false ) )
 	{
-		planView = !planView;
-		if( planView )
-		{
-			CenterPlanOnCamera();
-		}
+		TogglePlanView();
 	}
 	else if( ImGui::IsKeyPressed( ImGuiKey_Comma, false ) )
 	{
@@ -4016,25 +4933,23 @@ static void HandleShortcuts()
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_C, false ) )
 	{
-		gizmoMode = GIZMO_CLIP;
-		clipPoints.Clear();
+		SetTool( GIZMO_CLIP );
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_V, false ) )
 	{
-		gizmoMode = GIZMO_VERTEX;
-		cornerSelection.Clear();
+		SetTool( GIZMO_VERTEX );
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_W, false ) )
 	{
-		gizmoMode = GIZMO_MOVE;
+		SetTool( GIZMO_MOVE );
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_E, false ) )
 	{
-		gizmoMode = GIZMO_ROTATE;
+		SetTool( GIZMO_ROTATE );
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_R, false ) )
 	{
-		gizmoMode = GIZMO_RESIZE;
+		SetTool( GIZMO_RESIZE );
 	}
 	else if( ImGui::IsKeyPressed( ImGuiKey_LeftBracket, false ) )
 	{
@@ -4045,6 +4960,17 @@ static void HandleShortcuts()
 	{
 		editor_gridSize.SetInteger( Min( 256, editor_gridSize.GetInteger() * 2 ) );
 		Status( va( "Grid %d", editor_gridSize.GetInteger() ) );
+	}
+	else if( !io.KeyCtrl )
+	{
+		// 1-5 switch the dock's tabs
+		for( int i = 0; i < MODE_COUNT; i++ )
+		{
+			if( ImGui::IsKeyPressed( ( ImGuiKey )( ImGuiKey_1 + i ), false ) )
+			{
+				SetMode( ( editMode_t )i );
+			}
+		}
 	}
 }
 
@@ -4071,22 +4997,28 @@ static void HandleViewport()
 	const bool hovered = !io.WantCaptureMouse;
 	view.gridSize = GridSize();
 
+	const bool dragging = draggingShape >= 0 || !draggingThing.IsEmpty();
+	const bool wheel = HandleToolWheel( hovered && !dragging );
+
 	if( planView )
 	{
 		EndGizmoDrag();
 		EndCornerDrag( true );
-		DrawPlanView( hovered && draggingShape < 0 );
-		DrawViewportToolbar();
+		DrawPlanView( hovered && !dragging && !wheel );
+		DrawViewOverlay();
 		HandleShapeDrag();
-		HandleShortcuts();
+		if( !wheel )
+		{
+			HandleShortcuts();
+		}
 		return;
 	}
 
-	if( hovered && io.KeyAlt && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+	if( hovered && !wheel && io.KeyAlt && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
 	{
 		view.orbitPivot = OrbitPivot();
 	}
-	const bool navigating = view.UpdateCamera( hovered && draggingShape < 0 );
+	const bool navigating = view.UpdateCamera( hovered && !dragging && !wheel );
 
 	if( gizmoMode == GIZMO_CLIP )
 	{
@@ -4104,16 +5036,35 @@ static void HandleViewport()
 		EndCornerDrag( true );
 		DrawBrushToolPreview();
 	}
+	else if( gizmoMode == GIZMO_PAINT )
+	{
+		EndGizmoDrag();
+		EndCornerDrag( true );
+	}
 	else
 	{
 		EndCornerDrag( true );
 		DrawGizmo();
 	}
-	DrawViewportToolbar();
+	DrawViewOverlay();
 	HandleShapeDrag();
 
-	if( navigating || io.KeyAlt || draggingShape >= 0 )
+	if( wheel )
 	{
+		return;
+	}
+	if( navigating || io.KeyAlt || dragging )
+	{
+		HandleShortcuts();
+		return;
+	}
+
+	if( gizmoMode == GIZMO_PAINT )
+	{
+		if( hovered && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+		{
+			PaintClick( io.MousePos.x, io.MousePos.y, io.KeyCtrl );
+		}
 		HandleShortcuts();
 		return;
 	}
@@ -4208,18 +5159,29 @@ void DrawMainMenuBar()
 
 	const bool playing = IsPlaying();
 
-	if( !ImGui::BeginMainMenuBar() )
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 8.0f * UI::Scale() ) );
+	const bool barOpen = ImGui::BeginMainMenuBar();
+	ImGui::PopStyleVar();
+	if( !barOpen )
 	{
 		return;
 	}
 
+	// wordmark
+	ImGui::PushFont( UI::Font( UI::FONT_BOLD ) );
+	ImGui::TextColored( UI::Accent(), "Grizz" );
+	ImGui::SameLine( 0.0f, 0.0f );
+	ImGui::TextUnformatted( "Tech4" );
+	ImGui::PopFont();
+	ImGui::SameLine( 0.0f, 16.0f * UI::Scale() );
+
 	if( ImGui::BeginMenu( "File", !playing ) )
 	{
-		if( ImGui::MenuItem( "New Map..." ) )
+		if( ImGui::MenuItem( ICON_NEW "  New Map..." ) )
 		{
 			openNewMapPopup = true;
 		}
-		if( ImGui::BeginMenu( "Open Map" ) )
+		if( ImGui::BeginMenu( ICON_OPEN "  Open Map" ) )
 		{
 			if( mapListDirty )
 			{
@@ -4234,7 +5196,7 @@ void DrawMainMenuBar()
 			}
 			ImGui::EndMenu();
 		}
-		if( ImGui::MenuItem( "Save", "Ctrl+S", false, document.IsOpen() ) )
+		if( ImGui::MenuItem( ICON_SAVE "  Save", "Ctrl+S", false, document.IsOpen() ) )
 		{
 			if( document.Save() )
 			{
@@ -4242,16 +5204,16 @@ void DrawMainMenuBar()
 			}
 			mapListDirty = true;
 		}
-		if( ImGui::MenuItem( "Save As...", NULL, false, document.IsOpen() ) )
+		if( ImGui::MenuItem( "      Save As...", NULL, false, document.IsOpen() ) )
 		{
 			openSaveAsPopup = true;
 		}
 		ImGui::Separator();
-		if( ImGui::MenuItem( "New Project..." ) )
+		if( ImGui::MenuItem( ICON_PROJECT "  New Project..." ) )
 		{
 			openNewProjectPopup = true;
 		}
-		if( ImGui::MenuItem( "Open Project..." ) )
+		if( ImGui::MenuItem( ICON_OPEN "  Open Project..." ) )
 		{
 			openProjectPopup = true;
 		}
@@ -4269,83 +5231,70 @@ void DrawMainMenuBar()
 
 	if( ImGui::BeginMenu( "Edit", !playing ) )
 	{
-		if( ImGui::MenuItem( va( "Undo %s", document.UndoLabel() ), "Ctrl+Z", false, document.CanUndo() ) )
+		if( ImGui::MenuItem( va( ICON_UNDO "  Undo %s", document.UndoLabel() ), "Ctrl+Z", false, document.CanUndo() ) )
 		{
 			document.Undo();
 		}
-		if( ImGui::MenuItem( va( "Redo %s", document.RedoLabel() ), "Ctrl+Y", false, document.CanRedo() ) )
+		if( ImGui::MenuItem( va( ICON_REDO "  Redo %s", document.RedoLabel() ), "Ctrl+Y", false, document.CanRedo() ) )
 		{
 			document.Redo();
 		}
 		ImGui::Separator();
 		const bool canEdit = document.CanTransformSelection();
-		if( ImGui::MenuItem( "Duplicate", "Ctrl+D", false, canEdit ) )
+		if( ImGui::MenuItem( ICON_DUPLICATE "  Duplicate", "Ctrl+D", false, canEdit ) )
 		{
 			document.DuplicateSelection( idVec3( GridSize() * 4.0f, GridSize() * 4.0f, 0.0f ) );
 		}
-		if( ImGui::MenuItem( "Delete", "Del", false, canEdit ) )
+		if( ImGui::MenuItem( ICON_DELETE "  Delete", "Del", false, canEdit ) )
 		{
 			document.DeleteSelection();
 		}
-		if( ImGui::MenuItem( "Frame selection", "F", false, document.SelectionIsValid() ) )
+		if( ImGui::MenuItem( ICON_FOCUS "  Frame selection", "F", false, document.SelectionIsValid() ) )
 		{
 			FocusSelection();
 		}
-		if( ImGui::MenuItem( "Select none", "Esc", false, !document.selection.IsEmpty() ) )
+		if( ImGui::MenuItem( "      Select none", "Esc", false, !document.selection.IsEmpty() ) )
 		{
 			document.selection.Clear();
 		}
 		ImGui::Separator();
-		if( ImGui::MenuItem( "Move tool", "W", gizmoMode == GIZMO_MOVE ) )
+		for( int t = 0; t < NUM_TOOLS; t++ )
 		{
-			gizmoMode = GIZMO_MOVE;
+			if( ImGui::MenuItem( va( "%s  %s", toolInfo[t].icon, toolInfo[t].label ), toolInfo[t].key, gizmoMode == toolInfo[t].mode ) )
+			{
+				SetTool( toolInfo[t].mode );
+			}
 		}
-		if( ImGui::MenuItem( "Rotate tool", "E", gizmoMode == GIZMO_ROTATE ) )
+		if( ImGui::BeginMenu( "      Tool wheel" ) )
 		{
-			gizmoMode = GIZMO_ROTATE;
+			Hint( "Hold Space over the view for a ring of tools around the mouse; let go over one to pick it." );
+			ImGui::EndMenu();
 		}
-		if( ImGui::MenuItem( "Resize tool", "R", gizmoMode == GIZMO_RESIZE ) )
-		{
-			gizmoMode = GIZMO_RESIZE;
-		}
-		if( ImGui::MenuItem( "Brush tool", "B", gizmoMode == GIZMO_BRUSH ) )
-		{
-			gizmoMode = GIZMO_BRUSH;
-		}
-		if( ImGui::MenuItem( "Turn left 90", ",", false, document.CanTransformSelection() ) )
+		ImGui::Separator();
+		if( ImGui::MenuItem( ICON_TURN_LEFT "  Turn left 90", ",", false, document.CanTransformSelection() ) )
 		{
 			TurnSelection( 90.0f );
 		}
-		if( ImGui::MenuItem( "Turn right 90", ".", false, document.CanTransformSelection() ) )
+		if( ImGui::MenuItem( ICON_TURN_RIGHT "  Turn right 90", ".", false, document.CanTransformSelection() ) )
 		{
 			TurnSelection( -90.0f );
-		}
-		if( ImGui::MenuItem( "Clip tool", "C", gizmoMode == GIZMO_CLIP ) )
-		{
-			gizmoMode = GIZMO_CLIP;
-			clipPoints.Clear();
-		}
-		if( ImGui::MenuItem( "Corner tool", "V", gizmoMode == GIZMO_VERTEX ) )
-		{
-			gizmoMode = GIZMO_VERTEX;
-			cornerSelection.Clear();
 		}
 		{
 			idList<Selection> brushes;
 			document.SelectedBrushes( brushes );
-			if( ImGui::MenuItem( "Carve selected brushes", NULL, false, brushes.Num() > 0 ) )
+			if( ImGui::MenuItem( ICON_CARVE "  Carve selected brushes", NULL, false, brushes.Num() > 0 ) )
 			{
 				document.SubtractSelection();
 			}
 		}
-		ImGui::MenuItem( "Texture lock", NULL, &document.textureLock );
+		ImGui::MenuItem( ICON_LOCK "  Texture lock", NULL, &document.textureLock );
 		ImGui::Separator();
 		bool snap = editor_snap.GetBool();
-		if( ImGui::MenuItem( "Snap to grid", NULL, &snap ) )
+		if( ImGui::MenuItem( ICON_SNAP "  Snap to grid", NULL, &snap ) )
 		{
 			editor_snap.SetBool( snap );
 		}
-		if( ImGui::BeginMenu( "Grid size" ) )
+		if( ImGui::BeginMenu( ICON_GRID "  Grid size" ) )
 		{
 			const int sizes[] = { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
 			for( int i = 0; i < 9; i++ )
@@ -4367,18 +5316,14 @@ void DrawMainMenuBar()
 		ImGui::MenuItem( WINDOW_CONTENT_BROWSER, NULL, &showContentBrowser );
 		ImGui::MenuItem( WINDOW_PROBLEMS, NULL, &showProblems );
 		ImGui::Separator();
-		ImGui::MenuItem( "Brush outlines", NULL, &view.wireframe );
-		ImGui::MenuItem( "Floor grid", NULL, &view.showGrid );
-		if( ImGui::MenuItem( "Top view", "T", planView ) )
+		ImGui::MenuItem( ICON_WIREFRAME "  Brush outlines", NULL, &view.wireframe );
+		ImGui::MenuItem( ICON_GRID "  Floor grid", NULL, &view.showGrid );
+		if( ImGui::MenuItem( ICON_TOP_VIEW "  Top view", "T", planView ) )
 		{
-			planView = !planView;
-			if( planView )
-			{
-				CenterPlanOnCamera();
-			}
+			TogglePlanView();
 		}
 		ImGui::Separator();
-		if( ImGui::MenuItem( "Reset layout" ) )
+		if( ImGui::MenuItem( "      Reset layout" ) )
 		{
 			showOutliner = showInspector = showContentBrowser = showProblems = true;
 			requestLayoutReset = true;
@@ -4388,11 +5333,11 @@ void DrawMainMenuBar()
 
 	if( ImGui::BeginMenu( "Help" ) )
 	{
-		if( ImGui::MenuItem( "Getting started" ) )
+		if( ImGui::MenuItem( ICON_LESSONS "  Getting started" ) )
 		{
 			showWelcome = true;
 		}
-		if( ImGui::MenuItem( "About GrizzTech4 and controls" ) )
+		if( ImGui::MenuItem( ICON_KEYBOARD "  About GrizzTech4 and controls" ) )
 		{
 			showAbout = true;
 		}
@@ -4400,40 +5345,71 @@ void DrawMainMenuBar()
 	}
 
 	// Play / Stop sits in the middle of the bar, like other editors
-	const float buttonWidth = 90.0f;
+	const float buttonWidth = 104.0f * UI::Scale();
 	ImGui::SetCursorPosX( ( ImGui::GetWindowWidth() - buttonWidth ) * 0.5f );
+	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 20.0f * UI::Scale() );
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 4.0f * UI::Scale() ) );
+	const float barHeight = ImGui::GetWindowHeight();
+	ImGui::SetCursorPosY( ( barHeight - ( ImGui::GetFontSize() + 8.0f * UI::Scale() ) ) * 0.5f );
 	if( playing )
 	{
-		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.65f, 0.2f, 0.2f, 1.0f ) );
-		if( ImGui::Button( "Stop (Esc)", ImVec2( buttonWidth, 0 ) ) )
+		if( UI::ColorButton( ICON_STOP "  Stop", UI::Bad(), ImVec2( buttonWidth, 0 ) ) )
 		{
 			Stop();
 		}
-		ImGui::PopStyleColor();
+		UI::Tip( "Back to the editor (Esc or F10)" );
 	}
 	else
 	{
-		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.5f, 0.25f, 1.0f ) );
 		ImGui::BeginDisabled( !document.IsOpen() );
-		if( ImGui::Button( "Play", ImVec2( buttonWidth, 0 ) ) )
+		if( UI::ColorButton( ICON_PLAY "  Play", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
 		{
 			PlayDocument();
 		}
 		ImGui::EndDisabled();
-		ImGui::PopStyleColor();
+		UI::Tip( "Save and play the level. Esc brings you back." );
 	}
+	ImGui::PopStyleVar( 2 );
 
-	// right side: status, open map and project
+	// right side: status, the level and the project
 	const char* game = cvarSystem->GetCVarString( "fs_game" );
-	idStr right = document.IsOpen() ? va( "%s%s", document.Name(), document.IsDirty() ? " *" : "" ) : "No level open";
-	right += ( game != NULL && game[0] != '\0' ) ? va( "   |   Project: %s", game ) : "   |   Engine content";
-	if( statusMessage.Length() > 0 && Sys_Milliseconds() - statusTime < 4000 )
+	const idStr level = document.IsOpen() ? va( ICON_MAP_FILE "  %s%s", document.Name(), document.IsDirty() ? "  \xe2\x80\xa2" : "" ) : "No level open";
+	const idStr project = ( game != NULL && game[0] != '\0' ) ? va( ICON_PROJECT "  %s", game ) : ICON_PROJECT "  Engine content";
+	const bool showStatus = statusMessage.Length() > 0 && Sys_Milliseconds() - statusTime < 4000;
+	const float gap = 24.0f * UI::Scale();
+	float rightWidth = ImGui::CalcTextSize( level.c_str() ).x + gap + ImGui::CalcTextSize( project.c_str() ).x + 16.0f * UI::Scale();
+	if( showStatus )
 	{
-		right = statusMessage + "   |   " + right;
+		rightWidth += ImGui::CalcTextSize( statusMessage.c_str() ).x + gap;
 	}
-	const float rightWidth = ImGui::CalcTextSize( right.c_str() ).x + 16.0f;
+	if( !playing )
+	{
+		rightWidth += ImGui::GetFrameHeight() * 2.0f + gap;
+	}
 	ImGui::SetCursorPosX( ImGui::GetWindowWidth() - rightWidth );
-	ImGui::TextDisabled( "%s", right.c_str() );
+	if( showStatus )
+	{
+		ImGui::TextColored( UI::Accent(), "%s", statusMessage.c_str() );
+		ImGui::SameLine( 0.0f, gap );
+	}
+	if( !playing )
+	{
+		if( UI::IconButton( "undo", ICON_UNDO, va( "Undo %s (Ctrl+Z)", document.UndoLabel() ), false, document.CanUndo() ) )
+		{
+			document.Undo();
+		}
+		ImGui::SameLine( 0.0f, 0.0f );
+		if( UI::IconButton( "redo", ICON_REDO, va( "Redo %s (Ctrl+Y)", document.RedoLabel() ), false, document.CanRedo() ) )
+		{
+			document.Redo();
+		}
+		ImGui::SameLine( 0.0f, gap );
+	}
+	ImGui::TextUnformatted( level.c_str() );
+	UI::Tip( document.IsDirty() ? "The open level (the dot means it has unsaved changes; Ctrl+S saves)" : "The open level" );
+	ImGui::SameLine( 0.0f, gap );
+	ImGui::TextDisabled( "%s", project.c_str() );
+	UI::Tip( "The project. File > Open Project switches." );
 
 	ImGui::EndMainMenuBar();
 }

@@ -739,3 +739,22 @@ The person who associated a work with this deed has dedicated the work to the pu
 You can copy, modify, distribute and perform the work, even for commercial purposes, all without asking permission.
 
 
+
+
+Editor UI fonts
+---------------------------------------------------------------------------
+content/editor/fonts/Inter-Regular.ttf
+content/editor/fonts/Inter-SemiBold.ttf
+
+Inter, copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter).
+Licensed under the SIL Open Font License, Version 1.1: see content/editor/fonts/LICENSE-Inter.txt.
+The files here are subsets made by scripts/content/make_editor_fonts.py.
+
+
+Editor UI icons
+---------------------------------------------------------------------------
+content/editor/fonts/lucide.ttf
+neo/tools/imgui/editor/EditorIcons.h (codepoints)
+
+Lucide icons (https://lucide.dev), ISC License: see content/editor/fonts/LICENSE-Lucide.txt.
+The font here is a subset made by scripts/content/make_editor_fonts.py.

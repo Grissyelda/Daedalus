@@ -872,7 +872,7 @@ void Document::CancelChange()
 	pendingText.Clear();
 }
 
-int Document::AddEntity( const char* classname, const idVec3& origin )
+int Document::AddEntity( const char* classname, const idVec3& origin, const idDict* keys )
 {
 	if( map == NULL )
 	{
@@ -884,6 +884,13 @@ int Document::AddEntity( const char* classname, const idVec3& origin )
 	ent->epairs.Set( "classname", classname );
 	ent->epairs.Set( "name", map->GetUniqueEntityName( classname ) );
 	ent->epairs.Set( "origin", origin.ToString( 2 ) );
+	if( keys != NULL )
+	{
+		for( int i = 0; i < keys->GetNumKeyVals(); i++ )
+		{
+			ent->epairs.Set( keys->GetKeyVal( i )->GetKey(), keys->GetKeyVal( i )->GetValue() );
+		}
+	}
 	const int index = map->AddEntity( ent );
 	selection.Set( Selection( index ) );
 	EndChange();

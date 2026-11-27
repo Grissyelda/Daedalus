@@ -207,7 +207,7 @@ public:
 	// common edits (each records its own undo step)
 	void				DeleteSelection();
 	void				DuplicateSelection( const idVec3& offset );
-	int					AddEntity( const char* classname, const idVec3& origin );
+	int					AddEntity( const char* classname, const idVec3& origin, const idDict* keys = NULL );	// keys: extra settings
 	int					AddBrushes( idList<idMapBrush*>& brushes, const char* label );	// into the level, selected
 	void				SetMaterial( const char* material );	// on selected faces, or every face of selected brushes
 

@@ -35,6 +35,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderCommon.h"
 #include "renderer/RenderBackend.h"
 #include "../tools/imgui/editor/EditorShell.h"
+#if defined( GRIZZ_EDITOR )
+	#include "../tools/imgui/editor/EditorTheme.h"
+#endif
 
 
 idCVar imgui_showDemoWindow( "imgui_showDemoWindow", "0", CVAR_GUI | CVAR_BOOL, "show big ImGui demo window" );
@@ -748,6 +751,11 @@ bool Init( int windowWidth, int windowHeight )
 	//StyleBioshock();
 	//StyleUE5EditorTheme( "themes/military1.json" );
 
+#if defined( GRIZZ_EDITOR )
+	// GrizzTech4: the editor's fonts, icons and look
+	GrizzEditor::UI::Init();
+#endif
+
 	g_IsInit = true;
 
 	return true;
@@ -760,26 +768,9 @@ void SetMousePos( float x, float y )
 
 void NotifyDisplaySizeChanged( int width, int height )
 {
-	if( g_DisplaySize.x != width || g_DisplaySize.y != height )
-	{
-		g_DisplaySize = ImVec2( ( float )width, ( float )height );
-
-		if( IsInitialized() )
-		{
-			Destroy();
-			Init( width, height );
-
-			// reuse the default ImGui font
-			const idMaterial* image = declManager->FindMaterial( "_imguiFont" );
-
-			ImGuiIO& io = ImGui::GetIO();
-
-			byte* pixels = NULL;
-			io.Fonts->GetTexDataAsRGBA32( &pixels, &width, &height );
-
-			io.Fonts->TexID = ( void* )image;
-		}
-	}
+	// GrizzTech4: just take the new size (NewFrame passes it on). Recreating the context here
+	// threw away the editor's layout state, fonts and any panels in their own windows.
+	g_DisplaySize = ImVec2( ( float )width, ( float )height );
 }
 
 // inject a sys event
