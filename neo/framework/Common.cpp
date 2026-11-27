@@ -1795,6 +1795,14 @@ bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 	{
 		if( event->evType == SE_KEY && event->evValue2 == 1 && ( event->evValue == K_ESCAPE || event->evValue == K_JOY9 ) )
 		{
+			// GrizzTech4: when playing from the editor, Escape goes back to it (as in other editors)
+			if( cvarSystem->GetCVarBool( "editor" ) && !game->CheckInCinematic() )
+			{
+				console->Close();
+				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorStop\n" );
+				return true;
+			}
+
 			if( game->CheckInCinematic() )
 			{
 				game->SkipCinematicScene();

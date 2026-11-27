@@ -318,7 +318,10 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 			break;
 		}
 		case WM_SYSCOMMAND:
-			if( wParam == SC_SCREENSAVE || wParam == SC_KEYMENU || wParam == SC_MAXIMIZE )
+			// GrizzTech4: the editor's window can be maximized again after it's been made smaller
+			// (the low four bits of wParam are used by Windows itself, so mask them off)
+			if( ( wParam & 0xFFF0 ) == SC_SCREENSAVE || ( wParam & 0xFFF0 ) == SC_KEYMENU ||
+					( ( wParam & 0xFFF0 ) == SC_MAXIMIZE && !cvarSystem->GetCVarBool( "editor" ) ) )
 			{
 				return 0;
 			}

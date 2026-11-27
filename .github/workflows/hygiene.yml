@@ -36,6 +36,9 @@ jobs:
             else
               python3 scripts/hygiene/check_hygiene.py --commit "$PUSH_AFTER"
             fi
+          elif ! git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$PUSH_BEFORE" "$PUSH_AFTER"; then
+            # History was rewritten (force push): check everything after the first commit.
+            python3 scripts/hygiene/check_hygiene.py --commits "$(git rev-list --max-parents=0 "$PUSH_AFTER" | tail -1)..$PUSH_AFTER"
           else
             python3 scripts/hygiene/check_hygiene.py --commits "$PUSH_BEFORE..$PUSH_AFTER"
           fi

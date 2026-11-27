@@ -261,7 +261,7 @@ static void Play( const char* mapName )
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "dmap %s\n", mapName ) );
 	}
 
-	common->Printf( "Editor: playing %s (F10 stops)\n", mapName );
+	common->Printf( "Editor: playing %s (Esc or F10 stops)\n", mapName );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", mapName ) );
 }
 
@@ -2440,7 +2440,7 @@ static void DrawWelcome()
 		ImGui::Text( "4. Dress them" );
 		Hint( "Pick a material in the Content Browser's Materials tab: selected brushes take it, and new ones use it. Shift+click a single face to texture just that face. Add lights and a player start from the toolbar." );
 		ImGui::Text( "5. Play" );
-		Hint( "Press Play at the top. F10 brings you back." );
+		Hint( "Press Play at the top. Esc (or F10) brings you back." );
 		ImGui::Spacing();
 		bool again = editor_showWelcome.GetBool();
 		if( ImGui::Checkbox( "Show this when the editor opens", &again ) )
@@ -4405,7 +4405,7 @@ void DrawMainMenuBar()
 	if( playing )
 	{
 		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.65f, 0.2f, 0.2f, 1.0f ) );
-		if( ImGui::Button( "Stop (F10)", ImVec2( buttonWidth, 0 ) ) )
+		if( ImGui::Button( "Stop (Esc)", ImVec2( buttonWidth, 0 ) ) )
 		{
 			Stop();
 		}
