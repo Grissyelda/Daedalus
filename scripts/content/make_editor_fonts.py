@@ -38,7 +38,7 @@ ICONS = {
     "LIGHT": "lightbulb", "SUN": "sun", "PLAYER": "user", "DOOR": "door-open", "ENTITY": "circle-dot", "BRUSH": "cuboid",
     "PATCH": "land-plot", "CARDS": "puzzle", "SPARKLES": "sparkles",
     # app
-    "PLAY": "play", "STOP": "square", "UNDO": "undo-2", "REDO": "redo-2", "SAVE": "save", "OPEN": "folder-open",
+    "PLAY": "play", "STOP": "square", "PAUSE": "pause", "UNDO": "undo-2", "REDO": "redo-2", "SAVE": "save", "OPEN": "folder-open",
     "NEW": "file-plus", "SETTINGS": "settings", "PROJECT": "folder",
     # view
     "GRID": "grid-3x3", "SNAP": "magnet", "LOCK": "lock", "UNLOCK": "lock-open", "WIREFRAME": "box-select",

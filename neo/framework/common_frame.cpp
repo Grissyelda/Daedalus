@@ -362,9 +362,9 @@ void idCommonLocal::Draw()
 	}
 #endif
 	// RB end
-	else if( GrizzEditor::IsEditing() && !mapSpawned )
+	else if( GrizzEditor::IsEditing() && ( !mapSpawned || GrizzEditor::IsPlayPaused() ) )
 	{
-		// GrizzTech4: no game running, so show the level being edited (instead of the menu shell)
+		// GrizzTech4: no game running (or Play paused for editing), so show the level being edited
 		renderSystem->SetColor4( 0, 0, 0, 1 );
 		renderSystem->DrawStretchPic( 0, 0, renderSystem->GetVirtualWidth(), renderSystem->GetVirtualHeight(), 0, 0, 1, 1, whiteMaterial );
 		GrizzEditor::DrawWorld();
@@ -622,7 +622,8 @@ void idCommonLocal::Frame()
 		const bool pauseGame = ( !mapSpawned
 								 || ( !IsMultiplayer()
 									  && ( Dialog().IsDialogPausing() || session->IsSystemUIShowing()
-										   || ( game && game->Shell_IsActive() ) || com_pause.GetInteger() ) ) );
+										   || ( game && game->Shell_IsActive() ) || com_pause.GetInteger() ) )
+								 || GrizzEditor::IsPlayPaused() );	// GrizzTech4: Play paused for live editing
 #endif
 		// RB end
 

@@ -277,7 +277,7 @@ static void Play( const char* mapName )
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "dmap %s\n", mapName ) );
 	}
 
-	common->Printf( "Editor: playing %s (Esc or F10 stops)\n", mapName );
+	common->Printf( "Editor: playing %s (Esc pauses to edit, F10 stops)\n", mapName );
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", mapName ) );
 }
 
@@ -326,6 +326,320 @@ static void Stop()
 	{
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "disconnect\n" );
 	}
+}
+
+/*
+===============================================================================
+
+	Live edits
+
+	Esc during Play pauses the game and brings the editor back; the game stays
+	loaded underneath. Edits made then go straight into the running game:
+	lights change in place, other things are respawned with their new settings,
+	things added or removed appear or go. Brush geometry is compiled into the
+	level, so changes to it wait for a rebuild (see the Build section).
+
+	The game side of a level is the map as it was when Play started (the editor
+	saves it first); after every change the document is compared with that.
+
+===============================================================================
+*/
+
+static bool			playPaused = false;
+idCVar editor_debugLive( "editor_debugLive", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT, "print what live edits do to the running game" );
+
+static void LiveLog( const char* what, const char* name )
+{
+	if( editor_debugLive.GetBool() )
+	{
+		common->Printf( "Live: %s %s\n", what, name );
+	}
+}
+
+struct liveEntity_t
+{
+	idStr			name;
+	idDict			args;
+	unsigned int	geometryHash;		// 0 = no brushes or patches
+};
+static idList<liveEntity_t>	liveBase;
+static idStr		liveWorldKeys;
+static int			liveRevision = -1;
+static bool			liveGeometryChanged = false;		// brushes changed since Play started: a rebuild is needed
+static bool			liveSessionActive = false;
+
+static unsigned int GeometryHash( const idMapEntity* ent )
+{
+	unsigned int hash = 0;
+	for( int p = 0; p < ent->GetNumPrimitives(); p++ )
+	{
+		const idMapPrimitive* prim = ent->GetPrimitive( p );
+		hash = hash * 31 + 7;
+		if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+		{
+			const idMapBrush* brush = static_cast<const idMapBrush*>( prim );
+			for( int i = 0; i < brush->GetNumSides(); i++ )
+			{
+				const idMapBrushSide* side = brush->GetSide( i );
+				const idPlane& plane = side->GetPlane();
+				for( int k = 0; k < 4; k++ )
+				{
+					hash = hash * 31 + ( unsigned int )idMath::Ftoi( plane[k] * 64.0f );
+				}
+				idVec3 texMat[2];
+				const_cast<idMapBrushSide*>( side )->GetTextureMatrix( texMat[0], texMat[1] );
+				for( int k = 0; k < 2; k++ )
+				{
+					for( int j = 0; j < 3; j++ )
+					{
+						hash = hash * 31 + ( unsigned int )idMath::Ftoi( texMat[k][j] * 4096.0f );
+					}
+				}
+				hash = hash * 31 + ( unsigned int )idStr::Hash( side->GetMaterial() );
+			}
+		}
+		else
+		{
+			const idMapPatch* patch = static_cast<const idMapPatch*>( prim );
+			for( int i = 0; i < patch->GetNumVertices(); i++ )
+			{
+				const idVec3& v = ( *patch )[i].xyz;
+				hash = hash * 31 + ( unsigned int )idMath::Ftoi( v.x * 16.0f + v.y * 32.0f + v.z * 64.0f );
+			}
+			hash = hash * 31 + ( unsigned int )idStr::Hash( patch->GetMaterial() );
+		}
+	}
+	return ent->GetNumPrimitives() > 0 ? ( hash | 1u ) : 0u;
+}
+
+static idStr DictText( const idDict& dict )
+{
+	idStr text;
+	for( int i = 0; i < dict.GetNumKeyVals(); i++ )
+	{
+		const idKeyValue* kv = dict.GetKeyVal( i );
+		text += kv->GetKey() + "\x1f" + kv->GetValue() + "\x1e";
+	}
+	return text;
+}
+
+// the game's copy of the level: the document as it was when Play started
+static void LiveCaptureBase()
+{
+	liveBase.Clear();
+	liveWorldKeys.Clear();
+	liveGeometryChanged = false;
+	const idMapFile* map = document.Map();
+	if( map == NULL )
+	{
+		return;
+	}
+	for( int i = 0; i < map->GetNumEntities(); i++ )
+	{
+		const idMapEntity* ent = map->GetEntity( i );
+		if( i == 0 )
+		{
+			liveWorldKeys = DictText( ent->epairs );
+		}
+		liveEntity_t& live = liveBase.Alloc();
+		live.name = i == 0 ? "worldspawn" : ent->epairs.GetString( "name" );
+		live.args = ent->epairs;
+		live.geometryHash = GeometryHash( ent );
+	}
+	liveRevision = document.Revision();
+}
+
+static int FindLive( const char* name )
+{
+	for( int i = 0; i < liveBase.Num(); i++ )
+	{
+		if( liveBase[i].name.Icmp( name ) == 0 )
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+// a game entity made again from the editor's settings
+static void LiveRespawn( const char* name, const idDict& args )
+{
+	idEntity* old = gameEdit->FindEntity( name );
+	if( old != NULL )
+	{
+		gameEdit->EntityDelete( old );
+	}
+	idEntity* spawned = NULL;
+	gameEdit->SpawnEntityDef( args, &spawned );
+	LiveLog( spawned != NULL ? "respawned" : "couldn't respawn", name );
+}
+
+static void LiveUpdateLight( const char* name, const idDict& oldArgs, const idDict& args )
+{
+	idEntity* ent = gameEdit->FindEntity( name );
+	if( ent == NULL )
+	{
+		LiveRespawn( name, args );
+		return;
+	}
+	// keys that went away are passed as empty, which removes them
+	idDict change = args;
+	for( int i = 0; i < oldArgs.GetNumKeyVals(); i++ )
+	{
+		if( args.FindKey( oldArgs.GetKeyVal( i )->GetKey() ) == NULL )
+		{
+			change.Set( oldArgs.GetKeyVal( i )->GetKey(), "" );
+		}
+	}
+	gameEdit->EntityChangeSpawnArgs( ent, &change );
+	gameEdit->EntityUpdateChangeableSpawnArgs( ent, NULL );
+	gameEdit->EntityUpdateVisuals( ent );
+	if( editor_debugLive.GetBool() )
+	{
+		idVec3 origin;
+		gameEdit->EntityGetOrigin( ent, origin );
+		common->Printf( "Live: updated light %s, now at %s\n", name, origin.ToString( 0 ) );
+	}
+}
+
+// called every frame while paused: pass on what changed since last time
+static void LiveSync()
+{
+	const idMapFile* map = document.Map();
+	if( map == NULL || document.Revision() == liveRevision || gameEdit == NULL || game == NULL || !game->IsInGame() )
+	{
+		return;
+	}
+	liveRevision = document.Revision();
+
+	idList<bool> seen;
+	seen.AssureSize( liveBase.Num(), false );
+
+	for( int i = 0; i < map->GetNumEntities(); i++ )
+	{
+		const idMapEntity* ent = map->GetEntity( i );
+		const idStr name = i == 0 ? idStr( "worldspawn" ) : idStr( ent->epairs.GetString( "name" ) );
+		const unsigned int geometry = GeometryHash( ent );
+		const int index = FindLive( name );
+
+		if( index < 0 )
+		{
+			// new: point things appear at once; brush things need the rebuild
+			liveEntity_t& live = liveBase.Alloc();
+			seen.Append( true );
+			live.name = name;
+			live.args = ent->epairs;
+			live.geometryHash = geometry;
+			if( geometry != 0 )
+			{
+				liveGeometryChanged = true;
+				LiveLog( "new brushes (rebuild needed):", name );
+			}
+			else
+			{
+				idEntity* spawned = NULL;
+				gameEdit->SpawnEntityDef( ent->epairs, &spawned );
+				LiveLog( "spawned", name );
+			}
+			continue;
+		}
+
+		seen[index] = true;
+		liveEntity_t& live = liveBase[index];
+		const bool argsChanged = DictText( live.args ) != DictText( ent->epairs );
+		if( geometry != live.geometryHash )
+		{
+			liveGeometryChanged = true;
+			LiveLog( "brushes changed (rebuild needed):", name );
+		}
+		else if( argsChanged )
+		{
+			if( i == 0 )
+			{
+				// level settings are read when the level loads
+				liveGeometryChanged = true;
+			}
+			else if( idStr::Icmp( ent->epairs.GetString( "classname" ), "light" ) == 0 && idStr::Icmp( live.args.GetString( "classname" ), "light" ) == 0 )
+			{
+				LiveUpdateLight( name, live.args, ent->epairs );
+			}
+			else
+			{
+				LiveRespawn( name, ent->epairs );
+			}
+		}
+		live.args = ent->epairs;
+		live.geometryHash = geometry;
+	}
+
+	// gone from the level: gone from the game
+	for( int i = liveBase.Num() - 1; i >= 0; i-- )
+	{
+		if( seen[i] )
+		{
+			continue;
+		}
+		if( liveBase[i].geometryHash != 0 )
+		{
+			liveGeometryChanged = true;
+		}
+		idEntity* ent = gameEdit->FindEntity( liveBase[i].name );
+		if( ent != NULL )
+		{
+			gameEdit->EntityDelete( ent );
+		}
+		LiveLog( "removed", liveBase[i].name );
+		liveBase.RemoveIndex( i );
+	}
+}
+
+static void PausePlay()
+{
+	if( !IsPlaying() || playPaused || game == NULL || !game->IsInGame() )
+	{
+		return;
+	}
+	playPaused = true;
+
+	// the editor camera takes over where the player was looking
+	if( gameEdit->PlayerIsValid() )
+	{
+		idVec3 eye;
+		idAngles angles;
+		gameEdit->PlayerGetEyePosition( eye );
+		gameEdit->PlayerGetViewAngles( angles );
+		view.camera.origin = eye;
+		view.camera.yaw = angles.yaw;
+		view.camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, angles.pitch );
+	}
+	Status( "Paused. Edit away: changes go into the game. Play resumes, Stop ends." );
+}
+
+static void ResumePlay()
+{
+	if( !playPaused )
+	{
+		return;
+	}
+	LiveSync();
+	playPaused = false;
+	view.ClearOutlines();
+
+	// the game wants the keyboard: take it back from any panel window
+	if( Sys_MainWindowHandle() != NULL )
+	{
+		Sys_ExtraWindowFocus( Sys_MainWindowHandle() );
+	}
+}
+
+static void EditorPause_f( const idCmdArgs& args )
+{
+	PausePlay();
+}
+
+static void EditorResume_f( const idCmdArgs& args )
+{
+	ResumePlay();
 }
 
 static void OpenMap( const char* mapName )
@@ -668,6 +982,8 @@ static void RegisterCommands()
 
 	cmdSystem->AddCommand( "editorPlay", EditorPlay_f, CMD_FL_SYSTEM, "plays the open level (or the given map) in the editor window" );
 	cmdSystem->AddCommand( "editorStop", EditorStop_f, CMD_FL_SYSTEM, "stops playing and returns to the editor" );
+	cmdSystem->AddCommand( "editorPause", EditorPause_f, CMD_FL_SYSTEM, "pauses Play and brings the editor back; edits go into the running game" );
+	cmdSystem->AddCommand( "editorResume", EditorResume_f, CMD_FL_SYSTEM, "carries on playing after editorPause" );
 	cmdSystem->AddCommand( "editorOpen", EditorOpen_f, CMD_FL_SYSTEM, "opens a map in the editor: editorOpen <map>" );
 	cmdSystem->AddCommand( "editorSave", EditorSave_f, CMD_FL_SYSTEM, "saves the open level: editorSave [new map name]" );
 	cmdSystem->AddCommand( "editorUndo", EditorUndo_f, CMD_FL_SYSTEM, "undoes the last edit" );
@@ -2645,7 +2961,7 @@ static void DrawWelcome()
 			{ ICON_MODE_BUILD,	"Build rooms",		"The dock at the bottom has the tools. In Build, pick Draw (B) and drag a footprint on the floor, let go, move the mouse for height, click. Or drag a shape from the dock into the view. T flips to a top-down plan." },
 			{ ICON_ROTATE,		"Shape them",		"Click to select. Move (W), Turn (E) and Resize (R) put handles on it; the bar above the dock turns by 90, carves doorways and more. Hold Space for a wheel of every tool." },
 			{ ICON_PAINT,		"Paint and light",	"The Paint tab (2) paints surfaces by clicking them. The Light tab (4) adds lights; the Logic tab (3) makes doors and the player start." },
-			{ ICON_PLAY,		"Play",				"Press Play at the top. Esc brings you back." },
+			{ ICON_PLAY,		"Play",				"Press Play at the top (F5), or use its arrow to start where the camera is. Esc pauses: edit anything, and the game changes with it. F5 carries on, F10 stops." },
 		};
 		for( int i = 0; i < ( int )( sizeof( steps ) / sizeof( steps[0] ) ); i++ )
 		{
@@ -2690,6 +3006,8 @@ static void DrawAbout()
 		ImGui::Separator();
 		ImGui::Text( "Moving around" );
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
+		ImGui::Text( "Playing" );
+		Hint( "F5 plays from the player start (or, with the arrow on Play, from where the camera is; Shift flips it once). Esc pauses and brings the editor back with the game still loaded: what you change goes into the game, and brush changes rebuild when you carry on. F5 carries on, F10 stops." );
 		ImGui::Text( "Panels" );
 		Hint( "Drag a panel's tab to move it: onto another panel to stack them, to a side to split, or out of the window onto another monitor. View > Reset layout puts everything back." );
 		ImGui::Text( "Editing" );
@@ -4583,7 +4901,8 @@ static void DrawContextBar()
 		hint = "Top view: drag things to move them. Wheel zooms, right or middle drag pans.";
 	}
 	const bool actions = document.CanTransformSelection() && ( gizmoMode == GIZMO_MOVE || gizmoMode == GIZMO_ROTATE || gizmoMode == GIZMO_RESIZE );
-	if( hint.IsEmpty() && !actions )
+	const bool pausedNote = IsPlayPaused() && liveGeometryChanged;
+	if( hint.IsEmpty() && !actions && !pausedNote )
 	{
 		return;
 	}
@@ -4591,6 +4910,16 @@ static void DrawContextBar()
 	if( BeginOverlay( "##context_bar", ImVec2( dockTopCenter.x, dockTopCenter.y - 8.0f * UI::Scale() ), ImVec2( 0.5f, 1.0f ), 20.0f * UI::Scale() ) )
 	{
 		bool first = true;
+		if( pausedNote )
+		{
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextColored( UI::Warn(), ICON_INFO "  Brush changes appear when you carry on (F5): the level rebuilds around you." );
+			first = false;
+			if( !hint.IsEmpty() )
+			{
+				UI::VerticalDivider();
+			}
+		}
 		if( !hint.IsEmpty() )
 		{
 			ImGui::AlignTextToFramePadding();
@@ -4901,10 +5230,7 @@ static void HandleShortcuts()
 	{
 		FocusSelection();
 	}
-	else if( ImGui::IsKeyPressed( ImGuiKey_F5, false ) && document.IsOpen() )
-	{
-		PlayDocument();
-	}
+
 	else if( ImGui::IsKeyPressed( ImGuiKey_Escape, false ) )
 	{
 		if( drawStage != DRAW_NONE )
@@ -5170,7 +5496,12 @@ bool IsEditorMode()
 
 bool IsEditing()
 {
-	return IsEditorMode() && !IsPlaying();
+	return IsEditorMode() && ( !IsPlaying() || playPaused );
+}
+
+bool IsPlayPaused()
+{
+	return IsEditorMode() && IsPlaying() && playPaused;
 }
 
 void DrawWorld()
@@ -5188,6 +5519,7 @@ void DrawMainMenuBar()
 	RegisterCommands();
 
 	const bool playing = IsPlaying();
+	const bool paused = playing && playPaused;
 
 	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 8.0f * UI::Scale() ) );
 	const bool barOpen = ImGui::BeginMainMenuBar();
@@ -5259,7 +5591,7 @@ void DrawMainMenuBar()
 		ImGui::EndMenu();
 	}
 
-	if( ImGui::BeginMenu( "Edit", !playing ) )
+	if( ImGui::BeginMenu( "Edit", !playing || paused ) )
 	{
 		if( ImGui::MenuItem( va( ICON_UNDO "  Undo %s", document.UndoLabel() ), "Ctrl+Z", false, document.CanUndo() ) )
 		{
@@ -5339,7 +5671,7 @@ void DrawMainMenuBar()
 		ImGui::EndMenu();
 	}
 
-	if( ImGui::BeginMenu( "View", !playing ) )
+	if( ImGui::BeginMenu( "View", !playing || paused ) )
 	{
 		ImGui::MenuItem( WINDOW_OUTLINER, NULL, &showOutliner );
 		ImGui::MenuItem( WINDOW_INSPECTOR, NULL, &showInspector );
@@ -5376,18 +5708,34 @@ void DrawMainMenuBar()
 
 	// Play / Stop sits in the middle of the bar, like other editors
 	const float buttonWidth = 104.0f * UI::Scale();
-	ImGui::SetCursorPosX( ( ImGui::GetWindowWidth() - buttonWidth - ( playing ? 0.0f : ImGui::GetFrameHeight() + 2.0f * UI::Scale() ) ) * 0.5f );
+	const float stopWidth = 80.0f * UI::Scale();
+	const float groupWidth = paused ? buttonWidth + stopWidth + 6.0f * UI::Scale() : playing ? buttonWidth : buttonWidth + ImGui::GetFrameHeight() + 2.0f * UI::Scale();
+	ImGui::SetCursorPosX( ( ImGui::GetWindowWidth() - groupWidth ) * 0.5f );
 	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 20.0f * UI::Scale() );
 	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 4.0f * UI::Scale() ) );
 	const float barHeight = ImGui::GetWindowHeight();
 	ImGui::SetCursorPosY( ( barHeight - ( ImGui::GetFontSize() + 8.0f * UI::Scale() ) ) * 0.5f );
-	if( playing )
+	if( paused )
 	{
-		if( UI::ColorButton( ICON_STOP "  Stop", UI::Bad(), ImVec2( buttonWidth, 0 ) ) )
+		if( UI::ColorButton( ICON_PLAY "  Resume", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
+		{
+			ResumePlay();
+		}
+		UI::Tip( "Carry on playing from where you were, with your changes (F5)" );
+		ImGui::SameLine( 0.0f, 6.0f * UI::Scale() );
+		if( UI::ColorButton( ICON_STOP "  Stop", UI::Bad(), ImVec2( stopWidth, 0 ) ) )
 		{
 			Stop();
 		}
-		UI::Tip( "Back to the editor (Esc or F10)" );
+		UI::Tip( "End this play session (F10)" );
+	}
+	else if( playing )
+	{
+		if( UI::ColorButton( ICON_PAUSE "  Pause", UI::Warn(), ImVec2( buttonWidth, 0 ) ) )
+		{
+			PausePlay();
+		}
+		UI::Tip( "Pause and edit (Esc): changes go into the game. F10 stops." );
 	}
 	else
 	{
@@ -5397,8 +5745,8 @@ void DrawMainMenuBar()
 		{
 			PlayDocument();
 		}
-		UI::Tip( fromCamera ? "Save and play, starting where the camera is (F5). Shift+click starts at the player start. Esc brings you back." :
-				 "Save and play from the player start (F5). Shift+click starts where the camera is. Esc brings you back." );
+		UI::Tip( fromCamera ? "Save and play, starting where the camera is (F5). Shift+click starts at the player start. Esc pauses to edit." :
+				 "Save and play from the player start (F5). Shift+click starts where the camera is. Esc pauses to edit." );
 		ImGui::SameLine( 0.0f, 2.0f * UI::Scale() );
 		if( UI::ColorButton( ICON_CHEVRON_DOWN "##playfrom", UI::Good(), ImVec2( ImGui::GetFrameHeight(), 0 ) ) )
 		{
@@ -5475,7 +5823,24 @@ void Draw( unsigned int mainDockSpaceId )
 
 	RegisterCommands();
 
-	if( IsPlaying() )
+	if( !IsPlaying() )
+	{
+		playPaused = false;
+		liveSessionActive = false;
+	}
+	else if( !liveSessionActive && game != NULL && game->IsInGame() )
+	{
+		// a new Play session: remember the level the game has
+		liveSessionActive = true;
+		LiveCaptureBase();
+	}
+
+	if( IsPlaying() && playPaused )
+	{
+		LiveSync();
+	}
+
+	if( IsPlaying() && !playPaused )
 	{
 		playStarting = false;
 

@@ -235,6 +235,14 @@ void* Sys_ExtraWindowCreate( const sysScreenRect_t& rect, void* owner )
 
 void Sys_ExtraWindowDestroy( void* handle )
 {
+	// the keyboard goes back to the main window (without a window manager it would go nowhere)
+	SDL_Window* main = ( SDL_Window* )Sys_MainWindowHandle();
+	if( main != NULL && SDL_GetKeyboardFocus() == ( SDL_Window* )handle )
+	{
+		SDL_RaiseWindow( main );
+		SDL_SetWindowInputFocus( main );
+	}
+
 	extraWindow_t* window = FindExtraWindow( ( SDL_Window* )handle );
 	if( window != NULL )
 	{
@@ -272,6 +280,7 @@ bool Sys_ExtraWindowGetRect( void* handle, sysScreenRect_t& rect )
 void Sys_ExtraWindowFocus( void* handle )
 {
 	SDL_RaiseWindow( ( SDL_Window* )handle );
+	SDL_SetWindowInputFocus( ( SDL_Window* )handle );
 }
 
 bool Sys_ExtraWindowHasFocus( void* handle )

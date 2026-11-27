@@ -73,6 +73,9 @@ public:
 	// render the 3D view (fills the screen behind the editor panels)
 	void			Draw( const Document& doc );
 
+	// the outlines are debug lines, which every view draws; clear them when the game takes over
+	void			ClearOutlines();
+
 	// camera movement; call once per frame with ImGui's input state. True while a mouse
 	// drag is moving the camera, when clicks mustn't select or edit anything.
 	bool			UpdateCamera( bool viewportHovered );

@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "Common_local.h"
+#include "../tools/imgui/editor/EditorShell.h"
 
 #include "ConsoleHistory.h"
 
@@ -1790,20 +1791,50 @@ idCommonLocal::ProcessEvent
 */
 bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 {
+	// GrizzTech4: in the editor, F5 plays (or resumes a paused Play) instead of quick-saving
+	if( cvarSystem->GetCVarBool( "editor" ) && event->evType == SE_KEY && event->evValue == K_F5 )
+	{
+		if( event->evValue2 == 1 && !console->Active() )
+		{
+			if( GrizzEditor::IsPlayPaused() )
+			{
+				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorResume\n" );
+			}
+			else if( !( game && game->IsInGame() ) )
+			{
+				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorPlay\n" );
+			}
+		}
+		return true;
+	}
+	// GrizzTech4: F10 always stops Play, even when the editor has the keyboard (Play paused)
+	if( cvarSystem->GetCVarBool( "editor" ) && event->evType == SE_KEY && event->evValue == K_F10 )
+	{
+		if( event->evValue2 == 1 && game && game->IsInGame() )
+		{
+			cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorStop\n" );
+		}
+		return true;
+	}
+
 	// hitting escape anywhere brings up the menu
 	if( game && game->IsInGame() )
 	{
 		if( event->evType == SE_KEY && event->evValue2 == 1 && ( event->evValue == K_ESCAPE || event->evValue == K_JOY9 ) )
 		{
-			// GrizzTech4: when playing from the editor, Escape goes back to it (as in other editors)
-			if( cvarSystem->GetCVarBool( "editor" ) && !game->CheckInCinematic() )
+			// GrizzTech4: when playing from the editor, Escape pauses and brings the editor back
+			// (edits then go into the running game; Play resumes). While paused, Escape is the editor's.
+			if( cvarSystem->GetCVarBool( "editor" ) && GrizzEditor::IsPlayPaused() )
+			{
+				// fall through to the editor
+			}
+			else if( cvarSystem->GetCVarBool( "editor" ) && !game->CheckInCinematic() )
 			{
 				console->Close();
-				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorStop\n" );
+				cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "editorPause\n" );
 				return true;
 			}
-
-			if( game->CheckInCinematic() )
+			else if( game->CheckInCinematic() )
 			{
 				game->SkipCinematicScene();
 			}

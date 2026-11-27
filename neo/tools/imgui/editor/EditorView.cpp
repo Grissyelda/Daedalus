@@ -790,6 +790,14 @@ bool View::UpdateCamera( bool viewportHovered )
 	return navMode != NAV_NONE;
 }
 
+void View::ClearOutlines()
+{
+	if( world != NULL )
+	{
+		world->DebugClearLines( 0 );
+	}
+}
+
 void View::Draw( const Document& doc )
 {
 	Sync( doc );

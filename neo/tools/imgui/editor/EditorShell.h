@@ -50,8 +50,11 @@ namespace GrizzEditor
 // true when the editor is compiled in and the "editor" cvar is on
 bool	IsEditorMode();
 
-// true while the editor UI owns the mouse (editor mode and not playing a map)
+// true while the editor UI owns the mouse (editor mode and not playing a map, or Play paused)
 bool	IsEditing();
+
+// Play is paused for live editing: the game stays loaded but doesn't run, and the editor is back
+bool	IsPlayPaused();
 
 // main menu bar; drawn before the main dockspace so the dockspace sits below it
 void	DrawMainMenuBar();
@@ -69,6 +72,10 @@ inline bool	IsEditorMode()
 	return false;
 }
 inline bool	IsEditing()
+{
+	return false;
+}
+inline bool	IsPlayPaused()
 {
 	return false;
 }
