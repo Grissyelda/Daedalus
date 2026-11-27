@@ -45,6 +45,7 @@ idCVar editor_startMap( "editor_startMap", "testmaps/gt4_test_room", CVAR_SYSTEM
 idCVar editor_gridSize( "editor_gridSize", "8", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "editor grid size in units" );
 idCVar editor_showWelcome( "editor_showWelcome", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "show the Getting started window when the editor opens" );
 idCVar editor_snap( "editor_snap", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "snap moves to the editor grid" );
+idCVar editor_playFrom( "editor_playFrom", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "where Play puts you: 0 = the player start, 1 = where the editor camera is", 0, 1 );
 
 extern idCVar r_materialPath;
 
@@ -280,9 +281,32 @@ static void Play( const char* mapName )
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", mapName ) );
 }
 
-// Play the open level: save it first so the game sees exactly what's in the editor
+// Play from the camera: once the level has loaded, the player is moved to where the camera was
+static bool			playTeleportPending = false;
+static bool			playStarting = false;		// Play was pressed and the level hasn't started loading yet
+static idVec3		playTeleportEye;
+static idAngles		playTeleportAngles;
+
+static void PlayDocument( bool fromCamera );
+
+// Play the open level, from where editor_playFrom says (Shift flips it for one go)
 static void PlayDocument()
 {
+	bool fromCamera = editor_playFrom.GetInteger() == 1;
+	if( ImGui::GetIO().KeyShift )
+	{
+		fromCamera = !fromCamera;
+	}
+	PlayDocument( fromCamera );
+}
+
+// Play the open level: save it first so the game sees exactly what's in the editor
+static void PlayDocument( bool fromCamera )
+{
+	playTeleportPending = fromCamera;
+	playStarting = true;
+	playTeleportEye = view.camera.origin;
+	playTeleportAngles = idAngles( view.camera.pitch, view.camera.yaw, 0.0f );
 	if( !document.IsOpen() )
 	{
 		return;
@@ -4877,6 +4901,10 @@ static void HandleShortcuts()
 	{
 		FocusSelection();
 	}
+	else if( ImGui::IsKeyPressed( ImGuiKey_F5, false ) && document.IsOpen() )
+	{
+		PlayDocument();
+	}
 	else if( ImGui::IsKeyPressed( ImGuiKey_Escape, false ) )
 	{
 		if( drawStage != DRAW_NONE )
@@ -5348,7 +5376,7 @@ void DrawMainMenuBar()
 
 	// Play / Stop sits in the middle of the bar, like other editors
 	const float buttonWidth = 104.0f * UI::Scale();
-	ImGui::SetCursorPosX( ( ImGui::GetWindowWidth() - buttonWidth ) * 0.5f );
+	ImGui::SetCursorPosX( ( ImGui::GetWindowWidth() - buttonWidth - ( playing ? 0.0f : ImGui::GetFrameHeight() + 2.0f * UI::Scale() ) ) * 0.5f );
 	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 20.0f * UI::Scale() );
 	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 4.0f * UI::Scale() ) );
 	const float barHeight = ImGui::GetWindowHeight();
@@ -5363,13 +5391,35 @@ void DrawMainMenuBar()
 	}
 	else
 	{
+		const bool fromCamera = editor_playFrom.GetInteger() == 1;
 		ImGui::BeginDisabled( !document.IsOpen() );
-		if( UI::ColorButton( ICON_PLAY "  Play", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
+		if( UI::ColorButton( fromCamera ? ICON_PLAY "  Play here" : ICON_PLAY "  Play", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
 		{
 			PlayDocument();
 		}
+		UI::Tip( fromCamera ? "Save and play, starting where the camera is (F5). Shift+click starts at the player start. Esc brings you back." :
+				 "Save and play from the player start (F5). Shift+click starts where the camera is. Esc brings you back." );
+		ImGui::SameLine( 0.0f, 2.0f * UI::Scale() );
+		if( UI::ColorButton( ICON_CHEVRON_DOWN "##playfrom", UI::Good(), ImVec2( ImGui::GetFrameHeight(), 0 ) ) )
+		{
+			ImGui::OpenPopup( "##playmenu" );
+		}
+		UI::Tip( "Where Play starts you" );
 		ImGui::EndDisabled();
-		UI::Tip( "Save and play the level. Esc brings you back." );
+		if( ImGui::BeginPopup( "##playmenu" ) )
+		{
+			if( ImGui::MenuItem( ICON_PLAYER "  Play from the player start", NULL, !fromCamera ) )
+			{
+				editor_playFrom.SetInteger( 0 );
+			}
+			if( ImGui::MenuItem( ICON_EYE "  Play from here (the camera)", NULL, fromCamera ) )
+			{
+				editor_playFrom.SetInteger( 1 );
+			}
+			ImGui::Separator();
+			Hint( "Shift+click Play to use the other one once." );
+			ImGui::EndPopup();
+		}
 	}
 	ImGui::PopStyleVar( 2 );
 
@@ -5427,8 +5477,23 @@ void Draw( unsigned int mainDockSpaceId )
 
 	if( IsPlaying() )
 	{
+		playStarting = false;
+
+		// Play from here: move the player once the level is up
+		if( playTeleportPending && game != NULL && game->IsInGame() && gameEdit->PlayerIsValid() )
+		{
+			playTeleportPending = false;
+			if( !gameEdit->PlayerTeleport( playTeleportEye, playTeleportAngles ) )
+			{
+				Status( "The camera was inside something solid, so you start at the player start." );
+			}
+		}
 		// panels step aside while playing; the menu bar keeps Stop visible
 		return;
+	}
+	if( !playStarting )
+	{
+		playTeleportPending = false;
 	}
 
 	if( !startupDone )

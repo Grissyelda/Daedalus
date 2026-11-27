@@ -296,6 +296,9 @@ public:
 	virtual void				PlayerGetViewAngles( idAngles& angles ) const;
 	virtual void				PlayerGetEyePosition( idVec3& org ) const;
 	virtual bool				PlayerGetRenderView( renderView_t& rv ) const;
+	// GrizzTech4: puts the player where an eye at 'eye' would be, looking along 'angles';
+	// false when the player doesn't fit there (inside a wall)
+	virtual bool				PlayerTeleport( const idVec3& eye, const idAngles& angles );
 
 	// In game map editing support.
 	virtual const idDict* 		MapGetEntityDict( const char* name ) const;

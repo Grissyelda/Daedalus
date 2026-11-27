@@ -1159,6 +1159,44 @@ void idGameEdit::PlayerGetEyePosition( idVec3& org ) const
 	org = gameLocal.GetLocalPlayer()->GetEyePosition();
 }
 
+/*
+================
+idGameEdit::PlayerTeleport
+
+GrizzTech4: Play from the editor camera
+================
+*/
+bool idGameEdit::PlayerTeleport( const idVec3& eye, const idAngles& angles )
+{
+	idPlayer* player = gameLocal.GetLocalPlayer();
+	if( player == NULL )
+	{
+		return false;
+	}
+	idClipModel* clip = player->GetPhysics()->GetClipModel();
+	const int mask = player->GetPhysics()->GetClipMask();
+
+	// standing with the eyes where the camera is; if that's in the floor (or in something low),
+	// stand higher, up to having the feet at the camera
+	const float viewHeight = pm_normalviewheight.GetFloat();
+	idVec3 feet;
+	bool found = false;
+	for( float lift = 0.0f; lift <= viewHeight && !found; lift += 4.0f )
+	{
+		feet = eye - idVec3( 0, 0, viewHeight - lift );
+		found = gameLocal.clip.Contents( feet, clip, mat3_identity, mask, player ) == 0;
+	}
+	if( !found )
+	{
+		return false;
+	}
+
+	idAngles view = angles;
+	view.roll = 0.0f;
+	player->Teleport( feet, view, NULL );
+	return true;
+}
+
 // RB
 bool idGameEdit::PlayerGetRenderView( renderView_t& rv ) const
 {
