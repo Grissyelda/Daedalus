@@ -325,6 +325,12 @@ const char* Sys_GetCmdLine()
 Sys_ReLaunch
 ========================
 */
+// GrizzTech4: macOS isn't a target; the extra arguments are dropped
+void Sys_ReLaunchWithArgs( const char* const* extraArgs, int numExtraArgs )
+{
+	Sys_ReLaunch();
+}
+
 void Sys_ReLaunch()
 {
 	// DG: implementing this... basic old fork() exec() (+ setsid()) routine..

@@ -505,6 +505,81 @@ void Sys_ReLaunch()
 }
 
 /*
+========================
+Sys_ReLaunchWithArgs
+========================
+*/
+void Sys_ReLaunchWithArgs( const char* const* extraArgs, int numExtraArgs )
+{
+	int ret = fork();
+	if( ret < 0 )
+	{
+		idLib::Error( "Sys_ReLaunchWithArgs(): Couldn't fork(), reason: %s ", strerror( errno ) );
+	}
+
+	if( ret == 0 )
+	{
+		// child: our own session, so the parent quitting doesn't take us with it
+		if( setsid() == ( pid_t ) - 1 )
+		{
+			idLib::Error( "Sys_ReLaunchWithArgs(): setsid() failed! Reason: %s ", strerror( errno ) );
+		}
+
+		DIR* devfd = opendir( "/dev/fd" );
+		if( devfd != NULL )
+		{
+			struct dirent* result;
+			while( ( result = readdir( devfd ) ) != NULL )
+			{
+				char* endptr = NULL;
+				long int fd = strtol( result->d_name, &endptr, 0 );
+				if( endptr != result->d_name && fd > STDERR_FILENO )
+				{
+					close( fd );
+				}
+			}
+		}
+
+		// the program, the original arguments, the extra ones, then skip the intro
+		const int argc = cmdargc + numExtraArgs + 4;
+		const char** argv = ( const char** )calloc( argc, sizeof( char* ) );
+		int n = 0;
+		const char* exepath = Sys_EXEPath();
+		argv[n++] = exepath;
+
+		// keep the original settings (+set ...) but not commands, which already ran
+		bool keepGroup = false;
+		for( int i = 1; i < cmdargc; i++ )
+		{
+			if( cmdargv[i][0] == '+' )
+			{
+				keepGroup = idStr::Icmpn( cmdargv[i], "+set", 4 ) == 0;
+			}
+			if( keepGroup )
+			{
+				argv[n++] = cmdargv[i];
+			}
+		}
+		for( int i = 0; i < numExtraArgs; i++ )
+		{
+			argv[n++] = extraArgs[i];
+		}
+		argv[n++] = "+set";
+		argv[n++] = "com_skipIntroVideos";
+		argv[n++] = "1";
+		argv[n] = NULL;
+
+		errno = 0;
+		execv( exepath, ( char** )argv );
+		idLib::Error( "Sys_ReLaunchWithArgs(): exec() failed! Reason: %s ", strerror( errno ) );
+	}
+	else
+	{
+		cmdSystem->AppendCommandText( "quit\n" );
+	}
+}
+
+/*
 ===============
 main
 ===============

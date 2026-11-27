@@ -488,6 +488,9 @@ void			Sys_Error( const char* error, ... );
 const char* 	Sys_GetCmdLine();
 // DG: Sys_ReLaunch() doesn't need any options (and the old way is painful for POSIX systems)
 void			Sys_ReLaunch();
+// GrizzTech4: restart with extra command-line arguments after the original ones,
+// e.g. "+set fs_game MyGame" to open another project
+void			Sys_ReLaunchWithArgs( const char* const* extraArgs, int numExtraArgs );
 // DG end
 void			Sys_Launch( const char* path, idCmdArgs& args,  void* launchData, unsigned int launchDataSize );
 void			Sys_SetLanguageFromSystem();

@@ -83,6 +83,9 @@ public:
 	// the first brush surface under the screen position; false when the ray hits nothing
 	bool			Trace( const Document& doc, float x, float y, idVec3& point, idVec3& normal ) const;
 
+	// where a point lands on screen (pixels); false when it's behind the camera
+	bool			WorldToScreen( const idVec3& point, idVec2& screen ) const;
+
 	// a ray through the screen position (pixels)
 	void			ScreenRay( float x, float y, idVec3& start, idVec3& dir ) const;
 

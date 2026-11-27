@@ -2798,6 +2798,13 @@ void idMover_Binary::SetMoverState( moverState_t newstate, int time )
 	moverState = newstate;
 	move_thread = 0;
 
+	// GrizzTech4: doors and lifts report their state too, for level testing
+	if( g_debugMover.GetBool() )
+	{
+		static const char* stateNames[] = { "closed", "open", "opening", "closing" };
+		gameLocal.Printf( "%d: '%s' %s\n", time, name.c_str(), ( newstate >= 0 && newstate < 4 ) ? stateNames[newstate] : "?" );
+	}
+
 	UpdateMoverSound( newstate );
 
 	stateStartTime = time;

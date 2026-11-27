@@ -206,6 +206,16 @@ public:
 	{
 		return sides[i];
 	}
+	// GrizzTech4 editor
+	void					RemoveSide( int i )
+	{
+		delete sides[i];
+		sides.RemoveIndex( i );
+	}
+	void					ClearSides()
+	{
+		sides.DeleteContents( true );
+	}
 	unsigned int			GetGeometryCRC() const;
 
 	bool					IsOriginBrush() const;

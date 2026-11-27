@@ -41,6 +41,7 @@ View view;
 static const idVec4 COLOR_SELECTED( 1.0f, 0.78f, 0.15f, 1.0f );
 static const idVec4 COLOR_WIRE( 0.75f, 0.78f, 0.82f, 1.0f );
 static const idVec4 COLOR_FACE( 0.2f, 0.9f, 1.0f, 1.0f );
+static const idVec4 COLOR_DOOR( 0.3f, 1.0f, 0.5f, 1.0f );
 static const char* TOOL_MATERIAL = "editor/toolsurface";
 
 /*
@@ -389,6 +390,26 @@ void View::ScreenRay( float x, float y, idVec3& start, idVec3& dir ) const
 	dir.Normalize();
 }
 
+bool View::WorldToScreen( const idVec3& point, idVec2& screen ) const
+{
+	renderView_t rv;
+	BuildRenderView( rv );
+	const idVec3 d = point - rv.vieworg;
+	const float forward = d * rv.viewaxis[0];
+	if( forward < 1.0f )
+	{
+		return false;
+	}
+
+	// the inverse of ScreenRay
+	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	const float nx = -( d * rv.viewaxis[1] ) / ( forward * tanf( DEG2RAD( rv.fov_x * 0.5f ) ) );
+	const float ny = ( d * rv.viewaxis[2] ) / ( forward * tanf( DEG2RAD( rv.fov_y * 0.5f ) ) );
+	screen.x = ( nx + 1.0f ) * 0.5f * size.x;
+	screen.y = ( 1.0f - ny ) * 0.5f * size.y;
+	return true;
+}
+
 // distance along the ray to a convex brush, or -1 when it misses; hitSide is the face it enters
 static float RayBrush( const idMapBrush* brush, const idVec3& start, const idVec3& dir, int* hitSide = NULL )
 {
@@ -666,6 +687,54 @@ void View::Draw( const Document& doc )
 					}
 				}
 			}
+		}
+	}
+
+	// doors show which way they open and how far
+	if( map != NULL && !doc.selection.IsFaces() )
+	{
+		for( int i = 0; i < doc.selection.Num(); i++ )
+		{
+			const Selection& sel = doc.selection[i];
+			if( sel.entity <= 0 || sel.entity >= map->GetNumEntities() )
+			{
+				continue;
+			}
+			const idMapEntity* ent = map->GetEntity( sel.entity );
+			if( idStr::Icmp( ent->epairs.GetString( "classname" ), "func_door" ) != 0 )
+			{
+				continue;
+			}
+			const idDeclEntityDef* def = EntityDefFor( ent );
+			idDict args;
+			if( def != NULL )
+			{
+				args.Copy( def->dict );
+			}
+			args.Copy( ent->epairs );
+
+			const float dir = args.GetFloat( "movedir", args.GetString( "angle", "0" ) );
+			idVec3 move;
+			if( dir == -1.0f )
+			{
+				move.Set( 0, 0, 1 );
+			}
+			else if( dir == -2.0f )
+			{
+				move.Set( 0, 0, -1 );
+			}
+			else
+			{
+				move = idAngles( 0, dir, 0 ).ToForward();
+			}
+
+			idBounds bounds;
+			EntityBounds( ent, bounds );
+			const idVec3 size = bounds[1] - bounds[0];
+			const float travel = idMath::Fabs( move.x ) * size.x + idMath::Fabs( move.y ) * size.y + idMath::Fabs( move.z ) * size.z - args.GetFloat( "lip", "8" );
+			const idVec3 start = bounds.GetCenter();
+			world->DebugArrow( COLOR_DOOR, start, start + move * Max( travel, 16.0f ), 8 );
+			world->DebugBounds( COLOR_DOOR, bounds, move * Max( travel, 0.0f ) );
 		}
 	}
 

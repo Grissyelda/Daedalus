@@ -32,6 +32,7 @@ along with GrizzTech4.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorDocument.h"
 #include "EditorView.h"
 #include "EditorShapes.h"
+#include "EditorBrushOps.h"
 
 #include "../../imgui/BFGimgui.h"
 #include "../../libs/imgui/imgui_internal.h"	// DockBuilder API
@@ -83,11 +84,15 @@ static char			mapNameBuffer[128] = "";
 static char			brushMaterialBuffer[256] = "";
 static int			brushMaterialFor = -1;
 
+// the active viewport tool
 enum gizmoMode_t
 {
 	GIZMO_MOVE,
 	GIZMO_ROTATE,
-	GIZMO_RESIZE
+	GIZMO_RESIZE,
+	GIZMO_CLIP,			// cut brushes along a plane through clicked points
+	GIZMO_VERTEX,		// drag brush corners
+	GIZMO_COUNT
 };
 static gizmoMode_t	gizmoMode = GIZMO_MOVE;
 static bool			gizmoDragging = false;
@@ -96,6 +101,38 @@ static idMat4		gizmoStart;			// the handle's matrix when the drag began
 static idMat4		gizmoMatrix;		// and now
 
 static ShapeSettings	shapeSettings;
+
+// clip tool
+static idList<idVec3>	clipPoints;
+static idVec3		clipFirstNormal;
+static int			clipKeep = 0;			// 0 both, 1 behind the plane, 2 in front
+
+// corner tool
+struct CornerRef
+{
+	int			entity;
+	int			primitive;
+	idVec3		position;
+	bool		operator==( const CornerRef& other ) const
+	{
+		return entity == other.entity && primitive == other.primitive && position.Compare( other.position, 0.1f );
+	}
+};
+static idList<CornerRef>	cornerSelection;
+static bool			cornerDragging = false;
+static idMat4		cornerStart;
+static idMat4		cornerMatrix;
+struct CornerBrushStart
+{
+	int			entity;
+	int			primitive;
+	idMapBrush* brush;
+};
+static idList<CornerBrushStart>	cornerStartBrushes;
+
+// Open Project dialog
+static bool			openProjectPopup = false;
+static idStrList	projectList;
 static int			faceRepeats[2] = { 1, 1 };
 static idStr		statusMessage;
 static int			statusTime = 0;
@@ -109,6 +146,10 @@ static bool			newProjectSucceeded = false;
 static void ResizeSelection( const idBounds& bounds, const idVec3& size );
 static void PlaceShape( shapeType_t type );
 static void FitSelectedFaces();
+
+static void SwitchProject( const char* name );
+static void BeginCornerMove();
+static void MoveCorners( const idVec3& delta );
 
 static const char* WINDOW_OUTLINER			= "Outliner";
 static const char* WINDOW_INSPECTOR			= "Inspector";
@@ -357,6 +398,34 @@ static void EditorShape_f( const idCmdArgs& args )
 	common->Printf( "usage: editorShape <box|room|ramp|cylinder|cone|stairs|arch>\n" );
 }
 
+// editorAddShape <name> <x1 y1 z1> <x2 y2 z2>: a shape filling exactly that box
+static void EditorAddShape_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 8 )
+	{
+		common->Printf( "usage: editorAddShape <box|room|ramp|cylinder|cone|stairs|arch> <x1> <y1> <z1> <x2> <y2> <z2>\n" );
+		return;
+	}
+	for( int i = 0; i < SHAPE_COUNT; i++ )
+	{
+		if( idStr::Icmp( args.Argv( 1 ), ShapeName( ( shapeType_t )i ) ) != 0 )
+		{
+			continue;
+		}
+		idBounds box;
+		box.Clear();
+		box.AddPoint( idVec3( atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ) ) );
+		box.AddPoint( idVec3( atof( args.Argv( 5 ) ), atof( args.Argv( 6 ) ), atof( args.Argv( 7 ) ) ) );
+		idList<idMapBrush*> brushes;
+		if( MakeShape( ( shapeType_t )i, shapeSettings, box, "textures/dev/grid_wall", brushes ) )
+		{
+			document.AddBrushes( brushes, va( "Add %s", ShapeName( ( shapeType_t )i ) ) );
+		}
+		return;
+	}
+	common->Printf( "unknown shape '%s'\n", args.Argv( 1 ) );
+}
+
 static void EditorMaterial_f( const idCmdArgs& args )
 {
 	if( args.Argc() != 2 )
@@ -365,6 +434,68 @@ static void EditorMaterial_f( const idCmdArgs& args )
 		return;
 	}
 	document.SetMaterial( args.Argv( 1 ) );
+}
+
+static void EditorCarve_f( const idCmdArgs& args )
+{
+	common->Printf( "Editor: carve made %d pieces\n", document.SubtractSelection() );
+}
+
+// editorClip <nx> <ny> <nz> <dist> [keep]: cut the selection with the plane n . p = dist
+static void EditorClip_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 5 )
+	{
+		common->Printf( "usage: editorClip <nx> <ny> <nz> <dist> [keep: 0 both, 1 behind, 2 in front]\n" );
+		return;
+	}
+	idVec3 normal( atof( args.Argv( 1 ) ), atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ) );
+	normal.Normalize();
+	const idPlane plane( normal, atof( args.Argv( 4 ) ) );
+	common->Printf( "Editor: clip made %d pieces\n", document.ClipSelection( plane, args.Argc() > 5 ? atoi( args.Argv( 5 ) ) : 0 ) );
+}
+
+static void EditorGroup_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		common->Printf( "usage: editorGroup <classname> (selected level brushes become that entity)\n" );
+		return;
+	}
+	common->Printf( "Editor: made entity %d\n", document.GroupSelection( args.Argv( 1 ) ) );
+}
+
+static void EditorUngroup_f( const idCmdArgs& args )
+{
+	document.UngroupSelection();
+}
+
+// editorMoveCorner <entity> <primitive> <x y z> <dx dy dz>
+static void EditorMoveCorner_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 9 )
+	{
+		common->Printf( "usage: editorMoveCorner <entity> <primitive> <x> <y> <z> <dx> <dy> <dz>\n" );
+		return;
+	}
+	cornerSelection.Clear();
+	CornerRef ref = { atoi( args.Argv( 1 ) ), atoi( args.Argv( 2 ) ), idVec3( atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ), atof( args.Argv( 5 ) ) ) };
+	cornerSelection.Append( ref );
+	document.BeginChange( "Move corners" );
+	BeginCornerMove();
+	MoveCorners( idVec3( atof( args.Argv( 6 ) ), atof( args.Argv( 7 ) ), atof( args.Argv( 8 ) ) ) );
+	for( int i = 0; i < cornerStartBrushes.Num(); i++ )
+	{
+		delete cornerStartBrushes[i].brush;
+	}
+	cornerStartBrushes.Clear();
+	cornerSelection.Clear();
+	document.EndChange();
+}
+
+static void EditorOpenProject_f( const idCmdArgs& args )
+{
+	SwitchProject( args.Argc() > 1 ? args.Argv( 1 ) : "" );
 }
 
 static void EditorFitTexture_f( const idCmdArgs& args )
@@ -453,6 +584,13 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorShape", EditorShape_f, CMD_FL_SYSTEM, "places a shape: editorShape <name>" );
 	cmdSystem->AddCommand( "editorMaterial", EditorMaterial_f, CMD_FL_SYSTEM, "sets the material of the selection: editorMaterial <name>" );
 	cmdSystem->AddCommand( "editorFitTexture", EditorFitTexture_f, CMD_FL_SYSTEM, "fits the texture to the selected faces" );
+	cmdSystem->AddCommand( "editorAddShape", EditorAddShape_f, CMD_FL_SYSTEM, "adds a shape filling a box: editorAddShape <name> <x1 y1 z1> <x2 y2 z2>" );
+	cmdSystem->AddCommand( "editorCarve", EditorCarve_f, CMD_FL_SYSTEM, "carves the selected brushes out of the brushes they overlap" );
+	cmdSystem->AddCommand( "editorClip", EditorClip_f, CMD_FL_SYSTEM, "cuts the selection: editorClip <nx> <ny> <nz> <dist> [keep]" );
+	cmdSystem->AddCommand( "editorGroup", EditorGroup_f, CMD_FL_SYSTEM, "selected level brushes become an entity: editorGroup <classname>" );
+	cmdSystem->AddCommand( "editorUngroup", EditorUngroup_f, CMD_FL_SYSTEM, "a brush entity's brushes go back to the level" );
+	cmdSystem->AddCommand( "editorMoveCorner", EditorMoveCorner_f, CMD_FL_SYSTEM, "moves a brush corner: editorMoveCorner <entity> <primitive> <x y z> <dx dy dz>" );
+	cmdSystem->AddCommand( "editorOpenProject", EditorOpenProject_f, CMD_FL_SYSTEM, "restarts into a project: editorOpenProject [name]" );
 	cmdSystem->AddCommand( "editorCamera", EditorCamera_f, CMD_FL_SYSTEM, "shows or sets the editor camera: editorCamera <x> <y> <z> [yaw] [pitch]" );
 	cmdSystem->AddCommand( "editorWireframe", EditorWireframe_f, CMD_FL_SYSTEM, "toggles brush outlines in the editor view" );
 	cmdSystem->AddCommand( "editorNewProject", EditorNewProject_f, CMD_FL_SYSTEM, "creates a project from the template: editorNewProject <name> <stylized|pbr>" );
@@ -668,6 +806,96 @@ static void DrawLookPreview( int look, float size )
 	ImGui::Dummy( ImVec2( size, size ) );
 }
 
+// projects are folders next to the engine with a project.gt4 in them
+static void RefreshProjectList()
+{
+	projectList.Clear();
+	const char* basePath = cvarSystem->GetCVarString( "fs_basepath" );
+	idStrList folders;
+	Sys_ListFiles( basePath, "/", folders );
+	for( int i = 0; i < folders.Num(); i++ )
+	{
+		if( folders[i] == "." || folders[i] == ".." )
+		{
+			continue;
+		}
+		idStr projectFile = basePath;
+		projectFile.AppendPath( folders[i] );
+		projectFile.AppendPath( "project.gt4" );
+		idFile* f = fileSystem->OpenExplicitFileRead( projectFile.c_str() );
+		if( f != NULL )
+		{
+			fileSystem->CloseFile( f );
+			projectList.Append( folders[i] );
+		}
+	}
+	projectList.SortWithTemplate( idSort_PathStr() );
+}
+
+// the engine reads its content folders once at startup, so switching restarts it
+static void SwitchProject( const char* name )
+{
+	if( document.IsDirty() && document.IsOpen() )
+	{
+		document.Save();
+	}
+	const char* args[3] = { "+set", "fs_game", name };
+	common->Printf( "Editor: restarting into project '%s'\n", name[0] ? name : "(engine content)" );
+	Sys_ReLaunchWithArgs( args, 3 );
+}
+
+static void DrawOpenProjectDialog()
+{
+	if( openProjectPopup )
+	{
+		ImGui::OpenPopup( "Open Project" );
+		openProjectPopup = false;
+		RefreshProjectList();
+	}
+
+	ImGui::SetNextWindowSize( ImVec2( 460, 0 ), ImGuiCond_Appearing );
+	if( !ImGui::BeginPopupModal( "Open Project", NULL, ImGuiWindowFlags_NoResize ) )
+	{
+		return;
+	}
+
+	const char* current = cvarSystem->GetCVarString( "fs_game" );
+	Hint( "GrizzTech4 restarts to open a project. Unsaved changes to the open map are saved first." );
+	ImGui::Separator();
+
+	if( projectList.Num() == 0 )
+	{
+		ImGui::TextDisabled( "No projects yet. Use File > New Project to make one." );
+	}
+	for( int i = 0; i < projectList.Num(); i++ )
+	{
+		const bool isCurrent = projectList[i].Icmp( current ) == 0;
+		ImGui::BeginDisabled( isCurrent );
+		if( ImGui::Selectable( va( "%s%s", projectList[i].c_str(), isCurrent ? "   (open)" : "" ) ) )
+		{
+			SwitchProject( projectList[i].c_str() );
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndDisabled();
+	}
+
+	ImGui::Separator();
+	if( current[0] != '\0' && ImGui::Button( "Engine content only" ) )
+	{
+		SwitchProject( "" );
+		ImGui::CloseCurrentPopup();
+	}
+	if( current[0] != '\0' )
+	{
+		ImGui::SameLine();
+	}
+	if( ImGui::Button( "Cancel" ) )
+	{
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+}
+
 static void DrawNewProjectDialog()
 {
 	if( openNewProjectPopup )
@@ -690,12 +918,11 @@ static void DrawNewProjectDialog()
 		ImGui::TextWrapped( "Your project was created at:" );
 		ImGui::TextWrapped( "%s", newProjectResult.c_str() );
 		ImGui::Spacing();
-		ImGui::TextWrapped( "Opening projects from inside the editor arrives in the next milestone. For now, start GrizzTech4 with this option to open it:" );
-		const idStr launchArg = va( "+set fs_game %s", newProjectName );
-		ImGui::TextColored( ImVec4( 0.55f, 0.8f, 1.0f, 1.0f ), "%s", launchArg.c_str() );
-		if( ImGui::Button( "Copy option" ) )
+		ImGui::TextWrapped( "Open it now? GrizzTech4 restarts into the new project. You can also open it later from File > Open Project." );
+		if( ImGui::Button( "Open it now" ) )
 		{
-			ImGui::SetClipboardText( launchArg.c_str() );
+			SwitchProject( newProjectName );
+			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
 		if( ImGui::Button( "Close" ) )
@@ -1030,6 +1257,86 @@ static bool IsColorKey( const char* key, const idDeclEntityDef* def )
 	return def != NULL && def->dict.FindKey( va( "editor_color %s", key ) ) != NULL;
 }
 
+// the door's settings in plain terms; the raw keys are still in the table below
+static void DrawDoorPanel( idMapEntity* ent, const idDeclEntityDef* def )
+{
+	idDict args;
+	if( def != NULL )
+	{
+		args.Copy( def->dict );
+	}
+	args.Copy( ent->epairs );
+
+	ImGui::Separator();
+	ImGui::Text( "Door" );
+	Hint( "The green arrow in the view shows where it slides to. It opens when the player comes near." );
+
+	static const char* directions[] = { "Up", "Down", "East (+X)", "North (+Y)", "West (-X)", "South (-Y)" };
+	static const float dirValues[] = { -1, -2, 0, 90, 180, 270 };
+	const float current = args.GetFloat( "movedir", args.GetString( "angle", "0" ) );
+	int dirIndex = 0;
+	for( int i = 0; i < 6; i++ )
+	{
+		if( idMath::Fabs( current - dirValues[i] ) < 0.5f )
+		{
+			dirIndex = i;
+		}
+	}
+	ImGui::SetNextItemWidth( 140.0f );
+	if( ImGui::Combo( "Opens", &dirIndex, directions, 6 ) )
+	{
+		document.BeginChange( "Door direction" );
+		ent->epairs.SetFloat( "movedir", dirValues[dirIndex] );
+		ent->epairs.Delete( "angle" );
+		document.EndChange();
+	}
+
+	float speed = args.GetFloat( "speed", "160" );
+	ImGui::SetNextItemWidth( 140.0f );
+	if( ImGui::SliderFloat( "Speed", &speed, 20.0f, 800.0f, "%.0f units/s" ) )
+	{
+		ent->epairs.SetFloat( "speed", idMath::Rint( speed ) );
+		document.EndChange();
+	}
+	UndoBracket( "Door speed" );
+
+	float wait = args.GetFloat( "wait", "3" );
+	bool staysOpen = wait < 0.0f;
+	if( ImGui::Checkbox( "Stays open", &staysOpen ) )
+	{
+		document.BeginChange( "Door wait" );
+		ent->epairs.SetFloat( "wait", staysOpen ? -1.0f : 3.0f );
+		document.EndChange();
+	}
+	if( !staysOpen )
+	{
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth( 120.0f );
+		if( ImGui::SliderFloat( "##closes", &wait, 0.5f, 30.0f, "closes after %.1f s" ) )
+		{
+			ent->epairs.SetFloat( "wait", idMath::Rint( wait * 10.0f ) / 10.0f );
+			document.EndChange();
+		}
+		UndoBracket( "Door wait" );
+	}
+
+	bool startOpen = args.GetBool( "start_open" );
+	if( ImGui::Checkbox( "Starts open", &startOpen ) )
+	{
+		document.BeginChange( "Door start open" );
+		ent->epairs.SetBool( "start_open", startOpen );
+		document.EndChange();
+	}
+	ImGui::SameLine();
+	bool locked = args.GetInt( "locked" ) != 0;
+	if( ImGui::Checkbox( "Locked", &locked ) )
+	{
+		document.BeginChange( "Door locked" );
+		ent->epairs.SetInt( "locked", locked ? 1 : 0 );
+		document.EndChange();
+	}
+}
+
 static void DrawEntityInspector( idMapEntity* ent )
 {
 	const char* classname = ent->epairs.GetString( "classname" );
@@ -1047,6 +1354,20 @@ static void DrawEntityInspector( idMapEntity* ent )
 	if( ent->GetNumPrimitives() > 0 )
 	{
 		ImGui::TextDisabled( "%d brushes", ent->GetNumPrimitives() );
+		if( document.selection.Primary().entity != 0 )
+		{
+			ImGui::SameLine();
+			if( ImGui::SmallButton( "Return brushes to the level" ) )
+			{
+				document.UngroupSelection();
+				ImGui::Separator();
+				return;
+			}
+		}
+	}
+	if( idStr::Icmp( classname, "func_door" ) == 0 )
+	{
+		DrawDoorPanel( ent, def );
 	}
 	ImGui::Separator();
 
@@ -1125,6 +1446,11 @@ static void DrawEntityInspector( idMapEntity* ent )
 				idStr::Copynz( buffer, value.c_str(), sizeof( buffer ) );
 				if( ImGui::InputText( "##v", buffer, sizeof( buffer ) ) )
 				{
+					// a brush entity's model is named after it, so renaming moves the model name too
+					if( key.Icmp( "name" ) == 0 && ent->GetNumPrimitives() > 0 && value.Icmp( ent->epairs.GetString( "model" ) ) == 0 )
+					{
+						ent->epairs.Set( "model", buffer );
+					}
 					ent->epairs.Set( key, buffer );
 					document.EndChange();
 				}
@@ -1480,6 +1806,87 @@ static void DrawFaceInspector()
 	faceRepeats[1] = idMath::ClampInt( 1, 64, faceRepeats[1] );
 }
 
+// carve, and turning level brushes into doors and other brush entities
+static void DrawBrushTools()
+{
+	idList<Selection> brushes;
+	document.SelectedBrushes( brushes );
+	if( brushes.Num() == 0 )
+	{
+		return;
+	}
+
+	ImGui::Separator();
+	if( ImGui::Button( "Carve" ) )
+	{
+		const int pieces = document.SubtractSelection();
+		Status( pieces > 0 ? va( "Carved out; %d pieces left around it.", pieces ) : "Nothing to carve: the selection doesn't overlap any other brush." );
+		return;
+	}
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Cut the selected brushes out of every brush they overlap, then remove them.\nUse it for doorways, windows and alcoves." );
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( "Clip..." ) )
+	{
+		gizmoMode = GIZMO_CLIP;
+		clipPoints.Clear();
+	}
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Cut the selected brushes in two along a line you click (C)" );
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( "Corners..." ) )
+	{
+		gizmoMode = GIZMO_VERTEX;
+		cornerSelection.Clear();
+	}
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "Drag the corners of the selected brushes (V)" );
+	}
+
+	// only the level's own brushes can be turned into something
+	bool allLevel = true;
+	for( int i = 0; i < document.selection.Num(); i++ )
+	{
+		allLevel &= ( document.selection[i].entity == 0 );
+	}
+	if( !allLevel )
+	{
+		return;
+	}
+
+	ImGui::TextDisabled( "Turn into" );
+	const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
+	int shown = 0;
+	for( int i = 0; i < count; i++ )
+	{
+		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
+		if( def == NULL || !def->dict.GetBool( "editor_brushes" ) )
+		{
+			continue;
+		}
+		if( shown++ > 0 )
+		{
+			ImGui::SameLine();
+		}
+		if( ImGui::Button( def->dict.GetString( "editor_label", def->GetName() ) ) )
+		{
+			if( document.GroupSelection( def->GetName() ) >= 0 )
+			{
+				Status( va( "Made a %s.", def->dict.GetString( "editor_label", def->GetName() ) ) );
+			}
+		}
+		if( ImGui::IsItemHovered() )
+		{
+			ImGui::SetTooltip( "%s", def->dict.GetString( "editor_usage" ) );
+		}
+	}
+}
+
 static void DrawPrimitiveInspector( idMapPrimitive* prim )
 {
 	const bool isBrush = prim->GetType() == idMapPrimitive::TYPE_BRUSH;
@@ -1493,6 +1900,7 @@ static void DrawPrimitiveInspector( idMapPrimitive* prim )
 		ImGui::Text( isBrush ? "Brush" : "Patch" );
 	}
 	DrawTransformFields();
+	DrawBrushTools();
 	ImGui::Separator();
 
 	const Selection primary = document.selection.Primary();
@@ -1750,7 +2158,7 @@ static void DrawContentBrowser()
 			const int count = declManager->GetNumDecls( DECL_ENTITYDEF );
 			for( int i = 0; i < count; i++ )
 			{
-				const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, false ) );
+				const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->DeclByIndex( DECL_ENTITYDEF, i, true ) );
 				if( def == NULL )
 				{
 					continue;
@@ -1811,6 +2219,20 @@ static void DrawProblems()
 			{
 				hasStart = true;
 			}
+			if( ent->GetNumPrimitives() > 0 && idStr::Icmp( ent->epairs.GetString( "model" ), ent->epairs.GetString( "name" ) ) != 0 )
+			{
+				any = true;
+				ImGui::PushID( i + 100000 );
+				if( ImGui::SmallButton( "Fix" ) )
+				{
+					document.BeginChange( "Fix model name" );
+					map->GetEntity( i )->epairs.Set( "model", ent->epairs.GetString( "name" ) );
+					document.EndChange();
+				}
+				ImGui::SameLine();
+				ImGui::TextWrapped( "\"%s\" is made of brushes, but its 'model' doesn't match its name, so it won't appear in the game.", EntityLabel( ent, i ).c_str() );
+				ImGui::PopID();
+			}
 			if( declManager->FindType( DECL_ENTITYDEF, classname, false ) == NULL )
 			{
 				any = true;
@@ -1860,7 +2282,7 @@ static void DrawAbout()
 		ImGui::Text( "Moving around" );
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Without the right button, the wheel moves forward and back." );
 		ImGui::Text( "Editing" );
-		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces for texturing. W, E and R switch between moving, turning and resizing; [ and ] change the grid. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
+		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces for texturing. W, E and R switch between moving, turning and resizing; C clips brushes and V drags their corners; [ and ] change the grid. Carve (in the Inspector) cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
 	}
 	ImGui::End();
 }
@@ -1993,6 +2415,384 @@ static void DrawGizmo()
 	}
 }
 
+/*
+===============================================================================
+
+	Clip tool: click two or three points on surfaces; the plane through them
+	cuts the selected brushes. With two points the cut stands straight up from
+	the surface you clicked first.
+
+===============================================================================
+*/
+
+static bool ClipPlane( idPlane& plane )
+{
+	idVec3 normal;
+	if( clipPoints.Num() == 2 )
+	{
+		normal = ( clipPoints[1] - clipPoints[0] ).Cross( clipFirstNormal );
+	}
+	else if( clipPoints.Num() == 3 )
+	{
+		normal = ( clipPoints[1] - clipPoints[0] ).Cross( clipPoints[2] - clipPoints[0] );
+	}
+	else
+	{
+		return false;
+	}
+	if( normal.Normalize() < 1e-4f )
+	{
+		return false;
+	}
+	plane.SetNormal( normal );
+	plane[3] = -( normal * clipPoints[0] );
+	return true;
+}
+
+static void DrawScreenLine( const idVec3& a, const idVec3& b, ImU32 color, float thickness )
+{
+	idVec2 sa, sb;
+	if( view.WorldToScreen( a, sa ) && view.WorldToScreen( b, sb ) )
+	{
+		ImGui::GetBackgroundDrawList()->AddLine( ImVec2( sa.x, sa.y ), ImVec2( sb.x, sb.y ), color, thickness );
+	}
+}
+
+static void DrawScreenBrush( const idMapBrush* brush, ImU32 color, float thickness )
+{
+	for( int s = 0; s < brush->GetNumSides(); s++ )
+	{
+		idWinding w;
+		if( BrushSideWinding( brush, s, w ) )
+		{
+			for( int j = 0; j < w.GetNumPoints(); j++ )
+			{
+				DrawScreenLine( w[j].ToVec3(), w[( j + 1 ) % w.GetNumPoints()].ToVec3(), color, thickness );
+			}
+		}
+	}
+}
+
+static void ApplyClip()
+{
+	idPlane plane;
+	if( !ClipPlane( plane ) )
+	{
+		Status( "Click two or three points on surfaces to set where to cut." );
+		return;
+	}
+	const int made = document.ClipSelection( plane, clipKeep );
+	Status( made > 0 ? va( "Cut into %d pieces.", made ) : "The cut doesn't cross any selected brush." );
+	clipPoints.Clear();
+}
+
+static void DrawClipTool()
+{
+	const ImU32 keepColor = IM_COL32( 255, 200, 40, 255 );
+	const ImU32 dropColor = IM_COL32( 255, 70, 60, 200 );
+	ImDrawList* draw = ImGui::GetBackgroundDrawList();
+
+	idPlane plane;
+	if( ClipPlane( plane ) )
+	{
+		idList<Selection> brushes;
+		document.SelectedBrushes( brushes );
+		for( int i = 0; i < brushes.Num(); i++ )
+		{
+			const idMapBrush* brush = static_cast<const idMapBrush*>( document.Map()->GetEntity( brushes[i].entity )->GetPrimitive( brushes[i].primitive ) );
+			idMapBrush* front = NULL;
+			idMapBrush* back = NULL;
+			SplitBrush( brush, plane, NULL, &front, &back );
+			if( back != NULL )
+			{
+				DrawScreenBrush( back, clipKeep == 2 ? dropColor : keepColor, 2.0f );
+			}
+			if( front != NULL )
+			{
+				DrawScreenBrush( front, clipKeep == 1 ? dropColor : IM_COL32( 80, 200, 255, 255 ), 2.0f );
+			}
+			delete front;
+			delete back;
+		}
+	}
+
+	for( int i = 0; i < clipPoints.Num(); i++ )
+	{
+		idVec2 sp;
+		if( view.WorldToScreen( clipPoints[i], sp ) )
+		{
+			draw->AddCircleFilled( ImVec2( sp.x, sp.y ), 6.0f, IM_COL32( 255, 255, 255, 255 ) );
+			draw->AddText( ImVec2( sp.x + 8.0f, sp.y - 8.0f ), IM_COL32( 255, 255, 255, 255 ), va( "%d", i + 1 ) );
+		}
+	}
+}
+
+static void ClipToolClick( float x, float y )
+{
+	idVec3 point, normal;
+	if( !view.Trace( document, x, y, point, normal ) )
+	{
+		return;
+	}
+	if( clipPoints.Num() >= 3 )
+	{
+		clipPoints.Clear();
+	}
+	if( clipPoints.Num() == 0 )
+	{
+		clipFirstNormal = normal;
+	}
+	clipPoints.Append( editor_snap.GetBool() ? SnapToGrid( point ) : point );
+}
+
+/*
+===============================================================================
+
+	Corner tool: the corners of the selected brushes as dots; click (Ctrl+click
+	for more) and drag the arrows. The brush is rebuilt around its corners, so
+	it always stays convex.
+
+===============================================================================
+*/
+
+static void EndCornerDrag( bool keep )
+{
+	if( !cornerDragging )
+	{
+		return;
+	}
+	cornerDragging = false;
+
+	const idVec3 delta = cornerMatrix.Transpose().GetTranslation() - cornerStart.Transpose().GetTranslation();
+	if( keep && delta.LengthSqr() > 0.0001f )
+	{
+		for( int i = 0; i < cornerSelection.Num(); i++ )
+		{
+			cornerSelection[i].position += delta;
+		}
+		document.EndChange();
+	}
+	else if( document.IsChangeOpen() )
+	{
+		document.CancelChange();
+	}
+
+	for( int i = 0; i < cornerStartBrushes.Num(); i++ )
+	{
+		delete cornerStartBrushes[i].brush;
+	}
+	cornerStartBrushes.Clear();
+}
+
+// moves the selected corners of the brushes saved at the start of the drag; no undo step
+static void MoveCorners( const idVec3& delta )
+{
+	for( int b = 0; b < cornerStartBrushes.Num(); b++ )
+	{
+		const CornerBrushStart& start = cornerStartBrushes[b];
+		idList<idVec3> points;
+		BrushVertices( start.brush, points );
+		for( int p = 0; p < points.Num(); p++ )
+		{
+			const CornerRef ref = { start.entity, start.primitive, points[p] };
+			if( cornerSelection.FindIndex( ref ) >= 0 )
+			{
+				points[p] += delta;
+			}
+		}
+		idMapBrush* hull = HullBrush( points, start.brush );
+		if( hull != NULL )
+		{
+			document.SetBrushGeometry( start.entity, start.primitive, hull );
+			delete hull;
+		}
+	}
+}
+
+static void BeginCornerMove()
+{
+	cornerStartBrushes.Clear();
+	for( int i = 0; i < cornerSelection.Num(); i++ )
+	{
+		bool have = false;
+		for( int b = 0; b < cornerStartBrushes.Num() && !have; b++ )
+		{
+			have = cornerStartBrushes[b].entity == cornerSelection[i].entity && cornerStartBrushes[b].primitive == cornerSelection[i].primitive;
+		}
+		if( have )
+		{
+			continue;
+		}
+		const idMapBrush* brush = static_cast<const idMapBrush*>( document.Map()->GetEntity( cornerSelection[i].entity )->GetPrimitive( cornerSelection[i].primitive ) );
+		CornerBrushStart& start = cornerStartBrushes.Alloc();
+		start.entity = cornerSelection[i].entity;
+		start.primitive = cornerSelection[i].primitive;
+		start.brush = CopyBrush( brush );
+	}
+}
+
+static void ValidateCorners()
+{
+	const idMapFile* map = document.Map();
+	for( int i = cornerSelection.Num() - 1; i >= 0; i-- )
+	{
+		const CornerRef& ref = cornerSelection[i];
+		bool ok = map != NULL && ref.entity >= 0 && ref.entity < map->GetNumEntities() && ref.primitive >= 0 && ref.primitive < map->GetEntity( ref.entity )->GetNumPrimitives();
+		if( ok )
+		{
+			ok = map->GetEntity( ref.entity )->GetPrimitive( ref.primitive )->GetType() == idMapPrimitive::TYPE_BRUSH;
+		}
+		if( ok )
+		{
+			idList<idVec3> points;
+			BrushVertices( static_cast<const idMapBrush*>( map->GetEntity( ref.entity )->GetPrimitive( ref.primitive ) ), points );
+			ok = false;
+			for( int p = 0; p < points.Num() && !ok; p++ )
+			{
+				ok = points[p].Compare( ref.position, 0.1f );
+			}
+		}
+		if( !ok )
+		{
+			cornerSelection.RemoveIndex( i );
+		}
+	}
+}
+
+static void DrawCornerTool()
+{
+	if( !cornerDragging )
+	{
+		ValidateCorners();
+	}
+
+	ImDrawList* draw = ImGui::GetBackgroundDrawList();
+	idList<Selection> brushes;
+	document.SelectedBrushes( brushes );
+	for( int i = 0; i < brushes.Num(); i++ )
+	{
+		idList<idVec3> points;
+		BrushVertices( static_cast<const idMapBrush*>( document.Map()->GetEntity( brushes[i].entity )->GetPrimitive( brushes[i].primitive ) ), points );
+		for( int p = 0; p < points.Num(); p++ )
+		{
+			idVec2 sp;
+			if( !view.WorldToScreen( points[p], sp ) )
+			{
+				continue;
+			}
+			const CornerRef ref = { brushes[i].entity, brushes[i].primitive, points[p] };
+			if( cornerSelection.FindIndex( ref ) >= 0 )
+			{
+				draw->AddCircleFilled( ImVec2( sp.x, sp.y ), 6.0f, IM_COL32( 255, 200, 40, 255 ) );
+			}
+			else
+			{
+				draw->AddCircleFilled( ImVec2( sp.x, sp.y ), 4.5f, IM_COL32( 20, 20, 20, 200 ) );
+				draw->AddCircle( ImVec2( sp.x, sp.y ), 5.0f, IM_COL32( 255, 255, 255, 255 ), 12, 1.5f );
+			}
+		}
+	}
+
+	if( cornerSelection.Num() == 0 )
+	{
+		EndCornerDrag( false );
+		return;
+	}
+
+	// a move handle in the middle of the picked corners
+	idVec3 pivot = vec3_origin;
+	for( int i = 0; i < cornerSelection.Num(); i++ )
+	{
+		pivot += cornerSelection[i].position;
+	}
+	pivot /= ( float )cornerSelection.Num();
+
+	renderView_t rv;
+	view.BuildRenderView( rv );
+	viewDef_t viewDef;
+	viewDef.renderView = rv;
+	R_SetupViewMatrix( &viewDef );
+	R_SetupProjectionMatrix( &viewDef, false );
+
+	const ImVec2 size = ImGui::GetIO().DisplaySize;
+	ImGuizmo::SetOrthographic( false );
+	ImGuizmo::SetDrawlist( ImGui::GetBackgroundDrawList() );
+	ImGuizmo::SetRect( 0, 0, size.x, size.y );
+	ImGuizmo::SetID( 2 );
+
+	if( !cornerDragging )
+	{
+		cornerMatrix = idMat4( mat3_identity, pivot ).Transpose();
+	}
+	const float grid = GridSize();
+	const float snap[3] = { grid, grid, grid };
+	ImGuizmo::Manipulate( viewDef.worldSpace.modelViewMatrix, viewDef.unjitteredProjectionMatrix, ImGuizmo::TRANSLATE, ImGuizmo::WORLD, cornerMatrix.ToFloatPtr(), NULL, editor_snap.GetBool() ? snap : NULL );
+
+	if( ImGuizmo::IsUsing() )
+	{
+		if( !cornerDragging )
+		{
+			cornerDragging = true;
+			cornerStart = idMat4( mat3_identity, pivot ).Transpose();
+			document.BeginChange( "Move corners" );
+			BeginCornerMove();
+		}
+		MoveCorners( cornerMatrix.Transpose().GetTranslation() - cornerStart.Transpose().GetTranslation() );
+	}
+	else
+	{
+		EndCornerDrag( true );
+	}
+}
+
+// a click near a corner picks it; true when one was there
+static bool CornerToolClick( float x, float y, bool add )
+{
+	idList<Selection> brushes;
+	document.SelectedBrushes( brushes );
+	float bestDist = 10.0f;
+	CornerRef best = { -1, -1, vec3_origin };
+	for( int i = 0; i < brushes.Num(); i++ )
+	{
+		idList<idVec3> points;
+		BrushVertices( static_cast<const idMapBrush*>( document.Map()->GetEntity( brushes[i].entity )->GetPrimitive( brushes[i].primitive ) ), points );
+		for( int p = 0; p < points.Num(); p++ )
+		{
+			idVec2 sp;
+			if( view.WorldToScreen( points[p], sp ) )
+			{
+				const float dist = ( sp - idVec2( x, y ) ).Length();
+				if( dist < bestDist )
+				{
+					bestDist = dist;
+					best.entity = brushes[i].entity;
+					best.primitive = brushes[i].primitive;
+					best.position = points[p];
+				}
+			}
+		}
+	}
+	if( best.entity < 0 )
+	{
+		return false;
+	}
+
+	if( !add )
+	{
+		cornerSelection.Clear();
+	}
+	const int index = cornerSelection.FindIndex( best );
+	if( index >= 0 )
+	{
+		cornerSelection.RemoveIndex( index );
+	}
+	else
+	{
+		cornerSelection.Append( best );
+	}
+	return true;
+}
+
 // the strip of tool buttons across the top of the 3D view
 static void DrawViewportToolbar()
 {
@@ -2008,9 +2808,16 @@ static void DrawViewportToolbar()
 								   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
 	if( ImGui::Begin( "##viewport_toolbar", NULL, flags ) )
 	{
-		const char* modes[] = { "Move (W)", "Rotate (E)", "Resize (R)" };
-		const char* tips[] = { "Drag the arrows to move the selection", "Drag the rings to turn the selection; snaps to 15 degrees", "Drag the dots on the box edges to resize" };
-		for( int i = 0; i < 3; i++ )
+		const char* modes[] = { "Move (W)", "Rotate (E)", "Resize (R)", "Clip (C)", "Corners (V)" };
+		const char* tips[] =
+		{
+			"Drag the arrows to move the selection",
+			"Drag the rings to turn the selection; snaps to 15 degrees",
+			"Drag the dots on the box edges to resize",
+			"Cut the selected brushes: click two or three points on surfaces, then press Enter",
+			"Drag the corners of the selected brushes: click a dot (Ctrl+click for more), then drag the arrows"
+		};
+		for( int i = 0; i < GIZMO_COUNT; i++ )
 		{
 			if( i > 0 )
 			{
@@ -2070,6 +2877,52 @@ static void DrawViewportToolbar()
 		}
 		ImGui::SameLine();
 		ImGui::Checkbox( "Wireframe", &view.wireframe );
+
+		// what the clip and corner tools need from you right now
+		if( gizmoMode == GIZMO_CLIP )
+		{
+			idList<Selection> brushes;
+			document.SelectedBrushes( brushes );
+			if( brushes.Num() == 0 )
+			{
+				ImGui::TextColored( ImVec4( 1.0f, 0.75f, 0.3f, 1.0f ), "Select the brushes to cut first (Esc, then click one), then come back to Clip." );
+			}
+			else
+			{
+				ImGui::Text( "Clip: %d of 2-3 points placed.", clipPoints.Num() );
+				ImGui::SameLine();
+				static const char* keepNames[] = { "Keep both", "Keep yellow", "Keep blue" };
+				ImGui::SetNextItemWidth( 110.0f );
+				ImGui::Combo( "##keep", &clipKeep, keepNames, 3 );
+				if( ImGui::IsItemHovered() )
+				{
+					ImGui::SetTooltip( "Which side of the cut stays (Tab cycles)" );
+				}
+				ImGui::SameLine();
+				ImGui::BeginDisabled( clipPoints.Num() < 2 );
+				if( ImGui::Button( "Cut (Enter)" ) )
+				{
+					ApplyClip();
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if( ImGui::Button( "Start over (Esc)" ) )
+				{
+					clipPoints.Clear();
+				}
+			}
+		}
+		else if( gizmoMode == GIZMO_VERTEX )
+		{
+			if( cornerSelection.Num() == 0 )
+			{
+				ImGui::TextDisabled( "Corners: click a dot to pick it, Ctrl+click for more, then drag the arrows." );
+			}
+			else
+			{
+				ImGui::Text( "Corners: %d picked. Drag the arrows; the brush reshapes around them.", cornerSelection.Num() );
+			}
+		}
 	}
 	ImGui::End();
 }
@@ -2119,7 +2972,40 @@ static void HandleShortcuts()
 	}
 	else if( ImGui::IsKeyPressed( ImGuiKey_Escape, false ) )
 	{
-		document.selection.Clear();
+		if( gizmoMode == GIZMO_CLIP && clipPoints.Num() > 0 )
+		{
+			clipPoints.Clear();
+		}
+		else if( gizmoMode == GIZMO_VERTEX && cornerSelection.Num() > 0 )
+		{
+			cornerSelection.Clear();
+		}
+		else
+		{
+			document.selection.Clear();
+		}
+	}
+	else if( gizmoMode == GIZMO_CLIP && ImGui::IsKeyPressed( ImGuiKey_Enter, false ) )
+	{
+		ApplyClip();
+	}
+	else if( gizmoMode == GIZMO_CLIP && ImGui::IsKeyPressed( ImGuiKey_Tab, false ) )
+	{
+		clipKeep = ( clipKeep + 1 ) % 3;
+	}
+	else if( gizmoMode == GIZMO_CLIP && ImGui::IsKeyPressed( ImGuiKey_Backspace, false ) && clipPoints.Num() > 0 )
+	{
+		clipPoints.RemoveIndex( clipPoints.Num() - 1 );
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_C, false ) )
+	{
+		gizmoMode = GIZMO_CLIP;
+		clipPoints.Clear();
+	}
+	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_V, false ) )
+	{
+		gizmoMode = GIZMO_VERTEX;
+		cornerSelection.Clear();
 	}
 	else if( !io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_W, false ) )
 	{
@@ -2151,13 +3037,37 @@ static void HandleViewport()
 	const bool hovered = !io.WantCaptureMouse;
 
 	view.UpdateCamera( hovered );
-	DrawGizmo();
+	if( gizmoMode == GIZMO_CLIP )
+	{
+		EndGizmoDrag();
+		DrawClipTool();
+	}
+	else if( gizmoMode == GIZMO_VERTEX )
+	{
+		EndGizmoDrag();
+		DrawCornerTool();
+	}
+	else
+	{
+		EndCornerDrag( true );
+		DrawGizmo();
+	}
 	DrawViewportToolbar();
 
 	// click selects, Ctrl+click adds or removes, Shift+click picks faces
 	if( hovered && ImGui::IsMouseClicked( ImGuiMouseButton_Left ) && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() )
 	{
-		if( io.KeyShift )
+		idList<Selection> brushes;
+		document.SelectedBrushes( brushes );
+		if( gizmoMode == GIZMO_CLIP && brushes.Num() > 0 )
+		{
+			ClipToolClick( io.MousePos.x, io.MousePos.y );
+		}
+		else if( gizmoMode == GIZMO_VERTEX && CornerToolClick( io.MousePos.x, io.MousePos.y, io.KeyCtrl ) )
+		{
+			// picked a corner
+		}
+		else if( io.KeyShift )
 		{
 			const Selection face = view.Pick( document, io.MousePos.x, io.MousePos.y, true );
 			if( face.IsFace() )
@@ -2270,6 +3180,10 @@ void DrawMainMenuBar()
 		{
 			openNewProjectPopup = true;
 		}
+		if( ImGui::MenuItem( "Open Project..." ) )
+		{
+			openProjectPopup = true;
+		}
 		ImGui::Separator();
 		if( ImGui::MenuItem( "Quit" ) )
 		{
@@ -2322,6 +3236,24 @@ void DrawMainMenuBar()
 		if( ImGui::MenuItem( "Resize tool", "R", gizmoMode == GIZMO_RESIZE ) )
 		{
 			gizmoMode = GIZMO_RESIZE;
+		}
+		if( ImGui::MenuItem( "Clip tool", "C", gizmoMode == GIZMO_CLIP ) )
+		{
+			gizmoMode = GIZMO_CLIP;
+			clipPoints.Clear();
+		}
+		if( ImGui::MenuItem( "Corner tool", "V", gizmoMode == GIZMO_VERTEX ) )
+		{
+			gizmoMode = GIZMO_VERTEX;
+			cornerSelection.Clear();
+		}
+		{
+			idList<Selection> brushes;
+			document.SelectedBrushes( brushes );
+			if( ImGui::MenuItem( "Carve selected brushes", NULL, false, brushes.Num() > 0 ) )
+			{
+				document.SubtractSelection();
+			}
 		}
 		ImGui::MenuItem( "Texture lock", NULL, &document.textureLock );
 		ImGui::Separator();
@@ -2467,6 +3399,7 @@ void Draw( unsigned int mainDockSpaceId )
 
 	DrawAbout();
 	DrawNewProjectDialog();
+	DrawOpenProjectDialog();
 	DrawMapNameDialog( "Save Map As", openSaveAsPopup, false );
 	DrawMapNameDialog( "New Map", openNewMapPopup, true );
 }

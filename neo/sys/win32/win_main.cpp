@@ -380,6 +380,56 @@ void Sys_ReLaunch()
 }
 
 /*
+========================
+Sys_ReLaunchWithArgs
+========================
+*/
+void Sys_ReLaunchWithArgs( const char* const* extraArgs, int numExtraArgs )
+{
+	STARTUPINFO			si;
+	PROCESS_INFORMATION	pi;
+
+	ZeroMemory( &si, sizeof( si ) );
+	si.cb = sizeof( si );
+
+	// keep the original settings (+set ...) but not commands, which already ran
+	idStr cmdLine = va( "\"%s\"", Sys_EXEPath() );
+	idCmdArgs original( Sys_GetCmdLine(), true );
+	bool keepGroup = false;
+	for( int i = 0; i < original.Argc(); i++ )
+	{
+		const char* arg = original.Argv( i );
+		if( arg[0] == '+' )
+		{
+			keepGroup = idStr::Icmpn( arg, "+set", 4 ) == 0;
+		}
+		if( keepGroup )
+		{
+			cmdLine += va( " \"%s\"", arg );
+		}
+	}
+	for( int i = 0; i < numExtraArgs; i++ )
+	{
+		cmdLine += va( " \"%s\"", extraArgs[i] );
+	}
+	if( cmdLine.Find( "com_skipIntroVideos" ) < 0 )
+	{
+		cmdLine.Append( " +set com_skipIntroVideos 1" );
+	}
+
+	CloseHandle( hProcessMutex );
+
+	idTempArray<char> buffer( cmdLine.Length() + 1 );
+	memcpy( buffer.Ptr(), cmdLine.c_str(), cmdLine.Length() + 1 );
+	if( !CreateProcess( NULL, buffer.Ptr(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ) )
+	{
+		idLib::Error( "Could not start process: '%s' ", cmdLine.c_str() );
+		return;
+	}
+	cmdSystem->AppendCommandText( "quit\n" );
+}
+
+/*
 ==============
 Sys_Quit
 ==============

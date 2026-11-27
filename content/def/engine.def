@@ -47,10 +47,35 @@ entityDef func_static
 {
 	"editor_color"			"0 0.5 0.8"
 	"editor_usage"			"Brushes or a model that never move. Use it for detail that shouldn't split the level's visibility."
+	"editor_brushes"		"1"
+	"editor_label"			"Static detail"
 
 	"spawnclass"			"idStaticEntity"
 	"solid"					"1"
 	"noclipmodel"			"0"
+}
+
+entityDef func_door
+{
+	"editor_color"			"0 0.8 1"
+	"editor_usage"			"A sliding door made of brushes. It opens when the player comes near and closes again after 'wait' seconds."
+	"editor_brushes"		"1"
+	"editor_label"			"Door"
+	"editor_var movedir"	"Direction it opens: -1 up, -2 down, otherwise a compass angle (0 = +X, 90 = +Y)."
+	"editor_var speed"		"Opening speed in units per second."
+	"editor_var wait"		"Seconds it stays open before closing. -1 stays open."
+	"editor_var lip"		"How much of the door still shows when it's fully open."
+	"editor_var start_open"	"Starts open when set to 1."
+	"editor_var locked"		"Won't open while set to 1."
+	"editor_var triggersize"	"How close the player gets before it opens."
+	"editor_var no_touch"	"Only opens when triggered by something else, not by walking up to it."
+
+	"spawnclass"			"idDoor"
+	"movedir"				"-1"
+	"speed"					"160"
+	"wait"					"3"
+	"lip"					"8"
+	"triggersize"			"64"
 }
 
 // reflection/ambient light probe; levels get them automatically when lighting is baked

@@ -211,6 +211,16 @@ public:
 	int					AddBrushes( idList<idMapBrush*>& brushes, const char* label );	// into the level, selected
 	void				SetMaterial( const char* material );	// on selected faces, or every face of selected brushes
 
+	// brush tools (EditorDocumentOps.cpp); each records its own undo step
+	void				SelectedBrushes( idList<Selection>& out ) const;	// every selected brush, entities expanded
+	int					SubtractSelection();		// carves the selected brushes out of the rest; pieces made
+	int					ClipSelection( const idPlane& plane, int keep );	// keep: 0 both sides, 1 behind, 2 in front
+	int					GroupSelection( const char* classname );	// selected level brushes become an entity
+	bool				UngroupSelection();			// a brush entity's brushes go back to the level
+
+	// replaces a brush's faces with shape's (copies); no undo step: callers wrap it
+	bool				SetBrushGeometry( int entity, int primitive, const idMapBrush* shape );
+
 	// Moving, turning and resizing. Point p goes to linear * p + translation.
 	// No undo step of their own: callers wrap them in BeginChange/EndChange.
 	void				TranslateSelection( const idVec3& delta );
