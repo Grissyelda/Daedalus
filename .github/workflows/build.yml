@@ -131,6 +131,7 @@ jobs:
           # the level compiler the editor runs in the background
           $rbdmap = Get-ChildItem build/${{ matrix.preset }} -Recurse -Filter rbdmap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
           if ( $rbdmap ) { Copy-Item $rbdmap.FullName package/GrizzTech4/ }
+          elseif ( "${{ matrix.preset }}" -eq "windows-vs2022" ) { throw "rbdmap.exe wasn't built" }
 
       - uses: actions/upload-artifact@v4
         with:
