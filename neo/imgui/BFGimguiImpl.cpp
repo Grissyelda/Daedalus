@@ -141,9 +141,11 @@ bool HandleKeyEvent( const sysEvent_t& keyEvent )
 		// keyboard input as direct input scancodes
 		io.KeysDown[keyNum] = pressed;
 
-		io.KeyAlt = usercmdGen->KeyState( K_LALT ) == 1 || usercmdGen->KeyState( K_RALT ) == 1;
-		io.KeyCtrl = usercmdGen->KeyState( K_LCTRL ) == 1 || usercmdGen->KeyState( K_RCTRL ) == 1;
-		io.KeyShift = usercmdGen->KeyState( K_LSHIFT ) == 1 || usercmdGen->KeyState( K_RSHIFT ) == 1;
+		// GrizzTech4: track the modifiers from these events. usercmdGen never sees them
+		// once ImGui has taken the keyboard, so its key states stay "up".
+		io.KeyAlt = io.KeysDown[K_LALT] || io.KeysDown[K_RALT];
+		io.KeyCtrl = io.KeysDown[K_LCTRL] || io.KeysDown[K_RCTRL];
+		io.KeyShift = io.KeysDown[K_LSHIFT] || io.KeysDown[K_RSHIFT];
 
 		return true;
 	}
@@ -165,15 +167,27 @@ bool HandleKeyEvent( const sysEvent_t& keyEvent )
 // sets the kb-layout specific keys in the keymap
 void FillCharKeys( int* keyMap )
 {
-	// set scancodes as default values in case the real keys aren't found below
-	keyMap[ImGuiKey_A] = K_A;
-	keyMap[ImGuiKey_C] = K_C;
-	keyMap[ImGuiKey_V] = K_V;
-	keyMap[ImGuiKey_X] = K_X;
-	keyMap[ImGuiKey_Y] = K_Y;
-	keyMap[ImGuiKey_Z] = K_Z;
+	// GrizzTech4: map every letter, not just the clipboard and undo ones, so editor shortcuts
+	// (Ctrl+S, Ctrl+D, F, W/E/R...) work. Scancodes first, as defaults for keys whose names
+	// aren't found below.
+	static const keyNum_t letters[26] =
+	{
+		K_A, K_B, K_C, K_D, K_E, K_F, K_G, K_H, K_I, K_J, K_K, K_L, K_M,
+		K_N, K_O, K_P, K_Q, K_R, K_S, K_T, K_U, K_V, K_W, K_X, K_Y, K_Z
+	};
+	for( int i = 0; i < 26; i++ )
+	{
+		keyMap[ImGuiKey_A + i] = letters[i];
+	}
+	keyMap[ImGuiKey_Space] = K_SPACE;
+	keyMap[ImGuiKey_LeftBracket] = K_LBRACKET;
+	keyMap[ImGuiKey_RightBracket] = K_RBRACKET;
+	for( int i = 0; i < 12; i++ )
+	{
+		keyMap[ImGuiKey_F1 + i] = ( i < 10 ) ? K_F1 + i : ( i == 10 ? K_F11 : K_F12 );
+	}
 
-	// try all probable keys for whether they're ImGuiKey_A/C/V/X/Y/Z
+	// then the keyboard layout: whichever key is labelled with a letter gets that letter
 	for( int k = K_1; k < K_RSHIFT; ++k )
 	{
 		const char* kn = idKeyInput::LocalizedKeyName( ( keyNum_t )k );
@@ -183,36 +197,10 @@ void FillCharKeys( int* keyMap )
 			// it's not what we're looking for.
 			continue;
 		}
-		switch( kn[0] )
+		const char c = idStr::ToLower( kn[0] );
+		if( c >= 'a' && c <= 'z' )
 		{
-			case 'a': // fall-through
-			case 'A':
-				keyMap [ImGuiKey_A] = k;
-				break;
-			case 'c': // fall-through
-			case 'C':
-				keyMap [ImGuiKey_C] = k;
-				break;
-
-			case 'v': // fall-through
-			case 'V':
-				keyMap [ImGuiKey_V] = k;
-				break;
-
-			case 'x': // fall-through
-			case 'X':
-				keyMap [ImGuiKey_X] = k;
-				break;
-
-			case 'y': // fall-through
-			case 'Y':
-				keyMap [ImGuiKey_Y] = k;
-				break;
-
-			case 'z': // fall-through
-			case 'Z':
-				keyMap [ImGuiKey_Z] = k;
-				break;
+			keyMap[ImGuiKey_A + ( c - 'a' )] = k;
 		}
 	}
 }
