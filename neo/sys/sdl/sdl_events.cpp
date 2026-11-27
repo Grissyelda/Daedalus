@@ -343,8 +343,44 @@ unsigned char Sys_MapCharForKey( int key )
 Sys_GrabMouseCursor
 ===============
 */
+/*
+===============
+GrizzTech4 editor mouse look: SDL's relative mode hides the pointer, holds it,
+and reports raw movement
+===============
+*/
+static bool		lookCaptured = false;
+static float	lookDeltaX = 0.0f;
+static float	lookDeltaY = 0.0f;
+
+void Sys_CaptureMouseForLook( bool capture, int x, int y )
+{
+	if( capture == lookCaptured )
+	{
+		return;
+	}
+	lookCaptured = capture;
+	lookDeltaX = lookDeltaY = 0.0f;
+	SDL_SetRelativeMouseMode( capture ? SDL_TRUE : SDL_FALSE );
+	if( !capture )
+	{
+		Sys_WarpMouseInWindow( x, y );
+	}
+}
+
+void Sys_GetMouseLookDelta( float& dx, float& dy )
+{
+	dx = lookDeltaX;
+	dy = lookDeltaY;
+	lookDeltaX = lookDeltaY = 0.0f;
+}
+
 void Sys_GrabMouseCursor( bool grabIt )
 {
+	if( lookCaptured )
+	{
+		return;	// the editor's mouse look has it
+	}
 	int flags;
 
 	if( grabIt )
@@ -615,6 +651,12 @@ sysEvent_t Sys_GetEvent()
 				continue; // just handle next event
 
 			case SDL_MOUSEMOTION:
+				// GrizzTech4: raw movement for the editor's mouse look
+				if( lookCaptured )
+				{
+					lookDeltaX += ev.motion.xrel;
+					lookDeltaY += ev.motion.yrel;
+				}
 				// DG: return event with absolute mouse-coordinates when in menu
 				// to fix cursor problems in windowed mode
 				if( game && ( game->Shell_IsActive() || ImGuiTools::ReleaseMouseForTools() ) )

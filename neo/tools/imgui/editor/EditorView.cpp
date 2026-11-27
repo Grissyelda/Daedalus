@@ -45,6 +45,8 @@ static const idVec4 COLOR_FACE( 0.2f, 0.9f, 1.0f, 1.0f );
 static const idVec4 COLOR_DOOR( 0.3f, 1.0f, 0.5f, 1.0f );
 static const char* TOOL_MATERIAL = "editor/toolsurface";
 
+idCVar editor_lookSensitivity( "editor_lookSensitivity", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT | CVAR_NOCHEAT, "how fast the editor camera turns with the mouse", 0.1f, 10.0f );
+
 /*
 ===============================================================================
 
@@ -687,14 +689,26 @@ bool View::UpdateCamera( bool viewportHovered )
 		navMode = NAV_NONE;
 	}
 
+	// While a drag moves the camera the pointer is held still and hidden, and the raw
+	// movement of the mouse (no pointer acceleration) drives the camera, as in a game.
 	idVec2 delta( 0, 0 );
 	if( navMode != NAV_NONE )
 	{
-		// how far the pointer moved, then put it back where the drag started
-		delta.Set( io.MousePos.x - navAnchor.x, io.MousePos.y - navAnchor.y );
-		Sys_WarpMouseInWindow( ( int )navAnchor.x, ( int )navAnchor.y );
+		if( !navCaptured )
+		{
+			Sys_CaptureMouseForLook( true, ( int )navAnchor.x, ( int )navAnchor.y );
+			navCaptured = true;
+		}
+		Sys_GetMouseLookDelta( delta.x, delta.y );
+		delta *= editor_lookSensitivity.GetFloat();
 		ImGuiHook::SetMousePos( navAnchor.x, navAnchor.y );
 		ImGui::SetMouseCursor( ImGuiMouseCursor_None );
+	}
+	else if( navCaptured )
+	{
+		Sys_CaptureMouseForLook( false, ( int )navAnchor.x, ( int )navAnchor.y );
+		ImGuiHook::SetMousePos( navAnchor.x, navAnchor.y );
+		navCaptured = false;
 	}
 
 	const idMat3 axis = camera.Axis();
@@ -703,8 +717,8 @@ bool View::UpdateCamera( bool viewportHovered )
 	{
 		case NAV_LOOK:
 		{
-			camera.yaw -= delta.x * 0.2f;
-			camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + delta.y * 0.2f );
+			camera.yaw -= delta.x * 0.11f;
+			camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + delta.y * 0.11f );
 
 			float speed = camera.speed * ( io.KeyShift ? 3.0f : 1.0f );
 			idVec3 move = vec3_zero;
@@ -745,7 +759,7 @@ bool View::UpdateCamera( bool viewportHovered )
 		case NAV_PAN:
 		{
 			// faster when far from what's in front, like dragging the world by hand
-			const float scale = Max( 0.25f, camera.speed / 384.0f ) * 1.5f;
+			const float scale = Max( 0.25f, camera.speed / 384.0f ) * 0.75f;
 			camera.origin += axis[1] * delta.x * scale;
 			camera.origin += axis[2] * delta.y * scale;
 			break;
@@ -754,8 +768,8 @@ bool View::UpdateCamera( bool viewportHovered )
 		case NAV_ORBIT:
 		{
 			const float distance = Max( 16.0f, ( orbitPivot - camera.origin ).Length() );
-			camera.yaw -= delta.x * 0.3f;
-			camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + delta.y * 0.3f );
+			camera.yaw -= delta.x * 0.15f;
+			camera.pitch = idMath::ClampFloat( -89.0f, 89.0f, camera.pitch + delta.y * 0.15f );
 			camera.origin = orbitPivot - camera.Axis()[0] * distance;
 			break;
 		}

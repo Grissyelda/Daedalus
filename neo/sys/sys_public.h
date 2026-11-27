@@ -619,6 +619,11 @@ void			Sys_GrabMouseCursor( bool grabIt );
 // GrizzTech4: puts the mouse pointer at a position in the window (pixels from its top left)
 void			Sys_WarpMouseInWindow( int x, int y );
 
+// GrizzTech4 editor mouse look: while captured the pointer stays at (x, y) and raw mouse
+// movement (no pointer acceleration) collects for Sys_GetMouseLookDelta, like in a game
+void			Sys_CaptureMouseForLook( bool capture, int x, int y );
+void			Sys_GetMouseLookDelta( float& dx, float& dy );	// movement since the last call
+
 void			Sys_ShowWindow( bool show );
 bool			Sys_IsWindowVisible();
 void			Sys_ShowConsole( int visLevel, bool quitOnClose );

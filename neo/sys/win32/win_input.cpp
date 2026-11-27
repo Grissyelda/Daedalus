@@ -307,6 +307,75 @@ void Sys_WarpMouseInWindow( int x, int y )
 	}
 }
 
+/*
+===========
+Editor mouse look: Raw Input while the pointer is held in place
+===========
+*/
+static LONG	lookDeltaX = 0;
+static LONG	lookDeltaY = 0;
+static bool	lookCaptured = false;
+
+void Win_HandleRawInput( LPARAM lParam )
+{
+	if( !lookCaptured )
+	{
+		return;
+	}
+	RAWINPUT raw;
+	UINT size = sizeof( raw );
+	if( GetRawInputData( ( HRAWINPUT )lParam, RID_INPUT, &raw, &size, sizeof( RAWINPUTHEADER ) ) == ( UINT ) - 1 )
+	{
+		return;
+	}
+	if( raw.header.dwType == RIM_TYPEMOUSE && ( raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE ) == 0 )
+	{
+		lookDeltaX += raw.data.mouse.lLastX;
+		lookDeltaY += raw.data.mouse.lLastY;
+	}
+}
+
+void Sys_CaptureMouseForLook( bool capture, int x, int y )
+{
+	if( capture == lookCaptured || win32.hWnd == NULL )
+	{
+		return;
+	}
+	lookCaptured = capture;
+	lookDeltaX = lookDeltaY = 0;
+
+	RAWINPUTDEVICE device;
+	device.usUsagePage = 0x01;	// generic desktop
+	device.usUsage = 0x02;		// mouse
+	if( capture )
+	{
+		device.dwFlags = 0;
+		device.hwndTarget = win32.hWnd;
+		RegisterRawInputDevices( &device, 1, sizeof( device ) );
+
+		// hold the pointer still where the drag started
+		POINT p = { x, y };
+		ClientToScreen( win32.hWnd, &p );
+		SetCursorPos( p.x, p.y );
+		RECT r = { p.x, p.y, p.x + 1, p.y + 1 };
+		ClipCursor( &r );
+	}
+	else
+	{
+		ClipCursor( NULL );
+		device.dwFlags = RIDEV_REMOVE;
+		device.hwndTarget = NULL;
+		RegisterRawInputDevices( &device, 1, sizeof( device ) );
+	}
+}
+
+void Sys_GetMouseLookDelta( float& dx, float& dy )
+{
+	dx = ( float )lookDeltaX;
+	dy = ( float )lookDeltaY;
+	lookDeltaX = lookDeltaY = 0;
+}
+
 void IN_ActivateMouse()
 {
 	int i;

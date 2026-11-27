@@ -117,6 +117,7 @@ private:
 	};
 	navMode_t		navMode = NAV_NONE;
 	idVec2			navAnchor;
+	bool			navCaptured = false;
 
 	struct Built
 	{

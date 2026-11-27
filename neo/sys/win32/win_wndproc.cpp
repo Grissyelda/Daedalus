@@ -474,6 +474,13 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 
 			return 0;
 		}
+		case WM_INPUT:
+		{
+			// GrizzTech4: raw mouse movement for the editor's mouse look
+			extern void Win_HandleRawInput( LPARAM lParam );
+			Win_HandleRawInput( lParam );
+			break;	// DefWindowProc still has to see it
+		}
 		case WM_MOUSELEAVE:
 		{
 			Sys_QueEvent( SE_MOUSE_LEAVE, 0, 0, 0, NULL, 0 );
