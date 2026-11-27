@@ -43,7 +43,7 @@ static float	scale = 1.0f;
 
 // one accent on neutral greys
 static const ImVec4 ACCENT( 0.96f, 0.58f, 0.24f, 1.0f );
-static const ImVec4 TEXT( 0.90f, 0.91f, 0.92f, 1.0f );
+static const ImVec4 TEXT_COLOR( 0.90f, 0.91f, 0.92f, 1.0f );
 static const ImVec4 MUTED( 0.56f, 0.58f, 0.61f, 1.0f );
 static const ImVec4 GOOD( 0.29f, 0.74f, 0.45f, 1.0f );
 static const ImVec4 BAD( 0.89f, 0.34f, 0.34f, 1.0f );
@@ -222,7 +222,7 @@ static void ApplyStyle()
 	style.SelectableTextAlign = ImVec2( 0.0f, 0.5f );
 
 	ImVec4* c = style.Colors;
-	c[ImGuiCol_Text]					= TEXT;
+	c[ImGuiCol_Text]					= TEXT_COLOR;
 	c[ImGuiCol_TextDisabled]			= MUTED;
 	c[ImGuiCol_WindowBg]				= Grey( 0.118f );
 	c[ImGuiCol_ChildBg]					= Grey( 0.0f, 0.0f );
@@ -450,20 +450,20 @@ bool ToolTile( const char* id, const char* icon, const char* label, bool active,
 		draw->AddRectFilled( pos, max, ImGui::ColorConvertFloat4ToU32( Grey( held ? 0.24f : 0.20f ) ), rounding );
 	}
 
-	const ImU32 iconColor = !enabled ? ImGui::ColorConvertFloat4ToU32( Grey( 0.36f ) ) : active ? AccentU32() : ImGui::ColorConvertFloat4ToU32( TEXT );
+	const ImU32 iconColor = !enabled ? ImGui::ColorConvertFloat4ToU32( Grey( 0.36f ) ) : active ? AccentU32() : ImGui::ColorConvertFloat4ToU32( TEXT_COLOR );
 	const ImU32 labelColor = !enabled ? ImGui::ColorConvertFloat4ToU32( Grey( 0.36f ) ) : active ? AccentU32() : ImGui::ColorConvertFloat4ToU32( MUTED );
 	const bool hasLabel = label != NULL && label[0] != '\0';
 	DrawCentered( draw, Font( FONT_ICON ), ImVec2( pos.x + s * 0.5f, pos.y + s * ( hasLabel ? 0.40f : 0.5f ) ), iconColor, icon, s - 4.0f );
 	if( hasLabel )
 	{
 		// a label too long for the tile keeps its first word ("Player start" -> "Player")
-		ImFont* small = Font( FONT_SMALL );
+		ImFont* smallFont = Font( FONT_SMALL );
 		idStr text = label;
-		if( small->CalcTextSizeA( small->FontSize, FLT_MAX, 0.0f, text.c_str() ).x > s - 6.0f * scale && text.Find( ' ' ) > 0 )
+		if( smallFont->CalcTextSizeA( smallFont->FontSize, FLT_MAX, 0.0f, text.c_str() ).x > s - 6.0f * scale && text.Find( ' ' ) > 0 )
 		{
 			text = text.Left( text.Find( ' ' ) );
 		}
-		DrawCentered( draw, small, ImVec2( pos.x + s * 0.5f, pos.y + s * 0.80f ), labelColor, text.c_str(), s - 6.0f * scale );
+		DrawCentered( draw, smallFont, ImVec2( pos.x + s * 0.5f, pos.y + s * 0.80f ), labelColor, text.c_str(), s - 6.0f * scale );
 	}
 
 	if( tooltip != NULL && tooltip[0] != '\0' && !held )
@@ -495,7 +495,7 @@ bool IconButton( const char* id, const char* icon, const char* tooltip, bool act
 	{
 		draw->AddRectFilled( pos, max, ImGui::ColorConvertFloat4ToU32( Grey( held ? 0.26f : 0.21f ) ), ImGui::GetStyle().FrameRounding );
 	}
-	const ImU32 color = !enabled ? ImGui::ColorConvertFloat4ToU32( Grey( 0.36f ) ) : active ? AccentU32() : ImGui::ColorConvertFloat4ToU32( TEXT );
+	const ImU32 color = !enabled ? ImGui::ColorConvertFloat4ToU32( Grey( 0.36f ) ) : active ? AccentU32() : ImGui::ColorConvertFloat4ToU32( TEXT_COLOR );
 	ImFont* font = ImGui::GetFont();
 	const ImVec2 size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.0f, icon );
 	draw->AddText( font, font->FontSize, ImVec2( idMath::Rint( pos.x + ( h - size.x ) * 0.5f ), idMath::Rint( pos.y + ( h - size.y ) * 0.5f ) ), color, icon );
@@ -537,7 +537,7 @@ bool ModeTab( const char* icon, const char* label, bool active, const char* tool
 	{
 		draw->AddRectFilled( pos, max, ImGui::ColorConvertFloat4ToU32( Grey( 0.22f ) ), size.y * 0.5f );
 	}
-	const ImU32 color = active ? ImGui::ColorConvertFloat4ToU32( Grey( 0.08f ) ) : ImGui::ColorConvertFloat4ToU32( hovered ? TEXT : MUTED );
+	const ImU32 color = active ? ImGui::ColorConvertFloat4ToU32( Grey( 0.08f ) ) : ImGui::ColorConvertFloat4ToU32( hovered ? TEXT_COLOR : MUTED );
 	draw->AddText( font, font->FontSize, ImVec2( pos.x + padding.x, pos.y + padding.y ), color, text.c_str() );
 
 	Tip( tooltip );
@@ -605,20 +605,20 @@ bool BeginCard( const char* id, const char* icon, const char* title, const char*
 		draw->AddText( bold, bold->FontSize, ImVec2( x, textY ), AccentU32(), icon );
 		x += bold->FontSize * 1.6f;
 	}
-	draw->AddText( bold, bold->FontSize, ImVec2( x, textY ), ImGui::ColorConvertFloat4ToU32( TEXT ), title );
+	draw->AddText( bold, bold->FontSize, ImVec2( x, textY ), ImGui::ColorConvertFloat4ToU32( TEXT_COLOR ), title );
 
 	// fold arrow and help on the right
 	const float right = headerMin.x + card.width - pad;
 	const char* chevron = *open ? ICON_CHEVRON_DOWN : ICON_CHEVRON_RIGHT;
 	const float chevronWidth = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.0f, chevron ).x;
-	draw->AddText( bold, bold->FontSize, ImVec2( right - chevronWidth, textY ), ImGui::ColorConvertFloat4ToU32( headerHovered ? TEXT : MUTED ), chevron );
+	draw->AddText( bold, bold->FontSize, ImVec2( right - chevronWidth, textY ), ImGui::ColorConvertFloat4ToU32( headerHovered ? TEXT_COLOR : MUTED ), chevron );
 	if( help != NULL && help[0] != '\0' )
 	{
 		const float helpWidth = bold->CalcTextSizeA( bold->FontSize, FLT_MAX, 0.0f, ICON_HELP ).x;
 		const ImVec2 helpMin( right - chevronWidth - helpWidth - pad, textY );
 		const ImVec2 helpMax( helpMin.x + helpWidth, helpMin.y + bold->FontSize );
 		const bool overHelp = ImGui::IsMouseHoveringRect( ImVec2( helpMin.x - 4, helpMin.y - 4 ), ImVec2( helpMax.x + 4, helpMax.y + 4 ) );
-		draw->AddText( bold, bold->FontSize, helpMin, ImGui::ColorConvertFloat4ToU32( overHelp ? TEXT : MUTED ), ICON_HELP );
+		draw->AddText( bold, bold->FontSize, helpMin, ImGui::ColorConvertFloat4ToU32( overHelp ? TEXT_COLOR : MUTED ), ICON_HELP );
 		if( overHelp )
 		{
 			ImGui::BeginTooltip();

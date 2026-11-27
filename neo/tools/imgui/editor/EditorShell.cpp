@@ -4706,15 +4706,15 @@ static bool HandleToolWheel( bool hovered )
 		const ImVec2 iconSize = iconFont->CalcTextSizeA( iconFont->FontSize, FLT_MAX, 0.0f, item.icon );
 		const ImU32 color = ( i == hot ) ? IM_COL32( 20, 20, 22, 255 ) : current ? UI::AccentU32() : IM_COL32( 230, 231, 234, 255 );
 		draw->AddText( iconFont, iconFont->FontSize, ImVec2( c.x - iconSize.x * 0.5f, c.y - iconSize.y * 0.5f - 7.0f * s ), color, item.icon );
-		ImFont* small = UI::Font( UI::FONT_SMALL );
-		const ImVec2 labelSize = small->CalcTextSizeA( small->FontSize, FLT_MAX, 0.0f, item.label );
-		draw->AddText( small, small->FontSize, ImVec2( c.x - labelSize.x * 0.5f, c.y + iconSize.y * 0.5f - 4.0f * s ), color, item.label );
+		ImFont* smallFont = UI::Font( UI::FONT_SMALL );
+		const ImVec2 labelSize = smallFont->CalcTextSizeA( smallFont->FontSize, FLT_MAX, 0.0f, item.label );
+		draw->AddText( smallFont, smallFont->FontSize, ImVec2( c.x - labelSize.x * 0.5f, c.y + iconSize.y * 0.5f - 4.0f * s ), color, item.label );
 	}
 	draw->AddCircleFilled( wheelCenter, inner - 4.0f * s, IM_COL32( 32, 33, 37, 255 ), 32 );
-	ImFont* small = UI::Font( UI::FONT_SMALL );
+	ImFont* smallFont = UI::Font( UI::FONT_SMALL );
 	const char* centerText = hot >= 0 ? wheelItems[hot].label : "Space";
-	const ImVec2 centerSize = small->CalcTextSizeA( small->FontSize, FLT_MAX, 0.0f, centerText );
-	draw->AddText( small, small->FontSize, ImVec2( wheelCenter.x - centerSize.x * 0.5f, wheelCenter.y - centerSize.y * 0.5f ), IM_COL32( 200, 201, 205, 255 ), centerText );
+	const ImVec2 centerSize = smallFont->CalcTextSizeA( smallFont->FontSize, FLT_MAX, 0.0f, centerText );
+	draw->AddText( smallFont, smallFont->FontSize, ImVec2( wheelCenter.x - centerSize.x * 0.5f, wheelCenter.y - centerSize.y * 0.5f ), IM_COL32( 200, 201, 205, 255 ), centerText );
 
 	if( !spaceDown || ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
 	{
