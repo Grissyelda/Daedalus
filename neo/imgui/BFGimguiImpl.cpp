@@ -253,6 +253,14 @@ bool UseInput()
 	return ( ImGuiTools::ReleaseMouseForTools() || imgui_showDemoWindow.GetBool() );
 }
 
+// GrizzTech4: while a level is played from the editor the mouse belongs to the game.
+// ImGui still draws the menu bar then, so it must not see the game's clicks: the cursor
+// is hidden but ImGui would keep its last position (usually right on the Play/Stop button).
+static bool PlayingFromEditor()
+{
+	return GrizzEditor::IsEditorMode() && !GrizzEditor::IsEditing() && !ImGuiTools::AreEditorsActive() && !imgui_showDemoWindow.GetBool();
+}
+
 void StyleGruvboxDark()
 {
 	auto& style = ImGui::GetStyle();
@@ -777,7 +785,7 @@ void NotifyDisplaySizeChanged( int width, int height )
 // inject a sys event
 bool InjectSysEvent( const sysEvent_t* event )
 {
-	if( IsInitialized() && ( UseInput() || RightMouseActive() ) )
+	if( IsInitialized() && ( UseInput() || RightMouseActive() ) && !PlayingFromEditor() )
 	{
 		if( event == NULL )
 		{
@@ -827,7 +835,7 @@ bool RightMouseActive()
 
 bool InjectMouseWheel( int delta )
 {
-	if( IsInitialized() && UseInput() && delta != 0 )
+	if( IsInitialized() && UseInput() && !PlayingFromEditor() && delta != 0 )
 	{
 		g_MouseWheel = ( delta > 0 ) ? 1 : -1;
 		return true;
@@ -857,14 +865,28 @@ void NewFrame()
 		g_Time = current_time;
 
 		// Setup inputs
-		io.MousePos = g_MousePos;
-
-		// If a mouse press event came, always pass it as "mouse held this frame",
-		// so we don't miss click-release events that are shorter than 1 frame.
-		for( int i = 0; i < 5; ++i )
+		if( PlayingFromEditor() )
 		{
-			io.MouseDown[i] = g_MousePressed[i] || usercmdGen->KeyState( K_MOUSE1 + i ) == 1;
-			//g_MousePressed[i] = false;
+			// the game has the mouse: no position, no buttons, and nothing left held for later
+			io.MousePos = ImVec2( -FLT_MAX, -FLT_MAX );
+			g_MousePos = ImVec2( -1.0f, -1.0f );
+			for( int i = 0; i < 5; ++i )
+			{
+				g_MousePressed[i] = false;
+				io.MouseDown[i] = false;
+			}
+		}
+		else
+		{
+			io.MousePos = g_MousePos;
+
+			// If a mouse press event came, always pass it as "mouse held this frame",
+			// so we don't miss click-release events that are shorter than 1 frame.
+			for( int i = 0; i < 5; ++i )
+			{
+				io.MouseDown[i] = g_MousePressed[i] || usercmdGen->KeyState( K_MOUSE1 + i ) == 1;
+				//g_MousePressed[i] = false;
+			}
 		}
 
 		io.MouseWheel = g_MouseWheel;
