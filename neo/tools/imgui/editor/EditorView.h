@@ -105,6 +105,7 @@ public:
 
 	void			Shutdown();
 
+	idList<idVec3>	leakPath;				// the last build's leak, from inside out to the void (drawn in red)
 	bool			wireframe = false;		// draw triangle outlines over everything
 	bool			showGrid = true;		// a grid on the floor plane
 	float			gridSize = 8.0f;		// the editor's grid step, set by the shell

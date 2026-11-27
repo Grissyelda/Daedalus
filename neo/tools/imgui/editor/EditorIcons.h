@@ -52,6 +52,7 @@
 #define ICON_PLAY             "\xee\x84\xbc"	// play
 #define ICON_STOP             "\xee\x85\xa7"	// square
 #define ICON_PAUSE            "\xee\x84\xae"	// pause
+#define ICON_BUILD            "\xee\x83\xac"	// hammer
 #define ICON_UNDO             "\xee\x8a\xa1"	// undo-2
 #define ICON_REDO             "\xee\x8a\xa0"	// redo-2
 #define ICON_SAVE             "\xee\x85\x8d"	// save

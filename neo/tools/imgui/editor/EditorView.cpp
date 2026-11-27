@@ -811,6 +811,16 @@ void View::Draw( const Document& doc )
 	// while editing, so clear them here or they pile up until the buffer is full.
 	world->DebugClearLines( 0 );
 
+	// the leak: a line from inside the level out through the gap
+	for( int i = 0; i + 1 < leakPath.Num(); i++ )
+	{
+		world->DebugLine( colorRed, leakPath[i], leakPath[i + 1], 0, false );
+	}
+	if( leakPath.Num() > 0 )
+	{
+		world->DebugArrow( colorRed, leakPath[leakPath.Num() - 2 >= 0 ? leakPath.Num() - 2 : 0], leakPath[leakPath.Num() - 1], 12 );
+	}
+
 	const idMapFile* map = doc.Map();
 	if( map != NULL )
 	{

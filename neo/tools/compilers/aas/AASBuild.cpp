@@ -1116,7 +1116,10 @@ void RunAAS_f( const idCmdArgs& args )
 	const idDict* dict = FindEntityDefDict( "aas_types", false );
 	if( !dict )
 	{
-		common->Error( "Unable to find entityDef for 'aas_types'" );
+		// GrizzTech4: projects without AI have no navigation types; that's not an error
+		common->Printf( "No AI navigation types (aas_types) defined: skipping AAS\n" );
+		common->SetRefreshOnPrint( false );
+		return;
 	}
 
 	const idKeyValue* kv = dict->MatchPrefix( "type" );

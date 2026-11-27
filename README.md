@@ -52,7 +52,8 @@ Run the executable from the repository root (or a package folder), next to `cont
 
 - The level fills the middle. The **tool dock** at the bottom has five tabs: **Build** (move, turn, resize, draw, cut, corners, and shapes to drag in), **Paint** (click surfaces to paint them), **Logic** (doors and the player start), **Light** and **Kits** (ready-made things to drop in). Keys 1 to 5 switch tabs; hold **Space** over the level for a wheel of every tool.
 - The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** panels dock around it. Drag a panel's tab to rearrange them, or out of the window onto another monitor (`editor_detachablePanels 0` turns that off). **View → Reset layout** puts them back.
-- **Play** (top centre) saves and runs the open level, compiling it first when it's new or has changed. **Esc** or **F10** returns to the editor.
+- **Play** (top centre, **F5**) saves and runs the open level. **Esc** pauses it and brings the editor back with the game still loaded: changes go into the game, and brush changes rebuild the level around you when you carry on (**F5**). **F10** stops.
+- Levels are compiled by `rbdmap`, which ships next to the editor and runs in the background (the bar left of Play shows how far it's got), so the editor never freezes. Play builds when the level needs it; **File → Build** (**Ctrl+B**) builds without playing. What the build says shows up in **Problems**, with the full build log a click away.
 - **File → New Project** creates a project folder from `template/` and asks whether it starts with the stylized or the PBR look. **File → Open Project** switches to another project.
 - Start with `+set editor 0` to run as the game, without the editor. `editor_uiScale` makes the editor's text and controls bigger or smaller.
 - **Help → Getting started** walks through building a first level.

@@ -64,6 +64,16 @@ jobs:
           cp build/${{ matrix.preset }}/GrizzTech4 package/GrizzTech4/
           cp -r content template README.md LICENSE.md LICENSE_EXCEPTIONS.md package/GrizzTech4/
           rm -rf package/GrizzTech4/content/maps/testmaps/*.proc package/GrizzTech4/content/maps/testmaps/*.cm
+          # the level compiler the editor runs in the background
+          if [ -f build/${{ matrix.preset }}/tools/compilers/rbdmap ]; then cp build/${{ matrix.preset }}/tools/compilers/rbdmap package/GrizzTech4/; fi
+
+      - name: Level compiler test
+        if: matrix.preset == 'linux-release'
+        run: |
+          cd package/GrizzTech4
+          ./rbdmap -nogui +set fs_basepath "$PWD" +set fs_savepath "$RUNNER_TEMP/save" testmaps/gt4_test_room > "$RUNNER_TEMP/rbdmap.log" 2>&1 || { cat "$RUNNER_TEMP/rbdmap.log"; exit 1; }
+          test -f content/maps/testmaps/gt4_test_room.proc || { cat "$RUNNER_TEMP/rbdmap.log"; echo "rbdmap wrote no .proc"; exit 1; }
+          rm -f content/maps/testmaps/*.proc content/maps/testmaps/*.cm content/maps/testmaps/*.lin
 
       - uses: actions/upload-artifact@v4
         with:
@@ -118,6 +128,9 @@ jobs:
           if ( "${{ matrix.preset }}" -eq "windows-vs2022" ) { Copy-Item build/${{ matrix.preset }}/Release/GrizzTech4.pdb package/GrizzTech4/ }
           Copy-Item -Recurse content, template package/GrizzTech4/
           Copy-Item README.md, LICENSE.md, LICENSE_EXCEPTIONS.md package/GrizzTech4/
+          # the level compiler the editor runs in the background
+          $rbdmap = Get-ChildItem build/${{ matrix.preset }} -Recurse -Filter rbdmap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if ( $rbdmap ) { Copy-Item $rbdmap.FullName package/GrizzTech4/ }
 
       - uses: actions/upload-artifact@v4
         with:

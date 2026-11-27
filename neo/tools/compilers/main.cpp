@@ -208,7 +208,7 @@ void Sys_Printf( const char* fmt, ... )
 	msg[ sizeof( msg ) - 1 ] = '\0';
 	va_end( argptr );
 
-	printf( msg );
+	printf( "%s", msg );
 	OutputDebugString( msg );
 
 	tuiLog.AddLog( "%s", msg );
@@ -226,7 +226,7 @@ void Sys_VPrintf( const char* fmt, va_list arg )
 	idStr::vsnPrintf( msg, MAXPRINTMSG - 1, fmt, arg );
 	msg[ sizeof( msg ) - 1 ] = '\0';
 
-	printf( msg );
+	printf( "%s", msg );
 	OutputDebugString( msg );
 
 	tuiLog.AddLog( "%s", msg );
@@ -1048,7 +1048,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
-		exit( 0 );
+		exit( 1 );	// GrizzTech4: so the editor can tell a failed build
 	}
 	virtual void			FatalError( const char* fmt, ... )
 	{
@@ -1058,7 +1058,7 @@ public:
 		{
 			common->UpdateScreen( false );
 		}
-		exit( 0 );
+		exit( 1 );
 	}
 
 	// Returns key bound to the command
@@ -1296,6 +1296,9 @@ int com_editors = 0;
 int Dmap_NoGui( int argc, char** argv )
 {
 	commonLocal.com_refreshOnPrint = false;
+
+	// GrizzTech4: unbuffered, so whoever reads the output (the editor's build progress) sees it as it happens
+	setvbuf( stdout, NULL, _IONBF, 0 );
 
 	idLib::common = common;
 	idLib::cvarSystem = cvarSystem;

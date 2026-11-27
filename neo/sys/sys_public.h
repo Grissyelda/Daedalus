@@ -624,6 +624,15 @@ void			Sys_WarpMouseInWindow( int x, int y );
 void			Sys_CaptureMouseForLook( bool capture, int x, int y );
 void			Sys_GetMouseLookDelta( float& dx, float& dy );	// movement since the last call
 
+// GrizzTech4: child processes. The editor builds levels in one, so it never freezes.
+// What the process prints (stdout and stderr) goes to the file at outputPath (an OS path, UTF-8).
+void* 			Sys_ProcessStart( const char* exePath, const char* const* args, int numArgs, const char* workingDir, const char* outputPath );
+bool			Sys_ProcessFinished( void* process, int& exitCode );	// true once it has ended; exitCode is then set
+int				Sys_ProcessReadOutput( void* process, char* buffer, int size );	// what it has printed since the last call (0 = nothing new)
+void			Sys_ProcessKill( void* process );
+void			Sys_ProcessFree( void* process );						// after it has finished or been killed
+const char* 	Sys_EXEPath();
+
 // GrizzTech4: extra OS windows, for editor panels dragged out of the main window
 // (e.g. onto another monitor). Rectangles are client areas in screen pixels.
 struct sysScreenRect_t

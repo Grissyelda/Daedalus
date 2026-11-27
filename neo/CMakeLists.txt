@@ -796,6 +796,7 @@ file(GLOB TIMIDITY_SOURCES libs/timidity/*.cpp)
 file(GLOB_RECURSE WIN32_INCLUDES sys/win32/*.h)
 set(WIN32_SOURCES
 	sys/win32/win_extrawindows.cpp
+	sys/win32/win_process.cpp
 	sys/win32/win_glimp.cpp
 	sys/win32/win_input.cpp
 	sys/win32/win_main.cpp

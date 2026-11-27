@@ -258,6 +258,317 @@ static bool IsPlaying()
 	return state == idSession::LOADING || state == idSession::INGAME;
 }
 
+// Play from the camera: once the level has loaded, the player is moved to where the camera was
+static bool			playTeleportPending = false;
+static bool			playStarting = false;		// Play was pressed and the level hasn't started loading yet
+static idVec3		playTeleportEye;
+static idAngles		playTeleportAngles;
+
+/*
+===============================================================================
+
+	Build
+
+	Compiling a level (rbdmap) runs as a separate program, so the editor keeps
+	working while it does; the menu bar shows how far it has got. Play waits for
+	it, and brush changes made while Play is paused rebuild before the game
+	carries on. If rbdmap can't be found (or editor_buildInProcess is set) the
+	level is compiled inside the editor instead, which freezes it meanwhile.
+
+===============================================================================
+*/
+
+enum buildThen_t
+{
+	BUILD_THEN_NOTHING,
+	BUILD_THEN_PLAY,		// start playing it
+	BUILD_THEN_RELOAD		// Play is paused: reload the level around the player
+};
+
+idCVar editor_buildInProcess( "editor_buildInProcess", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_ARCHIVE | CVAR_NOCHEAT, "compile levels inside the editor (it freezes meanwhile) instead of with the rbdmap program" );
+
+static void*		buildProcess = NULL;
+static idStr		buildMap;
+static idStr		buildLogPath;			// OS path of rbdmap's output
+static idStr		buildLog;				// all of it, for the log window
+static idStr		buildLinePart;			// a line still being written
+static int			buildStartTime = 0;
+static int			buildStageTime = 0;
+static float		buildStageFrom = 0.0f;
+static float		buildStageTo = 0.0f;
+static idStr		buildStage;
+static buildThen_t	buildThen = BUILD_THEN_NOTHING;
+static bool			buildHasResult = false;	// a build has finished since the editor started
+static bool			buildFailed = false;
+static idStr		buildResultMap;
+static int			buildSeconds = 0;
+static idStrList	buildProblems;			// warnings and errors of the last build
+static ID_TIME_T	buildMapTime = FILE_NOT_FOUND_TIMESTAMP;	// when the level being built was saved
+static bool			showBuildLog = false;
+static bool			focusProblems = false;		// bring Problems to the front (a build failed)
+static bool			buildLeaked = false;		// the last build found a leak
+
+static void StartLevel( const char* mapName );
+static void ReloadAtPlayer();
+
+static bool BuildRunning()
+{
+	return buildProcess != NULL;
+}
+
+// rbdmap sits next to the editor in a package, and in the build tree in a development build
+static bool FindCompiler( idStr& path )
+{
+#ifdef _WIN32
+	const char* name = "rbdmap.exe";
+	const char* places[] = { "", "tools/compilers/Release/", "../tools/compilers/Release/", "tools/compilers/" };
+#else
+	const char* name = "rbdmap";
+	const char* places[] = { "", "tools/compilers/" };
+#endif
+	idStr dir = Sys_EXEPath();
+	dir.BackSlashesToSlashes();
+	dir.StripFilename();
+	for( int i = 0; i < sizeof( places ) / sizeof( places[0] ); i++ )
+	{
+		idStr candidate = va( "%s/%s%s", dir.c_str(), places[i], name );
+		FILE* f = fopen( candidate.c_str(), "rb" );
+		if( f != NULL )
+		{
+			fclose( f );
+#ifdef _WIN32
+			candidate.SlashesToBackSlashes();
+#endif
+			path = candidate;
+			return true;
+		}
+	}
+	return false;
+}
+
+// the level has never been compiled, or was saved since
+static bool LevelNeedsBuild( const char* mapName )
+{
+	ID_TIME_T mapTime = FILE_NOT_FOUND_TIMESTAMP;
+	ID_TIME_T procTime = FILE_NOT_FOUND_TIMESTAMP;
+	fileSystem->ReadFile( va( "maps/%s.map", mapName ), NULL, &mapTime );
+	fileSystem->ReadFile( va( "maps/%s.proc", mapName ), NULL, &procTime );
+	return procTime == FILE_NOT_FOUND_TIMESTAMP || ( mapTime != FILE_NOT_FOUND_TIMESTAMP && mapTime > procTime );
+}
+
+// the level was saved again after the running build read it
+static bool LevelNeedsBuildSince()
+{
+	ID_TIME_T mapTime = FILE_NOT_FOUND_TIMESTAMP;
+	fileSystem->ReadFile( va( "maps/%s.map", buildMap.c_str() ), NULL, &mapTime );
+	return mapTime != buildMapTime;
+}
+
+static void BuildSetStage( const char* label, float from, float to )
+{
+	buildStage = label;
+	buildStageFrom = Max( from, buildStageFrom );
+	buildStageTo = Max( to, buildStageFrom );
+	buildStageTime = Sys_Milliseconds();
+}
+
+// how far the build has got: the stage it's in, creeping on towards the next one
+static float BuildProgress()
+{
+	const float t = ( Sys_Milliseconds() - buildStageTime ) * 0.001f;
+	return buildStageFrom + ( buildStageTo - buildStageFrom ) * ( 1.0f - idMath::Exp( -t / 6.0f ) );
+}
+
+static void BuildReadLine( const char* line )
+{
+	struct stage_t
+	{
+		const char* marker;
+		const char* label;
+		float		from, to;
+	};
+	static const stage_t stages[] =
+	{
+		{ "Initializing File System",	"Starting",					0.02f, 0.05f },
+		{ "Initializing Decls",			"Loading materials",		0.05f, 0.12f },
+		{ "--- LoadDMapFile ---",		"Reading the level",		0.12f, 0.35f },
+		{ "--- FloodEntities ---",		"Checking it's sealed",		0.35f, 0.42f },
+		{ "--- FillOutside ---",		"Cutting away the outside",	0.42f, 0.50f },
+		{ "--- FloodAreas ---",			"Splitting it into areas",	0.50f, 0.75f },
+		{ "----- WriteOutputFile -----", "Writing the level",		0.75f, 0.82f },
+		{ "collision map",				"Building collision",		0.82f, 0.92f },
+		{ "compiling AAS",				"Building AI navigation",	0.92f, 0.98f },
+	};
+	for( int i = 0; i < sizeof( stages ) / sizeof( stages[0] ); i++ )
+	{
+		if( strstr( line, stages[i].marker ) != NULL )
+		{
+			BuildSetStage( stages[i].label, stages[i].from, stages[i].to );
+			break;
+		}
+	}
+
+	const bool warning = idStr::Cmpn( line, "WARNING: ", 9 ) == 0;
+	const bool error = idStr::Cmpn( line, "ERROR: ", 7 ) == 0 || idStr::Cmpn( line, "FATAL ERROR: ", 13 ) == 0;
+	if( !warning && !error )
+	{
+		return;
+	}
+	idStr text = strchr( line, ':' ) + 1;
+	text.StripLeading( ' ' );
+	text.StripTrailingWhitespace();
+	if( strstr( line, "Couldn't load image" ) != NULL )
+	{
+		return;		// rbdmap has no renderer; images are the game's business
+	}
+	if( strstr( line, "leaked" ) != NULL )
+	{
+		buildLeaked = true;
+		text = "The level leaks: there's a gap somewhere between the inside and the void outside, so it can't be built. Show draws a red line from inside, out through the gap.";
+	}
+	buildProblems.Append( text );
+}
+
+// pick up what rbdmap has printed since last time
+static void BuildReadLog()
+{
+	char data[4096];
+	int got;
+	while( buildProcess != NULL && ( got = Sys_ProcessReadOutput( buildProcess, data, sizeof( data ) - 1 ) ) > 0 )
+	{
+		data[got] = '\0';
+		if( buildLog.Length() < 512 * 1024 )
+		{
+			buildLog += data;
+		}
+		buildLinePart += data;
+		int start = 0;
+		for( int i = 0; i < buildLinePart.Length(); i++ )
+		{
+			if( buildLinePart[i] == '\n' )
+			{
+				idStr line = buildLinePart.Mid( start, i - start );
+				line.StripTrailing( '\r' );
+				BuildReadLine( line.c_str() );
+				start = i + 1;
+			}
+		}
+		buildLinePart = buildLinePart.Right( buildLinePart.Length() - start );
+	}
+}
+
+static void CancelBuild()
+{
+	if( buildProcess != NULL )
+	{
+		Sys_ProcessKill( buildProcess );
+		Sys_ProcessFree( buildProcess );
+		buildProcess = NULL;
+		common->Printf( "Editor: build of %s cancelled\n", buildMap.c_str() );
+	}
+	if( buildThen == BUILD_THEN_PLAY )
+	{
+		playStarting = false;
+	}
+	buildThen = BUILD_THEN_NOTHING;
+}
+
+// compile a level in the background; 'then' says what happens once it has built
+static void StartBuild( const char* mapName, buildThen_t then )
+{
+	if( BuildRunning() )
+	{
+		if( buildMap.Icmp( mapName ) == 0 && !LevelNeedsBuildSince() )
+		{
+			buildThen = then;	// already on it
+			return;
+		}
+		CancelBuild();
+	}
+
+	buildMap = mapName;
+	buildThen = then;
+	buildProblems.Clear();
+	buildLeaked = false;
+	view.leakPath.Clear();
+	buildLog.Clear();
+	buildLinePart.Clear();
+	buildStage = "Starting";
+	buildStageFrom = buildStageTo = 0.0f;
+	BuildSetStage( "Starting", 0.0f, 0.05f );
+	buildStartTime = Sys_Milliseconds();
+	fileSystem->ReadFile( va( "maps/%s.map", mapName ), NULL, &buildMapTime );
+
+	idStr compiler;
+	if( editor_buildInProcess.GetBool() || !FindCompiler( compiler ) )
+	{
+		// the old way: dmap runs inside the editor, which waits for it
+		common->Printf( "Editor: compiling %s inside the editor\n", mapName );
+		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "dmap %s\n", mapName ) );
+		buildThen = BUILD_THEN_NOTHING;
+		if( then == BUILD_THEN_PLAY )
+		{
+			StartLevel( mapName );
+		}
+		else if( then == BUILD_THEN_RELOAD )
+		{
+			ReloadAtPlayer();
+		}
+		return;
+	}
+
+	// the log goes next to the project's saved files
+	idStr logName = mapName;
+	logName.Replace( "/", "_" );
+	logName = va( "build/%s.log", logName.c_str() );
+	fileSystem->WriteFile( logName.c_str(), "", 0, "fs_savepath" );	// creates the folder
+	buildLogPath = fileSystem->RelativePathToOSPath( logName.c_str(), "fs_savepath" );
+
+	idStrList args;
+	args.Append( "-nogui" );
+	const char* cvars[] = { "fs_basepath", "fs_savepath", "fs_game", "fs_game_base" };
+	for( int i = 0; i < sizeof( cvars ) / sizeof( cvars[0] ); i++ )
+	{
+		const char* value = cvarSystem->GetCVarString( cvars[i] );
+		if( value != NULL && value[0] != '\0' )
+		{
+			args.Append( "+set" );
+			args.Append( cvars[i] );
+			args.Append( value );
+		}
+	}
+	args.Append( mapName );
+	idList<const char*> argv;
+	for( int i = 0; i < args.Num(); i++ )
+	{
+		argv.Append( args[i].c_str() );
+	}
+
+	common->Printf( "Editor: building %s with %s\n", mapName, compiler.c_str() );
+	buildProcess = Sys_ProcessStart( compiler.c_str(), argv.Ptr(), argv.Num(), cvarSystem->GetCVarString( "fs_basepath" ), buildLogPath.c_str() );
+	if( buildProcess == NULL )
+	{
+		// couldn't start it: fall back to building inside the editor
+		editor_buildInProcess.SetBool( true );
+		StartBuild( mapName, then );
+		editor_buildInProcess.SetBool( false );
+	}
+}
+
+static void StartLevel( const char* mapName )
+{
+	// a held F5 repeats: start loading once
+	static int lastStart = -100000;
+	if( Sys_Milliseconds() - lastStart < 3000 && !IsPlaying() )
+	{
+		return;
+	}
+	lastStart = Sys_Milliseconds();
+	common->Printf( "Editor: playing %s (Esc pauses to edit, F10 stops)\n", mapName );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", mapName ) );
+}
+
+// build the level when it needs it, then play it
 static void Play( const char* mapName )
 {
 	if( mapName == NULL || mapName[0] == '\0' )
@@ -265,27 +576,14 @@ static void Play( const char* mapName )
 		common->Warning( "Play: no map open" );
 		return;
 	}
-
-	// compile the map first when it has never been compiled or was saved since
-	ID_TIME_T mapTime = FILE_NOT_FOUND_TIMESTAMP;
-	ID_TIME_T procTime = FILE_NOT_FOUND_TIMESTAMP;
-	fileSystem->ReadFile( va( "maps/%s.map", mapName ), NULL, &mapTime );
-	fileSystem->ReadFile( va( "maps/%s.proc", mapName ), NULL, &procTime );
-	if( procTime == FILE_NOT_FOUND_TIMESTAMP || ( mapTime != FILE_NOT_FOUND_TIMESTAMP && mapTime > procTime ) )
+	if( LevelNeedsBuild( mapName ) || ( BuildRunning() && buildMap.Icmp( mapName ) == 0 ) )
 	{
-		common->Printf( "Editor: compiling %s before playing\n", mapName );
-		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "dmap %s\n", mapName ) );
+		StartBuild( mapName, BUILD_THEN_PLAY );
+		return;
 	}
-
-	common->Printf( "Editor: playing %s (Esc pauses to edit, F10 stops)\n", mapName );
-	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", mapName ) );
+	StartLevel( mapName );
 }
 
-// Play from the camera: once the level has loaded, the player is moved to where the camera was
-static bool			playTeleportPending = false;
-static bool			playStarting = false;		// Play was pressed and the level hasn't started loading yet
-static idVec3		playTeleportEye;
-static idAngles		playTeleportAngles;
 
 static void PlayDocument( bool fromCamera );
 
@@ -320,8 +618,28 @@ static void PlayDocument( bool fromCamera )
 	Play( document.Name() );
 }
 
+// File > Build: save and compile the open level, without playing it
+static void BuildDocument()
+{
+	if( !document.IsOpen() )
+	{
+		return;
+	}
+	if( document.IsDirty() && !document.Save() )
+	{
+		Status( "Couldn't save the level, so it can't be built" );
+		return;
+	}
+	mapListDirty = true;
+	StartBuild( document.Name(), ( BuildRunning() && buildThen != BUILD_THEN_NOTHING ) ? buildThen : BUILD_THEN_NOTHING );
+}
+
 static void Stop()
 {
+	if( buildThen == BUILD_THEN_RELOAD )
+	{
+		buildThen = BUILD_THEN_NOTHING;		// the build carries on; nothing to reload into
+	}
 	if( IsPlaying() )
 	{
 		cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "disconnect\n" );
@@ -615,20 +933,171 @@ static void PausePlay()
 	Status( "Paused. Edit away: changes go into the game. Play resumes, Stop ends." );
 }
 
+// the game wants the keyboard: take it back from any panel window
+static void FocusGame()
+{
+	if( Sys_MainWindowHandle() != NULL )
+	{
+		Sys_ExtraWindowFocus( Sys_MainWindowHandle() );
+	}
+}
+
+static bool			playReloading = false;		// the level is being reloaded around the player
+static int			playReloadTime = 0;
+
+// brushes changed while paused: load the rebuilt level and put the player back where they were
+static void ReloadAtPlayer()
+{
+	if( !IsPlaying() || !document.IsOpen() )
+	{
+		return;
+	}
+	if( gameEdit->PlayerIsValid() )
+	{
+		gameEdit->PlayerGetEyePosition( playTeleportEye );
+		gameEdit->PlayerGetViewAngles( playTeleportAngles );
+		playTeleportAngles.roll = 0.0f;
+		playTeleportPending = true;
+	}
+	playStarting = true;
+	playPaused = false;
+	playReloading = true;
+	playReloadTime = Sys_Milliseconds();
+	liveSessionActive = false;		// the reloaded level is the new base
+	liveGeometryChanged = false;
+	view.ClearOutlines();
+	FocusGame();
+	common->Printf( "Editor: reloading %s around the player\n", document.Name() );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", document.Name() ) );
+}
+
 static void ResumePlay()
 {
 	if( !playPaused )
 	{
 		return;
 	}
+	if( BuildRunning() && buildThen == BUILD_THEN_RELOAD )
+	{
+		return;		// already rebuilding; the game carries on when it's done
+	}
 	LiveSync();
+	if( liveGeometryChanged )
+	{
+		// brushes are compiled into the level: rebuild it, then reload around the player
+		if( document.IsDirty() && !document.Save() )
+		{
+			Status( "Couldn't save the level, so the brush changes can't be built" );
+			return;
+		}
+		mapListDirty = true;
+		if( LevelNeedsBuild( document.Name() ) )
+		{
+			StartBuild( document.Name(), BUILD_THEN_RELOAD );
+			if( BuildRunning() )
+			{
+				Status( "Rebuilding the level. The game carries on when it's done." );
+			}
+		}
+		else
+		{
+			ReloadAtPlayer();
+		}
+		return;
+	}
 	playPaused = false;
 	view.ClearOutlines();
+	FocusGame();
+}
 
-	// the game wants the keyboard: take it back from any panel window
-	if( Sys_MainWindowHandle() != NULL )
+// a background build has finished (or is still going): deal with it
+static void BuildUpdate()
+{
+	if( buildProcess == NULL )
 	{
-		Sys_ExtraWindowFocus( Sys_MainWindowHandle() );
+		return;
+	}
+	BuildReadLog();
+	int exitCode = 0;
+	if( !Sys_ProcessFinished( buildProcess, exitCode ) )
+	{
+		return;
+	}
+	BuildReadLog();
+	if( buildLinePart.Length() > 0 )
+	{
+		BuildReadLine( buildLinePart.c_str() );
+		buildLinePart.Clear();
+	}
+	Sys_ProcessFree( buildProcess );
+	buildProcess = NULL;
+
+	buildHasResult = true;
+	buildFailed = exitCode != 0;
+	if( !buildFailed )
+	{
+		// it can stop early without saying it failed: make sure it wrote the level
+		ID_TIME_T procTime = FILE_NOT_FOUND_TIMESTAMP;
+		fileSystem->ReadFile( va( "maps/%s.proc", buildMap.c_str() ), NULL, &procTime );
+		if( procTime == FILE_NOT_FOUND_TIMESTAMP || ( buildMapTime != FILE_NOT_FOUND_TIMESTAMP && procTime < buildMapTime ) )
+		{
+			buildFailed = true;
+			if( buildProblems.Num() == 0 )
+			{
+				buildProblems.Append( "The level compiler finished without writing the level. The build log may say why." );
+			}
+		}
+	}
+	buildResultMap = buildMap;
+	buildSeconds = ( Sys_Milliseconds() - buildStartTime + 500 ) / 1000;
+	if( buildFailed && buildProblems.Num() == 0 )
+	{
+		buildProblems.Append( va( "rbdmap stopped with exit code %d before it finished.", exitCode ) );
+	}
+	common->Printf( "Editor: build of %s %s in %d s\n", buildMap.c_str(), buildFailed ? "FAILED" : "finished", buildSeconds );
+
+	const buildThen_t then = buildThen;
+	buildThen = BUILD_THEN_NOTHING;
+	if( buildFailed )
+	{
+		if( then == BUILD_THEN_PLAY )
+		{
+			playStarting = false;
+		}
+		showProblems = true;
+		focusProblems = true;
+		Status( "The level didn't build. Problems says why." );
+		return;
+	}
+
+	if( then == BUILD_THEN_PLAY )
+	{
+		if( !IsPlaying() && document.IsOpen() && buildMap.Icmp( document.Name() ) == 0 )
+		{
+			if( LevelNeedsBuildSince() )
+			{
+				StartBuild( buildMap, BUILD_THEN_PLAY );	// saved again while it was building
+			}
+			else
+			{
+				StartLevel( buildMap );
+			}
+		}
+		else
+		{
+			playStarting = false;
+		}
+	}
+	else if( then == BUILD_THEN_RELOAD )
+	{
+		if( IsPlaying() && playPaused && document.IsOpen() && buildMap.Icmp( document.Name() ) == 0 )
+		{
+			ReloadAtPlayer();
+		}
+	}
+	else
+	{
+		Status( buildProblems.Num() > 0 ? "Built, with warnings (see Problems)" : va( "Built in %d s", buildSeconds ) );
 	}
 }
 
@@ -651,6 +1120,7 @@ static void OpenMap( const char* mapName )
 	}
 	if( document.Load( mapName ) )
 	{
+		view.leakPath.Clear();
 		const idMapFile* map = document.Map();
 		for( int i = 0; i < map->GetNumEntities(); i++ )
 		{
@@ -2844,8 +3314,56 @@ static void ProblemRow( const char* text )
 	ImGui::TextWrapped( "%s", text );
 }
 
+// load the leak line dmap wrote (maps/<level>.lin) and look along it
+static void ShowLeak()
+{
+	view.leakPath.Clear();
+	char* text = NULL;
+	if( fileSystem->ReadFile( va( "maps/%s.lin", buildResultMap.c_str() ), ( void** )&text ) <= 0 || text == NULL )
+	{
+		Status( "The leak's line wasn't found; build again to make it" );
+		return;
+	}
+	idLexer src( text, idStr::Length( text ), "leak", LEXFL_NOERRORS | LEXFL_ALLOWMULTICHARLITERALS );
+	idVec3 point;
+	while( true )
+	{
+		point.x = src.ParseFloat();
+		point.y = src.ParseFloat();
+		point.z = src.ParseFloat();
+		if( src.EndOfFile() && point == vec3_origin )
+		{
+			break;
+		}
+		view.leakPath.Insert( point, 0 );		// the file runs from the void inwards; keep it inside out
+		if( src.EndOfFile() )
+		{
+			break;
+		}
+	}
+	fileSystem->FreeFile( text );
+	if( view.leakPath.Num() < 2 )
+	{
+		view.leakPath.Clear();
+		return;
+	}
+	idBounds bounds;
+	bounds.Clear();
+	for( int i = 0; i < view.leakPath.Num(); i++ )
+	{
+		bounds.AddPoint( view.leakPath[i] );
+	}
+	view.camera.Focus( bounds );
+	Status( "The red line runs from inside the level out through the gap" );
+}
+
 static void DrawProblems()
 {
+	if( focusProblems )
+	{
+		focusProblems = false;
+		ImGui::SetNextWindowFocus();
+	}
 	if( !ImGui::Begin( WINDOW_PROBLEMS, &showProblems ) )
 	{
 		ImGui::End();
@@ -2907,14 +3425,76 @@ static void DrawProblems()
 		}
 	}
 
+	// what the last build said, while it's about the open level
+	const bool buildAboutThis = document.IsOpen() && buildHasResult && buildResultMap.Icmp( document.Name() ) == 0 && !BuildRunning();
+	if( buildAboutThis && ( buildFailed || buildProblems.Num() > 0 ) )
+	{
+		any = true;
+		ImGui::Spacing();
+		UI::SectionLabel( buildFailed ? "The last build failed" : "The last build" );
+		for( int i = 0; i < buildProblems.Num() && i < 50; i++ )
+		{
+			if( buildLeaked && i == 0 )
+			{
+				if( ImGui::SmallButton( ICON_FOCUS " Show" ) )
+				{
+					ShowLeak();
+				}
+				UI::Tip( "Draw the leak in the view and look at it. Follow the red line from inside to where it escapes: that's the gap to close." );
+				ImGui::SameLine();
+			}
+			ProblemRow( buildProblems[i].c_str() );
+		}
+		if( buildProblems.Num() > 50 )
+		{
+			Hint( va( "...and %d more in the build log.", buildProblems.Num() - 50 ) );
+		}
+	}
+
 	if( !any )
 	{
 		ImGui::TextColored( UI::Good(), ICON_OK );
 		ImGui::SameLine();
 		ImGui::TextUnformatted( "No problems found." );
-		Hint( "Leaks and compile errors are reported in the console (the ~ key) when you press Play." );
+		Hint( buildAboutThis ? va( "The last build took %d s and had nothing to say.", buildSeconds ) : "Building the level (Ctrl+B, or Play) also checks it, for leaks and other trouble." );
+	}
+	if( buildLog.Length() > 0 )
+	{
+		ImGui::Spacing();
+		if( ImGui::SmallButton( ICON_BOOK "  Build log" ) )
+		{
+			showBuildLog = true;
+		}
+		UI::Tip( "Everything the level compiler printed during the last build" );
 	}
 
+	ImGui::End();
+}
+
+static void DrawBuildLog()
+{
+	if( !showBuildLog )
+	{
+		return;
+	}
+	ImGui::SetNextWindowSize( ImVec2( 640.0f * UI::Scale(), 420.0f * UI::Scale() ), ImGuiCond_FirstUseEver );
+	if( ImGui::Begin( va( "Build log: %s###buildlog", buildMap.c_str() ), &showBuildLog ) )
+	{
+		if( ImGui::SmallButton( "Copy" ) )
+		{
+			ImGui::SetClipboardText( buildLog.c_str() );
+		}
+		ImGui::Separator();
+		ImGui::BeginChild( "log", ImVec2( 0, 0 ), false, ImGuiWindowFlags_HorizontalScrollbar );
+		ImGui::PushFont( UI::Font( UI::FONT_SMALL ) );
+		ImGui::TextUnformatted( buildLog.c_str(), buildLog.c_str() + buildLog.Length() );
+		ImGui::PopFont();
+		if( BuildRunning() && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f )
+		{
+			ImGui::SetScrollHereY( 1.0f );
+		}
+		ImGui::EndChild();
+	}
 	ImGui::End();
 }
 
@@ -3008,10 +3588,12 @@ static void DrawAbout()
 		Hint( "Hold the right mouse button to look around; WASD moves, Q and E go down and up, Shift is faster, and the wheel changes speed. Hold the middle button to pan, Alt + left button to orbit, and roll the wheel to move forward and back. T switches to the top view." );
 		ImGui::Text( "Playing" );
 		Hint( "F5 plays from the player start (or, with the arrow on Play, from where the camera is; Shift flips it once). Esc pauses and brings the editor back with the game still loaded: what you change goes into the game, and brush changes rebuild when you carry on. F5 carries on, F10 stops." );
+		ImGui::Text( "Building" );
+		Hint( "The game doesn't read the level you edit directly: building turns it into what the game loads (it also checks it for leaks). Play builds when it needs to, in the background, with the progress left of Play; Ctrl+B builds without playing. Problems shows what the build said." );
 		ImGui::Text( "Panels" );
 		Hint( "Drag a panel's tab to move it: onto another panel to stack them, to a side to split, or out of the window onto another monitor. View > Reset layout puts everything back." );
 		ImGui::Text( "Editing" );
-		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces. W, E and R move, turn and resize; B draws brushes, C cuts them, V drags their corners, P paints and I picks a material up. Hold Space for the tool wheel. 1 to 5 switch the dock's tabs (Build, Paint, Logic, Light, Kits). [ and ] change the grid. Carve cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves." );
+		Hint( "Click to select, Ctrl+click to add or remove, Shift+click to pick faces. W, E and R move, turn and resize; B draws brushes, C cuts them, V drags their corners, P paints and I picks a material up. Hold Space for the tool wheel. 1 to 5 switch the dock's tabs (Build, Paint, Logic, Light, Kits). [ and ] change the grid. Carve cuts doorways and windows out of walls. Ctrl+Z undo, Ctrl+Y redo, Ctrl+D duplicate, Delete removes, F frames the selection, Ctrl+S saves, Ctrl+B builds." );
 	}
 	ImGui::End();
 }
@@ -5210,6 +5792,10 @@ static void HandleShortcuts()
 	{
 		document.Redo();
 	}
+	else if( io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_B, false ) )
+	{
+		BuildDocument();
+	}
 	else if( io.KeyCtrl && ImGui::IsKeyPressed( ImGuiKey_S, false ) )
 	{
 		if( document.Save() )
@@ -5566,6 +6152,10 @@ void DrawMainMenuBar()
 			}
 			mapListDirty = true;
 		}
+		if( ImGui::MenuItem( ICON_BUILD "  Build", "Ctrl+B", false, document.IsOpen() ) )
+		{
+			BuildDocument();
+		}
 		if( ImGui::MenuItem( "      Save As...", NULL, false, document.IsOpen() ) )
 		{
 			openSaveAsPopup = true;
@@ -5710,18 +6300,63 @@ void DrawMainMenuBar()
 	const float buttonWidth = 104.0f * UI::Scale();
 	const float stopWidth = 80.0f * UI::Scale();
 	const float groupWidth = paused ? buttonWidth + stopWidth + 6.0f * UI::Scale() : playing ? buttonWidth : buttonWidth + ImGui::GetFrameHeight() + 2.0f * UI::Scale();
-	ImGui::SetCursorPosX( ( ImGui::GetWindowWidth() - groupWidth ) * 0.5f );
 	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 20.0f * UI::Scale() );
 	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 4.0f * UI::Scale() ) );
 	const float barHeight = ImGui::GetWindowHeight();
-	ImGui::SetCursorPosY( ( barHeight - ( ImGui::GetFontSize() + 8.0f * UI::Scale() ) ) * 0.5f );
+	const float pillHeight = ImGui::GetFontSize() + 8.0f * UI::Scale();
+	const float pillY = ( barHeight - pillHeight ) * 0.5f;
+
+	// the build sits just left of Play: progress while it runs, a Build button otherwise
+	const bool building = BuildRunning();
+	const bool showBuildButton = !building && ( !playing || paused );
+	const float buildBarWidth = 210.0f * UI::Scale();
+	const float buildWidth = building ? buildBarWidth + pillHeight + 2.0f * UI::Scale() : showBuildButton ? pillHeight : 0.0f;
+	const float playX = ( ImGui::GetWindowWidth() - groupWidth ) * 0.5f;
+	if( buildWidth > 0.0f )
+	{
+		ImGui::SetCursorPos( ImVec2( playX - buildWidth - 8.0f * UI::Scale(), pillY ) );
+		if( building )
+		{
+			const float progress = BuildProgress();
+			ImGui::PushStyleColor( ImGuiCol_PlotHistogram, UI::Accent() );
+			ImGui::ProgressBar( progress, ImVec2( buildBarWidth, pillHeight ), va( ICON_BUILD "  %s  %d%%", buildStage.c_str(), ( int )( progress * 100.0f ) ) );
+			ImGui::PopStyleColor();
+			UI::Tip( buildThen == BUILD_THEN_PLAY ? "Building the level. It plays as soon as it's built; you can keep editing meanwhile." :
+					 buildThen == BUILD_THEN_RELOAD ? "Rebuilding the level with your brush changes. The game carries on, where you were, when it's done." :
+					 "Building the level. You can keep editing meanwhile." );
+			ImGui::SameLine( 0.0f, 2.0f * UI::Scale() );
+			ImGui::SetCursorPosY( pillY );
+			if( UI::ColorButton( ICON_CLOSE "##cancelbuild", UI::Bad(), ImVec2( pillHeight, pillHeight ) ) )
+			{
+				CancelBuild();
+				Status( "Build cancelled" );
+			}
+			UI::Tip( "Stop building" );
+		}
+		else
+		{
+			ImGui::BeginDisabled( !document.IsOpen() );
+			if( UI::ColorButton( ICON_BUILD "##build", ImGui::GetStyleColorVec4( ImGuiCol_Button ), ImVec2( pillHeight, pillHeight ) ) )
+			{
+				BuildDocument();
+			}
+			UI::Tip( "Build the level (Ctrl+B): turn it into what the game loads. Play does this for you when it's needed; it runs in the background, so you can keep editing." );
+			ImGui::EndDisabled();
+		}
+	}
+
+	ImGui::SetCursorPos( ImVec2( playX, pillY ) );
 	if( paused )
 	{
-		if( UI::ColorButton( ICON_PLAY "  Resume", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
+		const bool rebuilding = building && buildThen == BUILD_THEN_RELOAD;
+		ImGui::BeginDisabled( rebuilding );
+		if( UI::ColorButton( rebuilding ? ICON_BUILD "  Building" : ICON_PLAY "  Resume", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
 		{
 			ResumePlay();
 		}
-		UI::Tip( "Carry on playing from where you were, with your changes (F5)" );
+		ImGui::EndDisabled();
+		UI::Tip( liveGeometryChanged ? "Carry on playing (F5). Your brush changes are built first, then the level reloads around you." :
+				 "Carry on playing from where you were, with your changes (F5)" );
 		ImGui::SameLine( 0.0f, 6.0f * UI::Scale() );
 		if( UI::ColorButton( ICON_STOP "  Stop", UI::Bad(), ImVec2( stopWidth, 0 ) ) )
 		{
@@ -5778,18 +6413,38 @@ void DrawMainMenuBar()
 	const bool showStatus = statusMessage.Length() > 0 && Sys_Milliseconds() - statusTime < 4000;
 	const float gap = 24.0f * UI::Scale();
 	float rightWidth = ImGui::CalcTextSize( level.c_str() ).x + gap + ImGui::CalcTextSize( project.c_str() ).x + 16.0f * UI::Scale();
-	if( showStatus )
-	{
-		rightWidth += ImGui::CalcTextSize( statusMessage.c_str() ).x + gap;
-	}
 	if( !playing )
 	{
 		rightWidth += ImGui::GetFrameHeight() * 2.0f + gap;
 	}
-	ImGui::SetCursorPosX( ImGui::GetWindowWidth() - rightWidth );
+
+	// the status message gets what room is left between Play and the right side, shortened to fit
+	idStr status;
 	if( showStatus )
 	{
-		ImGui::TextColored( UI::Accent(), "%s", statusMessage.c_str() );
+		const float room = ImGui::GetWindowWidth() - rightWidth - ( playX + groupWidth ) - 2.0f * gap;
+		status = statusMessage;
+		if( ImGui::CalcTextSize( status.c_str() ).x > room )
+		{
+			while( status.Length() > 0 && ImGui::CalcTextSize( va( "%s...", status.c_str() ) ).x > room )
+			{
+				status.CapLength( status.Length() - 1 );
+			}
+			status = status.Length() > 8 ? va( "%s...", status.c_str() ) : "";
+		}
+		if( status.Length() > 0 )
+		{
+			rightWidth += ImGui::CalcTextSize( status.c_str() ).x + gap;
+		}
+	}
+	ImGui::SetCursorPosX( ImGui::GetWindowWidth() - rightWidth );
+	if( status.Length() > 0 )
+	{
+		ImGui::TextColored( UI::Accent(), "%s", status.c_str() );
+		if( status != statusMessage )
+		{
+			UI::Tip( statusMessage.c_str() );
+		}
 		ImGui::SameLine( 0.0f, gap );
 	}
 	if( !playing )
@@ -5822,13 +6477,25 @@ void Draw( unsigned int mainDockSpaceId )
 	}
 
 	RegisterCommands();
+	BuildUpdate();
+
+	// reloading: wait for the old level to go before treating the game as the new one
+	const bool inGame = session != NULL && session->GetState() == idSession::INGAME && game != NULL && game->IsInGame();
+	if( playReloading && ( !inGame || Sys_Milliseconds() - playReloadTime > 60000 ) )
+	{
+		playReloading = false;
+	}
 
 	if( !IsPlaying() )
 	{
 		playPaused = false;
 		liveSessionActive = false;
 	}
-	else if( !liveSessionActive && game != NULL && game->IsInGame() )
+	else if( playReloading )
+	{
+		// wait for the old level to go before treating the game as the new one
+	}
+	else if( !liveSessionActive && inGame )
 	{
 		// a new Play session: remember the level the game has
 		liveSessionActive = true;
@@ -5842,12 +6509,16 @@ void Draw( unsigned int mainDockSpaceId )
 
 	if( IsPlaying() && !playPaused )
 	{
-		playStarting = false;
+		if( !playReloading )
+		{
+			playStarting = false;
+		}
 
 		// Play from here: move the player once the level is up
-		if( playTeleportPending && game != NULL && game->IsInGame() && gameEdit->PlayerIsValid() )
+		if( playTeleportPending && !playReloading && inGame && gameEdit->PlayerIsValid() )
 		{
 			playTeleportPending = false;
+			LiveLog( "moved the player to", playTeleportEye.ToString( 0 ) );
 			if( !gameEdit->PlayerTeleport( playTeleportEye, playTeleportAngles ) )
 			{
 				Status( "The camera was inside something solid, so you start at the player start." );
@@ -5901,6 +6572,7 @@ void Draw( unsigned int mainDockSpaceId )
 		DrawProblems();
 	}
 
+	DrawBuildLog();
 	DrawAbout();
 	DrawWelcome();
 	DrawNewProjectDialog();
