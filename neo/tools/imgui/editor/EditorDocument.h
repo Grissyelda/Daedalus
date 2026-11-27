@@ -242,6 +242,13 @@ public:
 	// called at the end of every change, before views hear of it (pieces keep their links up to date)
 	void				( *afterChange )( Document& doc );
 
+	// Files a change writes besides the level (pieces), so undo and redo put them back too.
+	// Call while the change is open, with the file's text before and after (relative to the game folder).
+	void				RecordFileWrite( const char* relativePath, bool existedBefore, const idStr& before, const idStr& after );
+
+	// called after undo or redo put files back (caches of them are stale)
+	void				( *filesRestored )();
+
 	// old name -> new name of every entity the last Duplicate copied (for the afterChange hook)
 	idDict				duplicateRenames;
 
@@ -251,12 +258,21 @@ public:
 	}
 
 private:
+	struct FileChange
+	{
+		idStr			path;
+		bool			existedBefore;
+		idStr			before;
+		idStr			after;
+	};
 	struct State
 	{
 		idStr			label;
 		idStr			text;
 		SelectionSet	selection;
+		idList<FileChange> files;		// written by this change
 	};
+	void				PutFilesBack( const idList<FileChange>& files, bool undoing );
 
 	struct SavedSide
 	{
@@ -292,6 +308,7 @@ private:
 	idStr				pendingLabel;
 	idStr				pendingText;
 	SelectionSet		pendingSelection;
+	idList<FileChange> pendingFiles;
 	bool				changeOpen;
 
 	bool				transforming;

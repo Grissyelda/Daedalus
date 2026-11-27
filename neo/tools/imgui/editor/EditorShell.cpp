@@ -218,7 +218,13 @@ static void SelectHit( const Selection& hit, bool toggle );
 static void SyncPiecesOnOpen();
 static bool IsEditingPiece();
 static int PieceEditingAnchor();
-static void FinishPieceEdit( bool keep );
+enum pieceEditEnd_t
+{
+	PIECE_SAVE_ALL,		// into the piece: every copy changes
+	PIECE_SAVE_COPY,	// into this copy only, as its own changes
+	PIECE_CANCEL
+};
+static void FinishPieceEdit( pieceEditEnd_t end );
 static bool DrawPieceInspector();
 static void DrawPartCard();
 static void PlacePiece( const char* name, const idVec3& point );
@@ -623,7 +629,7 @@ static void PlayDocument( bool fromCamera )
 	}
 	if( IsEditingPiece() )
 	{
-		FinishPieceEdit( true );	// play what's there, piece included
+		FinishPieceEdit( PIECE_SAVE_ALL );	// play what's there, piece included
 	}
 	if( document.IsDirty() && !document.Save() )
 	{
@@ -1139,7 +1145,7 @@ static void OpenMap( const char* mapName )
 {
 	if( IsEditingPiece() )
 	{
-		FinishPieceEdit( true );	// keep what was being done to the piece
+		FinishPieceEdit( PIECE_SAVE_ALL );	// keep what was being done to the piece
 	}
 	if( document.IsDirty() && document.IsOpen() )
 	{
@@ -1525,7 +1531,7 @@ static void RegisterCommands()
 	cmdSystem->AddCommand( "editorMakePiece", EditorMakePiece_f, CMD_FL_SYSTEM, "makes a piece from the selection: editorMakePiece <name>" );
 	cmdSystem->AddCommand( "editorPlacePiece", EditorPlacePiece_f, CMD_FL_SYSTEM, "adds a copy of a piece: editorPlacePiece <name> <x> <y> <z> [yaw]" );
 	cmdSystem->AddCommand( "editorSelectPiece", EditorSelectPiece_f, CMD_FL_SYSTEM, "selects a copy of a piece, or one part: editorSelectPiece <copy> [part]" );
-	cmdSystem->AddCommand( "editorEditPiece", EditorEditPiece_f, CMD_FL_SYSTEM, "edits a piece in place: editorEditPiece <copy> | done | cancel" );
+	cmdSystem->AddCommand( "editorEditPiece", EditorEditPiece_f, CMD_FL_SYSTEM, "edits a piece in place: editorEditPiece <copy> | done (every copy) | copy (this copy only) | cancel" );
 	cmdSystem->AddCommand( "editorPiecePart", EditorPiecePart_f, CMD_FL_SYSTEM, "the selected part of a copy: editorPiecePart revert | apply" );
 	cmdSystem->AddCommand( "editorListPieces", EditorListPieces_f, CMD_FL_SYSTEM, "lists copies of pieces and their overrides" );
 	cmdSystem->AddCommand( "editorDelete", EditorDelete_f, CMD_FL_SYSTEM, "deletes the selection" );
@@ -3666,7 +3672,7 @@ static void DrawAbout()
 		ImGui::Text( "Playing" );
 		Hint( "F5 plays from the player start (or, with the arrow on Play, from where the camera is; Shift flips it once). Esc pauses and brings the editor back with the game still loaded: what you change goes into the game, and brush changes rebuild when you carry on. F5 carries on, F10 stops." );
 		ImGui::Text( "Pieces" );
-		Hint( "Select things and press Make piece (in the Kits tab, or the bar above the dock) to save them as a piece; place copies from Kits. A click selects a whole copy. Double-click picks one part: change it and only that copy changes (the Inspector marks it, with Revert and Apply to all copies). Edit piece changes the piece where a copy sits, with the rest of the level as ghosts; Done updates every copy. Pieces can hold pieces." );
+		Hint( "Select things and press Make piece (in the Kits tab, or the bar above the dock) to save them as a piece; place copies from Kits. A click selects a whole copy. Double-click picks one part: change it and only that copy changes (the Inspector marks it, with Revert and Apply to all copies). Edit piece changes the piece where a copy sits, with the rest of the level as ghosts; then save it to every copy, or to this copy only. Undo also undoes changes to pieces. Pieces can hold pieces." );
 		ImGui::Text( "Building" );
 		Hint( "The game doesn't read the level you edit directly: building turns it into what the game loads (it also checks it for leaks). Play builds when it needs to, in the background, with the progress left of Play; Ctrl+B builds without playing. Problems shows what the build said." );
 		ImGui::Text( "Panels" );
@@ -5140,7 +5146,8 @@ static void PlaceThing( const char* classname )
 	A click on any part of a copy selects the whole copy; a double-click picks
 	just that part, and what changes then is that copy's alone (an override).
 	"Edit piece" changes the piece itself right where a copy sits: the rest of
-	the level turns to ghosts, and Done writes the piece and updates every copy.
+	the level turns to ghosts. Saving writes the piece (every copy changes) or
+	keeps the changes in that copy alone. Undo puts piece files back as well.
 
 ===============================================================================
 */
@@ -5148,6 +5155,8 @@ static void PlaceThing( const char* classname )
 static idStr		pieceEditing;				// the anchor name of the copy being edited in place, or ""
 static idStr		pieceEditPrefab;
 static int			pieceEditUndoDepth = 0;
+static pieceEditStart_t	pieceEditStart;			// the copy's own changes when the edit began
+static idStrList	pieceAdopted;				// "owner|part" of things made during the edit
 static idStrList	pieceNames;
 static bool			pieceListDirty = true;
 static bool			pieceMakeRequest = false;
@@ -5239,7 +5248,7 @@ static void SelectHit( const Selection& hit, bool toggle )
 	{
 		if( IsEditingPiece() )
 		{
-			Status( "While you edit a piece only the piece changes. Press Done (or Cancel) above the view to go back to the level." );
+			Status( "While you edit a piece only the piece changes. Save or Cancel above the view goes back to the level." );
 		}
 		return;
 	}
@@ -5254,7 +5263,7 @@ static void StartPieceEdit( int anchor )
 	}
 	if( IsEditingPiece() )
 	{
-		FinishPieceEdit( true );
+		FinishPieceEdit( PIECE_SAVE_ALL );
 		anchor = -1;
 		return;
 	}
@@ -5262,33 +5271,58 @@ static void StartPieceEdit( int anchor )
 	pieceEditing = ent->epairs.GetString( "name" );
 	pieceEditPrefab = ent->epairs.GetString( KEY_PREFAB );
 	pieceEditUndoDepth = document.UndoDepth();
+	SnapshotCopyChanges( document.Map(), anchor, pieceEditStart );
+	pieceAdopted.Clear();
 	document.selection.Clear();
 	UpdatePieceFocus();
-	Status( va( "Editing the piece \"%s\". What you change here changes every copy when you press Done.", pieceEditPrefab.c_str() ) );
+	Status( va( "Editing the piece \"%s\". When you're done, save it to every copy or to this copy only.", pieceEditPrefab.c_str() ) );
 }
 
-static void FinishPieceEdit( bool keep )
+static void FinishPieceEdit( pieceEditEnd_t end )
 {
 	const int anchor = PieceEditingAnchor();
 	if( pieceEditing.Length() == 0 )
 	{
 		return;
 	}
-	if( keep && anchor >= 0 )
+	idMapFile* map = document.Map();
+	if( end == PIECE_SAVE_ALL && anchor >= 0 )
 	{
 		idStr error;
 		document.BeginChange( "Edit piece" );
-		const bool written = WritePrefabFromCopy( document.Map(), anchor, error );
+		const bool written = WritePrefabFromCopy( map, anchor, error, &pieceEditStart );
 		pieceEditing.Clear();
 		view.focusOwners.Clear();
 		document.EndChange();
 		document.ValidateSelection();
 		int copies = 0;
-		for( int e = 1; e < document.Map()->GetNumEntities(); e++ )
+		for( int e = 1; e < map->GetNumEntities(); e++ )
 		{
-			copies += ( IsPrefabAnchor( document.Map()->GetEntity( e ) ) && pieceEditPrefab.Icmp( document.Map()->GetEntity( e )->epairs.GetString( KEY_PREFAB ) ) == 0 ) ? 1 : 0;
+			copies += ( IsPrefabAnchor( map->GetEntity( e ) ) && pieceEditPrefab.Icmp( map->GetEntity( e )->epairs.GetString( KEY_PREFAB ) ) == 0 ) ? 1 : 0;
 		}
-		Status( written ? va( "Saved the piece \"%s\"; %d %s in this level updated. Other levels update when they open.", pieceEditPrefab.c_str(), copies, copies == 1 ? "copy" : "copies" ) : error.c_str() );
+		Status( written ? va( "Saved the piece \"%s\": %d %s in this level updated (other levels update when they open). Undo puts the old piece back.", pieceEditPrefab.c_str(), copies, copies == 1 ? "copy" : "copies" ) : error.c_str() );
+	}
+	else if( end == PIECE_SAVE_COPY && anchor >= 0 )
+	{
+		// the piece stays as it was; what changed is this copy's own (marked as overrides).
+		// Things made during the edit become ordinary level things beside it.
+		document.BeginChange( "Edit copy" );
+		idList<Selection> items;
+		PieceItems( map, anchor, items );
+		for( int i = 0; i < items.Num(); i++ )
+		{
+			idDict* dict = items[i].primitive >= 0 ? &map->GetEntity( 0 )->GetPrimitive( items[i].primitive )->epairs : &map->GetEntity( items[i].entity )->epairs;
+			if( pieceAdopted.FindIndex( va( "%s|%s", dict->GetString( KEY_OWNER ), dict->GetString( KEY_PART ) ) ) >= 0 )
+			{
+				dict->Delete( KEY_OWNER );
+				dict->Delete( KEY_PART );
+			}
+		}
+		pieceEditing.Clear();
+		view.focusOwners.Clear();
+		document.EndChange();		// the change hook records what differs from the piece
+		document.ValidateSelection();
+		Status( va( "Saved to this copy only: the piece \"%s\" and its other copies are unchanged.", pieceEditPrefab.c_str() ) );
 	}
 	else
 	{
@@ -5299,6 +5333,7 @@ static void FinishPieceEdit( bool keep )
 		}
 		Status( "Piece edit cancelled" );
 	}
+	pieceAdopted.Clear();
 	document.selection.Clear();
 	pieceListDirty = true;
 }
@@ -5346,6 +5381,7 @@ static void AdoptIntoEditedPiece( Document& doc, int anchor )
 			parts.Append( part );
 			dict.Set( KEY_OWNER, name );
 			dict.Set( KEY_PART, part );
+			pieceAdopted.AddUnique( va( "%s|%s", name.c_str(), part.c_str() ) );
 			continue;
 		}
 		idMapEntity* ent = map->GetEntity( sel.entity );
@@ -5364,6 +5400,7 @@ static void AdoptIntoEditedPiece( Document& doc, int anchor )
 		}
 		ent->epairs.Set( KEY_OWNER, name );
 		ent->epairs.Set( KEY_PART, ent->epairs.GetString( "name" ) );
+		pieceAdopted.AddUnique( va( "%s|%s", name.c_str(), ent->epairs.GetString( "name" ) ) );
 	}
 }
 
@@ -5385,6 +5422,19 @@ static void PieceAfterChange( Document& doc )
 	{
 		UpdatePieceFocus();
 	}
+}
+
+// piece files written by a change go in its undo step
+static void PieceFileWritten( const char* relativePath, bool existedBefore, const idStr& before, const idStr& after )
+{
+	document.RecordFileWrite( relativePath, existedBefore, before, after );
+}
+
+// undo or redo put piece files back: what was read from them is out of date
+static void PieceFilesRestored()
+{
+	ForgetAllPrefabs();
+	pieceListDirty = true;
 }
 
 // a level just opened: bring its copies up to date with their pieces
@@ -5639,7 +5689,7 @@ static bool DrawPieceInspector()
 			return true;
 		}
 		ImGui::EndDisabled();
-		UI::Tip( "Change the piece right here: the rest of the level turns to ghosts, and every copy updates when you press Done." );
+		UI::Tip( "Change the piece right here, with the rest of the level as ghosts. When you're done, save to every copy or to this copy only." );
 		if( ImGui::Button( ICON_OPEN "  Open on its own", ImVec2( -FLT_MIN, 0 ) ) )
 		{
 			OpenMap( PrefabMapName( prefab ) );
@@ -5774,7 +5824,7 @@ static void DrawPartCard()
 	{
 		if( editingThis )
 		{
-			ImGui::TextWrapped( "Part of the piece \"%s\" you're editing: changes go to every copy when you press Done.", pieceEditPrefab.c_str() );
+			ImGui::TextWrapped( "Part of the piece \"%s\" you're editing. Save it to every copy or to this copy only, above the view.", pieceEditPrefab.c_str() );
 			UI::EndCard();
 			return;
 		}
@@ -5875,18 +5925,22 @@ static void DrawPieceEditBanner( const ImGuiDockNode* central )
 		ImGui::TextColored( UI::Accent(), ICON_MODE_KITS );
 		ImGui::SameLine();
 		ImGui::Text( "Editing the piece \"%s\"", pieceEditPrefab.c_str() );
-		ImGui::SameLine();
-		ImGui::TextDisabled( "- every copy changes when you're done" );
 		ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
-		if( UI::ColorButton( ICON_OK "  Done", UI::Good() ) )
+		if( UI::ColorButton( ICON_OK "  Save to every copy", UI::Good() ) )
 		{
-			FinishPieceEdit( true );
+			FinishPieceEdit( PIECE_SAVE_ALL );
 		}
-		UI::Tip( "Save the piece and update every copy" );
+		UI::Tip( "Change the piece itself: every copy of it, in every level, gets this. Undo puts the old piece back." );
+		ImGui::SameLine();
+		if( UI::ColorButton( ICON_SELECT "  Save to this copy", UI::Accent() ) )
+		{
+			FinishPieceEdit( PIECE_SAVE_COPY );
+		}
+		UI::Tip( "Keep these changes in this copy only. The piece and its other copies stay as they are; the Inspector marks what this copy does differently." );
 		ImGui::SameLine();
 		if( ImGui::Button( ICON_CLOSE "  Cancel" ) )
 		{
-			FinishPieceEdit( false );
+			FinishPieceEdit( PIECE_CANCEL );
 		}
 		UI::Tip( "Undo what you changed and leave the piece as it was" );
 	}
@@ -5986,11 +6040,15 @@ static void EditorEditPiece_f( const idCmdArgs& args )
 {
 	if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "done" ) == 0 )
 	{
-		FinishPieceEdit( true );
+		FinishPieceEdit( PIECE_SAVE_ALL );
+	}
+	else if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "copy" ) == 0 )
+	{
+		FinishPieceEdit( PIECE_SAVE_COPY );
 	}
 	else if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "cancel" ) == 0 )
 	{
-		FinishPieceEdit( false );
+		FinishPieceEdit( PIECE_CANCEL );
 	}
 	else
 	{
@@ -6814,7 +6872,7 @@ static void HandleShortcuts()
 	{
 		if( IsEditingPiece() )
 		{
-			FinishPieceEdit( true );	// saving keeps the piece too
+			FinishPieceEdit( PIECE_SAVE_ALL );	// saving keeps the piece too
 		}
 		if( document.Save() )
 		{
@@ -7163,7 +7221,7 @@ void DrawMainMenuBar()
 		{
 			if( IsEditingPiece() )
 			{
-				FinishPieceEdit( true );
+				FinishPieceEdit( PIECE_SAVE_ALL );
 			}
 			if( document.Save() )
 			{
@@ -7498,6 +7556,8 @@ void Draw( unsigned int mainDockSpaceId )
 	RegisterCommands();
 	BuildUpdate();
 	document.afterChange = PieceAfterChange;
+	document.filesRestored = PieceFilesRestored;
+	prefabFileWritten = PieceFileWritten;
 
 	// reloading: wait for the old level to go before treating the game as the new one
 	const bool inGame = session != NULL && session->GetState() == idSession::INGAME && game != NULL && game->IsInGame();

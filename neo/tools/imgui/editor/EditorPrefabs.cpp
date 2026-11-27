@@ -499,6 +499,31 @@ void ForgetPrefab( const char* name )
 	}
 }
 
+void ForgetAllPrefabs()
+{
+	for( int i = 0; i < prefabCache.Num(); i++ )
+	{
+		delete prefabCache[i].map;
+	}
+	prefabCache.Clear();
+}
+
+void ( *prefabFileWritten )( const char* relativePath, bool existedBefore, const idStr& before, const idStr& after ) = NULL;
+
+static bool ReadText( const char* relativePath, idStr& text )
+{
+	void* buffer = NULL;
+	const int length = fileSystem->ReadFile( relativePath, &buffer );
+	text.Clear();
+	if( length < 0 || buffer == NULL )
+	{
+		return false;
+	}
+	text.Append( ( const char* )buffer, length );
+	fileSystem->FreeFile( buffer );
+	return true;
+}
+
 static const idMapFile* LoadPrefab( const char* name )
 {
 	ID_TIME_T time = FILE_NOT_FOUND_TIMESTAMP;
@@ -1194,6 +1219,93 @@ void TrackPrefabEdits( idMapFile* map, const char* skipAnchor, const idDict& dup
 ===============================================================================
 */
 
+// a thing as text, to tell whether it changed
+static idStr ItemStateText( const idMapFile* map, const Selection& sel )
+{
+	idFile_Memory file( "editor_state" );
+	if( sel.primitive >= 0 )
+	{
+		const idMapPrimitive* prim = map->GetEntity( sel.entity )->GetPrimitive( sel.primitive );
+		if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+		{
+			static_cast<const idMapBrush*>( prim )->Write( &file, 0, vec3_origin );
+		}
+		else if( prim->GetType() == idMapPrimitive::TYPE_PATCH )
+		{
+			static_cast<const idMapPatch*>( prim )->Write( &file, 0, vec3_origin );
+		}
+	}
+	else
+	{
+		map->GetEntity( sel.entity )->Write( &file, 0, false );
+	}
+	idStr text;
+	text.Append( file.GetDataPtr(), file.Length() );
+	return text;
+}
+
+static idStr ItemKey( const idMapFile* map, const Selection& sel )
+{
+	const idDict* dict = ItemDict( map, sel );
+	return dict != NULL ? va( "%s|%s", dict->GetString( KEY_OWNER ), dict->GetString( KEY_PART ) ) : "";
+}
+
+void SnapshotCopyChanges( const idMapFile* map, int anchor, pieceEditStart_t& start )
+{
+	start.keys.Clear();
+	start.states.Clear();
+	start.removed.Clear();
+	if( map == NULL || anchor <= 0 )
+	{
+		return;
+	}
+	idList<Selection> items;
+	PieceItems( map, anchor, items );
+	for( int i = 1; i < items.Num(); i++ )
+	{
+		const idDict* dict = ItemDict( map, items[i] );
+		if( dict != NULL && dict->GetString( KEY_OVERRIDES )[0] != '\0' )
+		{
+			start.keys.Append( ItemKey( map, items[i] ) );
+			start.states.Append( ItemStateText( map, items[i] ) );
+		}
+	}
+	Tokens( map->GetEntity( anchor )->epairs.GetString( KEY_REMOVED ), start.removed );
+}
+
+// the piece's own version of a thing (by its owner in the piece, "" for the piece's own parts)
+static idMapEntity* PieceEntity( const idMapFile* piece, const char* fileOwner, const char* part )
+{
+	for( int e = 1; e < piece->GetNumEntities(); e++ )
+	{
+		idMapEntity* ent = piece->GetEntity( e );
+		if( idStr::Cmp( ent->epairs.GetString( KEY_OWNER ), fileOwner ) != 0 )
+		{
+			continue;
+		}
+		const char* entPart = fileOwner[0] == '\0' ? ent->epairs.GetString( "name" ) : ent->epairs.GetString( KEY_PART );
+		if( idStr::Cmp( entPart, part ) == 0 )
+		{
+			return ent;
+		}
+	}
+	return NULL;
+}
+
+static idMapPrimitive* PieceBrush( const idMapFile* piece, const char* fileOwner, const char* part )
+{
+	const idMapEntity* world = piece->GetEntity( 0 );
+	for( int p = 0; p < world->GetNumPrimitives(); p++ )
+	{
+		idMapPrimitive* prim = world->GetPrimitive( p );
+		if( idStr::Cmp( prim->epairs.GetString( KEY_OWNER ), fileOwner ) == 0 && idStr::Cmp( prim->epairs.GetString( KEY_PART, va( "b%d", p ) ), part ) == 0 )
+		{
+			return prim;
+		}
+	}
+	return NULL;
+}
+
 int PlacePrefab( idMapFile* map, const char* name, const idVec3& origin, const idMat3& axis )
 {
 	if( map == NULL || LoadPrefab( name ) == NULL )
@@ -1217,7 +1329,7 @@ int PlacePrefab( idMapFile* map, const char* name, const idVec3& origin, const i
 // The things of one copy, written as a piece around the copy's anchor. Names lose the copy's
 // prefix; overrides of the copy's own parts go (their values become the piece's), those of
 // pieces nested in it stay (they are the piece's changes to its nested pieces).
-static idMapFile* PieceFromCopy( const idMapFile* map, int anchorIndex )
+static idMapFile* PieceFromCopy( const idMapFile* map, int anchorIndex, const idStrList* keepParts = NULL, const idStrList* keepRemoved = NULL, const idMapFile* oldPiece = NULL )
 {
 	const idMapEntity* anchor = map->GetEntity( anchorIndex );
 	const idStr name = anchor->epairs.GetString( "name" );
@@ -1248,6 +1360,38 @@ static idMapFile* PieceFromCopy( const idMapFile* map, int anchorIndex )
 	for( int i = 1; i < items.Num(); i++ )
 	{
 		const Selection& sel = items[i];
+
+		// changes this copy had before the edit, left alone by it: the piece keeps its own version
+		if( keepParts != NULL && oldPiece != NULL && keepParts->FindIndex( ItemKey( map, sel ) ) >= 0 )
+		{
+			const idDict* dict = ItemDict( map, sel );
+			const idStr owner = dict->GetString( KEY_OWNER );
+			const idStr fileOwner = owner == name ? idStr( "" ) : StripPrefix( owner, prefix );
+			if( sel.primitive >= 0 )
+			{
+				const idMapPrimitive* old = PieceBrush( oldPiece, fileOwner, dict->GetString( KEY_PART ) );
+				if( old != NULL )
+				{
+					idMapPrimitive* copy = CopyPrimitive( old );
+					if( copy != NULL )
+					{
+						world->AddPrimitive( copy );
+						brushParts.Append( copy->epairs.GetString( KEY_PART ) );
+						continue;
+					}
+				}
+			}
+			else
+			{
+				const idMapEntity* old = PieceEntity( oldPiece, fileOwner, dict->GetString( KEY_PART ) );
+				if( old != NULL )
+				{
+					piece->AddEntity( CopyEntity( old ) );
+					continue;
+				}
+			}
+		}
+
 		if( sel.primitive >= 0 )
 		{
 			idMapPrimitive* copy = CopyPrimitive( map->GetEntity( 0 )->GetPrimitive( sel.primitive ) );
@@ -1306,17 +1450,54 @@ static idMapFile* PieceFromCopy( const idMapFile* map, int anchorIndex )
 		copy->epairs.Delete( KEY_PLACED );
 		piece->AddEntity( copy );
 	}
+
+	// parts this copy had deleted before the edit stay in the piece (and deleted from this copy)
+	if( keepRemoved != NULL && oldPiece != NULL )
+	{
+		for( int i = 0; i < keepRemoved->Num(); i++ )
+		{
+			const idMapPrimitive* oldBrush = PieceBrush( oldPiece, "", ( *keepRemoved )[i] );
+			if( oldBrush != NULL )
+			{
+				idMapPrimitive* copy = CopyPrimitive( oldBrush );
+				if( copy != NULL )
+				{
+					world->AddPrimitive( copy );
+				}
+				continue;
+			}
+			const idMapEntity* oldEnt = PieceEntity( oldPiece, "", ( *keepRemoved )[i] );
+			if( oldEnt != NULL && piece->FindEntity( oldEnt->epairs.GetString( "name" ) ) == NULL )
+			{
+				piece->AddEntity( CopyEntity( oldEnt ) );
+			}
+		}
+	}
 	return piece;
 }
 
 static bool WritePiece( idMapFile* piece, const char* name, idStr& error )
 {
+	const idStr path = va( "maps/%s.map", PrefabMapName( name ) );
+	idStr before;
+	const bool existed = ReadText( path, before );
+	if( existed )
+	{
+		// the previous version stays on disk too, for after the editor has closed
+		fileSystem->WriteFile( va( "maps/%s.bak", PrefabMapName( name ) ), before.c_str(), before.Length(), "fs_basepath" );
+	}
 	if( !WriteMapForEditing( piece, PrefabMapName( name ) ) )
 	{
-		error = va( "Couldn't write maps/%s.map", PrefabMapName( name ) );
+		error = va( "Couldn't write %s", path.c_str() );
 		return false;
 	}
 	ForgetPrefab( name );
+	idStr after;
+	ReadText( path, after );
+	if( prefabFileWritten != NULL )
+	{
+		prefabFileWritten( path, existed, before, after );
+	}
 	return true;
 }
 
@@ -1434,7 +1615,7 @@ int MakePrefab( Document& doc, const char* name, const idVec3& origin, idStr& er
 	return PlacePrefab( map, name, origin, mat3_identity );
 }
 
-bool WritePrefabFromCopy( idMapFile* map, int anchor, idStr& error )
+bool WritePrefabFromCopy( idMapFile* map, int anchor, idStr& error, const pieceEditStart_t* start )
 {
 	if( map == NULL || anchor <= 0 || anchor >= map->GetNumEntities() || !IsPrefabAnchor( map->GetEntity( anchor ) ) )
 	{
@@ -1442,24 +1623,59 @@ bool WritePrefabFromCopy( idMapFile* map, int anchor, idStr& error )
 		return false;
 	}
 	const idStr prefab = map->GetEntity( anchor )->epairs.GetString( KEY_PREFAB );
-	idMapFile* piece = PieceFromCopy( map, anchor );
+
+	// which of the copy's earlier changes the edit left alone
+	idStrList keepParts, keepRemoved;
+	if( start != NULL )
+	{
+		idList<Selection> items;
+		PieceItems( map, anchor, items );
+		for( int i = 1; i < items.Num(); i++ )
+		{
+			const int k = start->keys.FindIndex( ItemKey( map, items[i] ) );
+			if( k >= 0 && start->states[k] == ItemStateText( map, items[i] ) )
+			{
+				keepParts.Append( start->keys[k] );
+			}
+		}
+		idStrList removedNow;
+		Tokens( map->GetEntity( anchor )->epairs.GetString( KEY_REMOVED ), removedNow );
+		for( int i = 0; i < start->removed.Num(); i++ )
+		{
+			if( removedNow.FindIndex( start->removed[i] ) >= 0 )
+			{
+				keepRemoved.Append( start->removed[i] );
+			}
+		}
+	}
+	idMapFile* oldPiece = ( start != NULL ) ? ReadMapForEditing( PrefabMapName( prefab ) ) : NULL;
+
+	idMapFile* piece = PieceFromCopy( map, anchor, &keepParts, &keepRemoved, oldPiece );
 	const bool written = WritePiece( piece, prefab, error );
 	delete piece;
+	delete oldPiece;
 	if( !written )
 	{
 		return false;
 	}
 
-	// this copy is now the piece: its own changes and deletions are the piece's
+	// this copy is now the piece: its own changes and deletions are the piece's, bar those kept
 	idMapEntity* anchorEnt = map->GetEntity( anchor );
-	anchorEnt->epairs.Delete( KEY_REMOVED );
+	if( keepRemoved.Num() > 0 )
+	{
+		anchorEnt->epairs.Set( KEY_REMOVED, JoinTokens( keepRemoved ) );
+	}
+	else
+	{
+		anchorEnt->epairs.Delete( KEY_REMOVED );
+	}
 	idList<Selection> items;
 	PieceItems( map, anchor, items );
 	const idStr name = anchorEnt->epairs.GetString( "name" );
 	for( int i = 1; i < items.Num(); i++ )
 	{
 		idDict* dict = ItemDict( map, items[i] );
-		if( dict != NULL && idStr::Cmp( dict->GetString( KEY_OWNER ), name ) == 0 )
+		if( dict != NULL && idStr::Cmp( dict->GetString( KEY_OWNER ), name ) == 0 && keepParts.FindIndex( ItemKey( map, items[i] ) ) < 0 )
 		{
 			dict->Delete( KEY_OVERRIDES );
 		}

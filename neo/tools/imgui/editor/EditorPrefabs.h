@@ -88,6 +88,11 @@ void			ListPrefabs( idStrList& names );
 bool			PrefabExists( const char* name );
 const char* 	PrefabMapName( const char* name );		// "prefabs/<name>", for the document
 void			ForgetPrefab( const char* name );		// drop the cached copy (it was rewritten)
+void			ForgetAllPrefabs();
+
+// Told about every piece file written (the document records it, so undo puts the old one back).
+// The previous version is also kept on disk as maps/prefabs/<name>.bak.
+extern void		( *prefabFileWritten )( const char* relativePath, bool existedBefore, const idStr& before, const idStr& after );
 
 // Saves the selected items as a new piece around origin, and puts a linked copy where they were.
 // No undo step of its own. Returns the anchor, or -1 (error says why).
@@ -104,9 +109,20 @@ int				SyncPiece( idMapFile* map, int anchor );
 // moved as a whole. skipAnchor: a copy being edited in place, left alone.
 void			TrackPrefabEdits( idMapFile* map, const char* skipAnchor, const idDict& duplicateRenames, const idList<Selection>& duplicated );
 
-// Writes a copy back into its piece (edit in place, "Apply to all copies"), clearing that
-// copy's overrides, and rebuilds every other copy in the map.
-bool			WritePrefabFromCopy( idMapFile* map, int anchor, idStr& error );
+// What a copy changed before an edit in place started, so the edit can leave those changes
+// this copy's own when it's saved to every copy.
+struct pieceEditStart_t
+{
+	idStrList		keys;		// "owner|part" of things with overrides
+	idStrList		states;		// what each was like
+	idStrList		removed;	// the copy's deleted parts
+};
+void			SnapshotCopyChanges( const idMapFile* map, int anchor, pieceEditStart_t& start );
+
+// Writes a copy back into its piece (edit in place, "Apply to all copies") and rebuilds every
+// copy in the map. The copy's overrides become the piece's, except those in start that the
+// edit didn't touch: they stay this copy's own.
+bool			WritePrefabFromCopy( idMapFile* map, int anchor, idStr& error, const pieceEditStart_t* start = NULL );
 
 // per-thing overrides
 void			GetOverrides( const idMapFile* map, const Selection& sel, idStrList& keys );

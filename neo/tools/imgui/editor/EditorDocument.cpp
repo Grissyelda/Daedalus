@@ -698,6 +698,7 @@ Document::Document()
 	transforming = false;
 	textureLock = true;
 	afterChange = NULL;
+	filesRestored = NULL;
 }
 
 Document::~Document()
@@ -926,6 +927,7 @@ void Document::BeginChange( const char* label )
 
 	changeOpen = true;
 	duplicateRenames.Clear();
+	pendingFiles.Clear();
 	pendingLabel = label;
 	pendingSelection = selection;
 	Snapshot( pendingText );
@@ -955,7 +957,9 @@ void Document::EndChange()
 	state.label = pendingLabel;
 	state.text = pendingText;
 	state.selection = pendingSelection;
+	state.files = pendingFiles;
 	pendingText.Clear();
+	pendingFiles.Clear();
 
 	redoStack.Clear();
 	TrimUndo();
@@ -968,6 +972,54 @@ void Document::CancelChange()
 {
 	changeOpen = false;
 	pendingText.Clear();
+	PutFilesBack( pendingFiles, true );		// whatever it wrote goes back too
+	pendingFiles.Clear();
+}
+
+void Document::RecordFileWrite( const char* relativePath, bool existedBefore, const idStr& before, const idStr& after )
+{
+	if( !changeOpen )
+	{
+		return;
+	}
+	for( int i = 0; i < pendingFiles.Num(); i++ )
+	{
+		if( pendingFiles[i].path.Icmp( relativePath ) == 0 )
+		{
+			pendingFiles[i].after = after;		// written twice in one change: first before, last after
+			return;
+		}
+	}
+	FileChange& change = pendingFiles.Alloc();
+	change.path = relativePath;
+	change.existedBefore = existedBefore;
+	change.before = before;
+	change.after = after;
+}
+
+void Document::PutFilesBack( const idList<FileChange>& files, bool undoing )
+{
+	if( files.Num() == 0 )
+	{
+		return;
+	}
+	for( int i = files.Num() - 1; i >= 0; i-- )
+	{
+		const FileChange& change = files[i];
+		if( undoing && !change.existedBefore )
+		{
+			fileSystem->RemoveFile( change.path );
+			common->Printf( "Editor: undo removed %s\n", change.path.c_str() );
+			continue;
+		}
+		const idStr& text = undoing ? change.before : change.after;
+		fileSystem->WriteFile( change.path, text.c_str(), text.Length(), "fs_basepath" );
+		common->Printf( "Editor: %s put %s back\n", undoing ? "undo" : "redo", change.path.c_str() );
+	}
+	if( filesRestored != NULL )
+	{
+		filesRestored();
+	}
 }
 
 int Document::AddEntity( const char* classname, const idVec3& origin, const idDict* keys )
@@ -1108,6 +1160,8 @@ bool Document::Undo()
 		return false;
 	}
 	selection = previous.selection;
+	current.files = previous.files;
+	PutFilesBack( previous.files, true );
 	redoStack.Append( current );
 	ValidateSelection();
 	return true;
@@ -1132,6 +1186,8 @@ bool Document::Redo()
 	{
 		return false;
 	}
+	current.files = next.files;
+	PutFilesBack( next.files, false );
 	undoStack.Append( current );
 	selection = next.selection;
 	ValidateSelection();
