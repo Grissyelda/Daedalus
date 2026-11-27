@@ -486,6 +486,116 @@ static void TransformEntityKeys( idMapEntity* ent, const idMat3& linear, const i
 /*
 ===============================================================================
 
+	Map space
+
+	In a .map file (and in an idMapFile straight after parsing) the brushes and
+	patches of an entity with an "origin" are stored relative to that origin.
+	The editor keeps everything in world space, so geometry is moved out to
+	world space after parsing and back again when writing.
+
+===============================================================================
+*/
+
+static idVec3 EntityOrigin( const idMapEntity* ent )
+{
+	idVec3 origin;
+	if( !ent->epairs.GetVector( "origin", "0 0 0", origin ) )
+	{
+		origin += ent->originOffset;
+	}
+	return origin;
+}
+
+static void MapToWorldSpace( idMapFile* map )
+{
+	for( int e = 1; e < map->GetNumEntities(); e++ )
+	{
+		idMapEntity* ent = map->GetEntity( e );
+		const idVec3 origin = EntityOrigin( ent );
+		if( origin == vec3_origin )
+		{
+			continue;
+		}
+		for( int p = 0; p < ent->GetNumPrimitives(); p++ )
+		{
+			idMapPrimitive* prim = ent->GetPrimitive( p );
+			if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+			{
+				idMapBrush* brush = static_cast<idMapBrush*>( prim );
+				for( int s = 0; s < brush->GetNumSides(); s++ )
+				{
+					idPlane plane = brush->GetSide( s )->GetPlane();
+					plane.TranslateSelf( origin );
+					brush->GetSide( s )->SetPlane( plane );
+				}
+			}
+			else if( prim->GetType() == idMapPrimitive::TYPE_PATCH )
+			{
+				idMapPatch* patch = static_cast<idMapPatch*>( prim );
+				for( int v = 0; v < patch->GetWidth() * patch->GetHeight(); v++ )
+				{
+					( *patch )[v].xyz += origin;
+				}
+			}
+		}
+	}
+}
+
+// writes the map in Doom 3's own format, geometry back in entity space
+static void WriteMapText( const idMapFile* map, idFile* fp )
+{
+	fp->WriteFloatString( "Version %d\n", CURRENT_MAP_VERSION );
+	for( int e = 0; e < map->GetNumEntities(); e++ )
+	{
+		const idMapEntity* ent = map->GetEntity( e );
+		const idVec3 origin = ( e == 0 ) ? vec3_origin : EntityOrigin( ent );
+
+		fp->WriteFloatString( "// entity %d\n{\n", e );
+		for( int i = 0; i < ent->epairs.GetNumKeyVals(); i++ )
+		{
+			fp->WriteFloatString( "\"%s\" \"%s\"\n", ent->epairs.GetKeyVal( i )->GetKey().c_str(), ent->epairs.GetKeyVal( i )->GetValue().c_str() );
+		}
+
+		for( int p = 0; p < ent->GetNumPrimitives(); p++ )
+		{
+			const idMapPrimitive* prim = ent->GetPrimitive( p );
+			if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+			{
+				const idMapBrush* brush = static_cast<const idMapBrush*>( prim );
+				fp->WriteFloatString( "// primitive %d\n{\n brushDef3\n {\n", p );
+				for( int i = 0; i < brush->epairs.GetNumKeyVals(); i++ )
+				{
+					fp->WriteFloatString( "  \"%s\" \"%s\"\n", brush->epairs.GetKeyVal( i )->GetKey().c_str(), brush->epairs.GetKeyVal( i )->GetValue().c_str() );
+				}
+				for( int s = 0; s < brush->GetNumSides(); s++ )
+				{
+					idMapBrushSide* side = brush->GetSide( s );
+					idPlane plane = side->GetPlane();
+					plane.TranslateSelf( -origin );
+					idVec3 m0, m1;
+					side->GetTextureMatrix( m0, m1 );
+					fp->WriteFloatString( "  ( %f %f %f %f ) ", plane[0], plane[1], plane[2], plane[3] );
+					fp->WriteFloatString( "( ( %f %f %f ) ( %f %f %f ) ) \"%s\" 0 0 0\n", m0[0], m0[1], m0[2], m1[0], m1[1], m1[2], side->GetMaterial() );
+				}
+				fp->WriteFloatString( " }\n}\n" );
+			}
+			else if( prim->GetType() == idMapPrimitive::TYPE_PATCH )
+			{
+				// patches are written in world space and moved by the parser
+				static_cast<const idMapPatch*>( prim )->Write( fp, p, vec3_origin );
+			}
+			else if( prim->GetType() == idMapPrimitive::TYPE_MESH )
+			{
+				static_cast<const MapPolygonMesh*>( prim )->Write( fp, p, origin );
+			}
+		}
+		fp->WriteFloatString( "}\n" );
+	}
+}
+
+/*
+===============================================================================
+
 	Document
 
 ===============================================================================
@@ -632,6 +742,7 @@ bool Document::Load( const char* mapName )
 	Close();
 	map = loaded;
 	name = mapName;
+	MapToWorldSpace( map );
 	ConvertValveSides();
 	revision++;
 	common->Printf( "Editor: opened %s (%d entities)\n", name.c_str(), map->GetNumEntities() );
@@ -645,11 +756,14 @@ bool Document::Save()
 		return false;
 	}
 
-	if( !map->Write( va( "maps/%s", name.c_str() ), ".map", true ) )
+	idFile* fp = fileSystem->OpenFileWrite( va( "maps/%s.map", name.c_str() ), "fs_basepath" );
+	if( fp == NULL )
 	{
 		common->Warning( "Editor: couldn't save maps/%s.map", name.c_str() );
 		return false;
 	}
+	WriteMapText( map, fp );
+	fileSystem->CloseFile( fp );
 
 	dirty = false;
 	common->Printf( "Editor: saved maps/%s.map\n", name.c_str() );
@@ -677,7 +791,7 @@ void Document::Snapshot( idStr& text ) const
 	}
 
 	idFile_Memory file( "editor_snapshot" );
-	map->WriteToFile( &file );
+	WriteMapText( map, &file );
 	text.Append( file.GetDataPtr(), file.Length() );
 }
 
@@ -691,6 +805,7 @@ bool Document::Restore( const idStr& text )
 		return false;
 	}
 
+	MapToWorldSpace( restored );
 	delete map;
 	map = restored;
 	dirty = true;
