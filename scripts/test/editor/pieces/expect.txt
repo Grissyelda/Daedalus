@@ -1,0 +1,17 @@
+# make a piece from a box and a light
+made piece crate around 376 224 0: 3 things
+# a copy placed a quarter turn round
+copy crate_1 of crate at 200 200 0
+# changing a part of one copy is that copy's own (an override)
+entity crate_1_light_entry (crate_1|light_entry) at 328 -80 232 overrides 'origin'
+brush 10 (crate_1|b0) 60 424 0 - 124 488 64 overrides 'brush'
+# editing the piece in place updates both copies, turned to match
+Saved the piece "crate": 2 copies in this level updated
+brush 12 (crate_1|b1) 92 424 64 - 124 456 96 overrides ''
+# Apply to all copies moves the override into the piece
+entity crate_0_light_entry (crate_0|light_entry) at 96 96 232 overrides ''
+entity crate_1_light_entry (crate_1|light_entry) at 328 -80 232 overrides ''
+# undo puts the piece file back
+Editor: undo put maps/prefabs/crate.map back
+!signal caught
+!Sys_Error

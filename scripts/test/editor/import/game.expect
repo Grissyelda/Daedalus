@@ -1,0 +1,7 @@
+# the level with imported models compiles, loads and spawns them
+seconds for dmap
+generated/collision/models/imported/wooden_crate/wooden_crate.bcmodel
+generated/collision/models/imported/crate_obj/crate_obj.bcmodel
+SpawnPlayer: 0
+!signal caught
+!Sys_Error

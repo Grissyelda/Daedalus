@@ -1,0 +1,16 @@
+# all three come in, 2 x 1 x 0.5 m = 78.7 x 39.4 x 19.7 game units
+Brought in wooden_crate (1 material)
+Brought in crate (1 material)
+Brought in crate_obj (1 material)
+Meters, turn 0, 1 materials, 2 pictures, 1 meshes, bounds 0.0 -0.0 0.0 .. 78.7 39.4 19.7
+Meters, turn 0, 1 materials, 1 pictures, 1 meshes, bounds 0.0 0.0 0.0 .. 78.7 39.4 19.7
+# made in centimeters: a hundredth of the size
+Centimeters, turn 0, 1 materials, 2 pictures, 1 meshes, bounds 0.0 -0.0 0.0 .. 0.8 0.4 0.2
+# a quarter turn left, the same for glTF and OBJ
+wooden_crate: models/imported/wooden_crate/wooden_crate.glb
+Meters, turn 90, 1 materials, 2 pictures, 1 meshes, bounds -39.4 -0.0 0.0 .. 0.0 78.7 19.7
+Meters, turn 90, 1 materials, 1 pictures, 1 meshes, bounds -39.4 -0.0 0.0 .. 0.0 78.7 19.7
+Editor: saved maps/testmaps/import_test.map
+!Couldn't bring in
+!signal caught
+!Sys_Error

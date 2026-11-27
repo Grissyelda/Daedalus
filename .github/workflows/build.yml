@@ -58,6 +58,10 @@ jobs:
       - name: Smoke test
         run: bash scripts/ci/smoke_test.sh build/${{ matrix.preset }}/GrizzTech4
 
+      - name: Editor tests
+        if: matrix.preset == 'linux-release'
+        run: bash scripts/test/run_editor_tests.sh build/${{ matrix.preset }}/GrizzTech4
+
       - name: Package
         run: |
           mkdir -p package/GrizzTech4
