@@ -286,6 +286,21 @@ void idGameLocal::Clear()
 	lastCmdRunTimeOnServer.Zero();
 }
 
+static bool UseGameDataScripts()
+{
+	return cvarSystem->GetCVarString( "fs_gameData" )[0] != 0 && fileSystem->ReadFile( "script/doom_main.script", NULL, NULL ) > 0;
+}
+
+const char* GameScriptDefs()
+{
+	return UseGameDataScripts() ? "script/doom_defs.script" : SCRIPT_DEFAULTDEFS;
+}
+
+const char* GameScriptMain()
+{
+	return UseGameDataScripts() ? "script/doom_main.script" : SCRIPT_DEFAULT;
+}
+
 /*
 ===========
 idGameLocal::Init
@@ -353,7 +368,7 @@ void idGameLocal::Init()
 	}
 
 	// load default scripts
-	program.Startup( SCRIPT_DEFAULT );
+	program.Startup( GameScriptMain() );
 
 	smokeParticles = new( TAG_PARTICLE ) idSmokeParticles;
 

@@ -538,6 +538,19 @@ gameKind_t GameLibrary::ProjectGame( const char* project )
 	return GAME_KIND_COUNT;
 }
 
+const char* GameLibrary::FirstLevel( gameKind_t kind )
+{
+	switch( kind )
+	{
+		case GAME_DOOM3:
+			return "game/mars_city1";
+		case GAME_DOOM3_ROE:
+			return "game/erebus1";
+		default:
+			return "";
+	}
+}
+
 idStr GameLibrary::ModProjectName( const installedGame_t& game )
 {
 	return va( "mod_%s", Id( game.kind ) );

@@ -3239,7 +3239,7 @@ void idCompiler::CompileFile( const char* text, const char* filename, bool toCon
 	parserPtr = &parser;
 
 	// unread tokens to include script defines
-	token = SCRIPT_DEFAULTDEFS;
+	token = GameScriptDefs();
 	token.type = TT_STRING;
 	token.subtype = token.Length();
 	token.line = token.linesCrossed = 0;

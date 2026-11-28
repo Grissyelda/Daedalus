@@ -158,7 +158,7 @@ void Cmd_ReloadScript_f( const idCmdArgs& args )
 	gameLocal.MapShutdown();
 
 	// recompile the scripts
-	gameLocal.program.Startup( SCRIPT_DEFAULT );
+	gameLocal.program.Startup( GameScriptMain() );
 
 	if( fileSystem->ReadFile( "main.script", NULL ) > 0 )
 	{
@@ -176,7 +176,7 @@ CONSOLE_COMMAND( reloadScript2, "Doesn't thow an error...  Use this when switchi
 	gameLocal.MapShutdown();
 
 	// recompile the scripts
-	gameLocal.program.Startup( SCRIPT_DEFAULT );
+	gameLocal.program.Startup( GameScriptMain() );
 
 	if( fileSystem->ReadFile( "main.script", NULL ) > 0 )
 	{

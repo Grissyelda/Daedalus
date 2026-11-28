@@ -207,6 +207,7 @@ static void TurnSelection( float degrees );
 static void FitSelectedFaces();
 
 static void SwitchProject( const char* name );
+static void PlayGame( const char* project, const char* level );
 static void CenterPlanOnCamera();
 static void BeginCornerMove();
 static void MoveCorners( const idVec3& delta );
@@ -2018,6 +2019,26 @@ static void SwitchProject( const char* name )
 	const char* args[3] = { "+set", "fs_game", name };
 	common->Printf( "Editor: restarting into project '%s'\n", name[0] ? name : "(engine content)" );
 	Sys_ReLaunchWithArgs( args, 3 );
+}
+
+// a game's mod project as the game itself, without the editor
+static void PlayGame( const char* project, const char* level )
+{
+	if( document.IsDirty() && document.IsOpen() )
+	{
+		document.Save();
+	}
+	common->Printf( "Editor: restarting as the game, project '%s'\n", project );
+	if( level != NULL && level[0] )
+	{
+		const char* args[8] = { "+set", "fs_game", project, "+set", "editor", "0", "+map", level };
+		Sys_ReLaunchWithArgs( args, 8 );
+	}
+	else
+	{
+		const char* args[6] = { "+set", "fs_game", project, "+set", "editor", "0" };
+		Sys_ReLaunchWithArgs( args, 6 );
+	}
 }
 
 static void DrawOpenProjectDialog()
@@ -3991,6 +4012,20 @@ static void DrawGames()
 				}
 				ImGui::EndDisabled();
 				UI::Tip( va( "Restarts Daedalus into the project %s: the game's levels, models and materials show in Content, read from where it's installed. Whatever you save goes in that project's own folder, as your mod.", project.c_str() ) );
+				ImGui::SameLine();
+				if( UI::ColorButton( ICON_PLAY "  Play", UI::Good() ) )
+				{
+					idStr made, error;
+					if( GameLibrary::MakeModProject( game, made, error ) )
+					{
+						PlayGame( made, GameLibrary::FirstLevel( game.kind ) );
+					}
+					else
+					{
+						Status( error );
+					}
+				}
+				UI::Tip( "Restarts Daedalus as the game, without the editor, from the start of the game. Your mod's changes are in it." );
 			}
 			else
 			{

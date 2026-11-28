@@ -44,6 +44,11 @@ If you have questions concerning this license or the applicable additional terms
 #define SCRIPT_DEFAULT				"script/main.script"	// Daedalus: the game's main script
 #define SCRIPT_DEFAULTFUNC			"doom_main"
 
+// Daedalus: a project over DOOM 3's own data uses DOOM 3's scripts (which include each level's script);
+// otherwise the ones above
+const char* GameScriptDefs();
+const char* GameScriptMain();
+
 struct gameReturn_t
 {
 

@@ -85,6 +85,8 @@ bool			CanOpen( gameKind_t kind );
 // the game this project reads, if it is a mod project ("mod_doom3"); GAME_KIND_COUNT if none
 gameKind_t		ProjectGame( const char* project );
 idStr			ModProjectName( const installedGame_t& game );
+// the level a new game starts on ("" for the game's own menu)
+const char*		FirstLevel( gameKind_t kind );
 bool			MakeModProject( const installedGame_t& game, idStr& project, idStr& error );
 
 void			RegisterCommands();
