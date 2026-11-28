@@ -1502,6 +1502,9 @@ idCommonLocal::Shutdown
 */
 void idCommonLocal::Shutdown()
 {
+	// Daedalus: the joystick thread must not outlive what it locks (it crashed restarts)
+	Sys_StopInputThreads();
+
 
 	if( com_shuttingDown )
 	{

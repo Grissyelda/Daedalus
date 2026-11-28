@@ -243,6 +243,10 @@ void Sys_InitInput()
 Sys_ShutdownInput
 =================
 */
+void Sys_StopInputThreads()
+{
+}
+
 void Sys_ShutdownInput()
 {
 	kbd_polls.Clear();

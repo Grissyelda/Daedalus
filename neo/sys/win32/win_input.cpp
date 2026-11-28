@@ -464,13 +464,18 @@ Sys_ShutdownInput
 static volatile bool joystickThreadQuit = false;
 static volatile bool joystickThreadRunning = false;
 
-void Sys_ShutdownInput()
+void Sys_StopInputThreads()
 {
 	joystickThreadQuit = true;
 	for( int i = 0; i < 100 && joystickThreadRunning; i++ )
 	{
 		Sleep( 5 );
 	}
+}
+
+void Sys_ShutdownInput()
+{
+	Sys_StopInputThreads();
 	IN_DeactivateMouse();
 	IN_DeactivateKeyboard();
 	if( win32.g_pKeyboard )

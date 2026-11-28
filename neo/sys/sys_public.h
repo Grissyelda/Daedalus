@@ -589,6 +589,8 @@ void			Sys_ClearEvents();
 // the main window is recreated
 void			Sys_InitInput();
 void			Sys_ShutdownInput();
+// stop threads that read input devices; called first thing when the engine shuts down
+void			Sys_StopInputThreads();
 
 // keyboard input polling
 int				Sys_PollKeyboardInputEvents();
