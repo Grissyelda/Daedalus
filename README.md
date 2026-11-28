@@ -28,11 +28,12 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 - **Background builds** with leak finding.
 - **Problems:** errors, warnings and notes about the level, each pointing at the thing at fault with a next step and often a one-click fix. They show in the Outliner, the view and the Inspector too; Play asks first when there are errors, and **Check every level** checks the whole project.
 - **Help:** a page for every panel and tool, and lessons that tick off as you go.
-- **Your games:** finds the id Tech 4 games installed on your computer (in Steam, GOG, or folders you add) and says what Daedalus can do with each.
+- **Your games:** finds the id Tech 4 games installed on your computer (in Steam, GOG, or folders you add). DOOM 3 and the BFG Edition open in the editor from your own install, with your changes kept in a mod folder of their own.
+- **Depth:** a Create / Understand / Control switch shows as much of each system as you want.
 
 ## Next up
 
-- Opening a game you own: browse its levels, models and materials in the editor, and play DOOM 3 and Resurrection of Evil from your own install.
+- Playing DOOM 3 and Resurrection of Evil from your own install, and editing their levels into your mod.
 - A view of the level's areas and portals, and light looks with one-click baked lighting.
 - Then behavior: When/Do rule cards on objects that open up into node graphs and Doom Script.
 

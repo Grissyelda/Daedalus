@@ -21,7 +21,13 @@ Daedalus looks in Steam and GOG by itself (untick **Look in Steam and GOG** to s
 - **Edit; play with a port** (yellow): Quake 4 and Prey (2006). Daedalus edits their levels and assets; to play them, install a port of that game and Daedalus hands the level to it.
 - **Look inside** (grey): Wolfenstein (2009). Its files differ more from id Tech 4's, so Daedalus can show what's in them; editing comes later.
 
-Opening a game to play or edit it is the next step on the roadmap.
+## Opening a game
+
+DOOM 3 BFG Edition, DOOM 3 and Resurrection of Evil have **Open in Daedalus**. It restarts Daedalus into a project made for that game (named like `mod_doom3`, next to Daedalus). The project reads the game's levels, models, materials and sounds from where you installed it: open a level from **Content** to look around it in the editor.
+
+Whatever you save goes into that project's own folder, never into the game's install. That folder is your mod: it holds only your files, so you can share it without any of the game's. The top bar shows which game's mod is open.
+
+Playing the game from Daedalus comes next on the roadmap; Quake 4 and Prey open in a later step.
 
 ## From the console
 

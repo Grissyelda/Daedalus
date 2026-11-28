@@ -320,6 +320,7 @@ private:
 	idVec2i					FindResourceFile( const char* resourceFileName );
 
 	void					SetupGameDirectories( const char* gameName );
+	void					AddGameDataFolders( const char* project );
 	void					Startup();
 	void					InitPrecache();
 	void					ReOpenCacheFiles();
@@ -339,6 +340,7 @@ idCVar	idFileSystemLocal::fs_game( "fs_game", "", CVAR_SYSTEM | CVAR_INIT | CVAR
 idCVar  idFileSystemLocal::fs_game_base( "fs_game_base", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "alternate mod path, searched after the main fs_game path, before the basedir" );
 
 idCVar	fs_basepath( "fs_basepath", "", CVAR_SYSTEM | CVAR_INIT, "" );
+idCVar	fs_gameData( "fs_gameData", "", CVAR_SYSTEM | CVAR_ROM, "Daedalus: the folders of a game's own data this project reads (from project.daedalus)" );
 idCVar	fs_savepath( "fs_savepath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	fs_resourceLoadPriority( "fs_resourceLoadPriority", "0", CVAR_SYSTEM , "if 1, open requests will be honored from resource files first; if 0, the resource files are checked after normal search paths" );
 idCVar	fs_enableBackgroundCaching( "fs_enableBackgroundCaching", "1", CVAR_SYSTEM , "if 1 allow the 360 to precache game files in the background" );
@@ -3274,6 +3276,63 @@ void idFileSystemLocal::SetupGameDirectories( const char* gameName )
 	}
 }
 
+
+/*
+================
+idFileSystemLocal::AddGameDataFolders
+
+Daedalus: project.daedalus may name folders of a game's own data ('gameData "<folder>"', lowest
+first). Each is added as a search path, so its pk4s and .resources are read where they're installed.
+================
+*/
+void idFileSystemLocal::AddGameDataFolders( const char* project )
+{
+	idStr projectFile = BuildOSPath( fs_basepath.GetString(), project, "project.daedalus" );
+	FILE* f = fopen( projectFile.c_str(), "rb" );
+	if( f == NULL )
+	{
+		return;
+	}
+	char line[2048];
+	idStr folders;
+	while( fgets( line, sizeof( line ), f ) != NULL )
+	{
+		idStr text = line;
+		text.StripTrailingWhitespace();
+		if( idStr::Icmpn( text, "gameData", 8 ) != 0 )
+		{
+			continue;
+		}
+		const int open = text.Find( '"' );
+		const int close = text.Last( '"' );
+		if( open < 0 || close <= open )
+		{
+			continue;
+		}
+		idStr folder = text.Mid( open + 1, close - open - 1 );
+		folder.BackSlashesToSlashes();
+		folder.StripTrailing( '/' );
+		if( Sys_IsFolder( folder.c_str() ) != FOLDER_YES )
+		{
+			common->Warning( "The game data folder %s isn't there any more; open Your games to find the game again.", folder.c_str() );
+			continue;
+		}
+		idStr dir = folder;
+		dir.StripPath();
+		idStr parent = folder;
+		parent.StripFilename();
+		common->Printf( "Reading the game's data from %s\n", folder.c_str() );
+		AddGameDirectory( parent, dir );
+		if( folders.Length() > 0 )
+		{
+			folders += ";";
+		}
+		folders += folder;
+	}
+	fclose( f );
+	cvarSystem->SetCVarString( "fs_gameData", folders );
+}
+
 /*
 ================
 idFileSystemLocal::InitPrecache
@@ -3321,6 +3380,13 @@ void idFileSystemLocal::Startup()
 			idStr::Icmp( fs_game_base.GetString(), BASE_GAMEDIR ) )
 	{
 		SetupGameDirectories( fs_game_base.GetString() );
+	}
+
+	// Daedalus: a project made over a game the user owns reads that game's data from its install,
+	// read-only, above the engine's content and below the project's own files
+	if( fs_game.GetString()[0] && idStr::Icmp( fs_game.GetString(), BASE_GAMEDIR ) )
+	{
+		AddGameDataFolders( fs_game.GetString() );
 	}
 
 	// fs_game override

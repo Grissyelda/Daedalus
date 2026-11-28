@@ -1,0 +1,6 @@
+# the project reads the game's data where it's installed
+Reading the game's data from
+Loaded pk4
+stand_in.map
+!signal caught
+!Sys_Error

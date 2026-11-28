@@ -265,11 +265,8 @@ bool idLangDict::Load( const byte* buffer, const int bufferLen, const char* name
 			while( i < bufferLen )
 			{
 				c = utf8 ? idStr::UTF8Char( buffer, i ) : buffer[i++];
-				if( !utf8 && c >= 0x80 )
-				{
-					// this is a serious error and we must check this to avoid accidentally shipping a file where someone squased UTF-8 encodings
-					idLib::FatalError( "Language file %s is supposed to be plain ASCII, but has byte values > 127!", name );
-				}
+				// Daedalus: DOOM 3 (2004) language files are Latin-1; their bytes above 127 are those
+				// characters (UTF-8 files have a byte order mark and are read above)
 				if( c == '\"' )
 				{
 					valEnd = i - 1;

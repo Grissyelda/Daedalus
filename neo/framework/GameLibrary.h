@@ -79,6 +79,14 @@ const idStrList&	Folders();
 int				AddFolder( const char* folder );	// how many games it holds; 0 means nothing was added
 bool			RemoveFolder( const char* folder );
 
+// a project over a game: <engine folder>/mod_<id>/project.daedalus naming the game's data folders.
+// Its own files are the mod; the game's stay where they are. Made if it's not there yet.
+bool			CanOpen( gameKind_t kind );
+// the game this project reads, if it is a mod project ("mod_doom3"); GAME_KIND_COUNT if none
+gameKind_t		ProjectGame( const char* project );
+idStr			ModProjectName( const installedGame_t& game );
+bool			MakeModProject( const installedGame_t& game, idStr& project, idStr& error );
+
 void			RegisterCommands();
 }
 

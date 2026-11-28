@@ -507,6 +507,85 @@ bool GameLibrary::RemoveFolder( const char* folderPath )
 	return false;
 }
 
+
+/*
+===============================================================================
+
+	Mod projects
+
+===============================================================================
+*/
+
+bool GameLibrary::CanOpen( gameKind_t kind )
+{
+	// Quake 4 and Prey open with G6, once their formats are read; Wolfenstein later
+	return kind == GAME_DOOM3_BFG || kind == GAME_DOOM3 || kind == GAME_DOOM3_ROE;
+}
+
+gameKind_t GameLibrary::ProjectGame( const char* project )
+{
+	if( project == NULL || idStr::Icmpn( project, "mod_", 4 ) != 0 || cvarSystem->GetCVarString( "fs_gameData" )[0] == 0 )
+	{
+		return GAME_KIND_COUNT;
+	}
+	for( int i = 0; i < GAME_KIND_COUNT; i++ )
+	{
+		if( idStr::Icmp( project + 4, gameInfo[i].id ) == 0 )
+		{
+			return ( gameKind_t )i;
+		}
+	}
+	return GAME_KIND_COUNT;
+}
+
+idStr GameLibrary::ModProjectName( const installedGame_t& game )
+{
+	return va( "mod_%s", Id( game.kind ) );
+}
+
+bool GameLibrary::MakeModProject( const installedGame_t& game, idStr& project, idStr& error )
+{
+	if( !CanOpen( game.kind ) )
+	{
+		error = va( "Daedalus can't open %s yet.", Name( game.kind ) );
+		return false;
+	}
+	project = ModProjectName( game );
+	idStr projectOS = cvarSystem->GetCVarString( "fs_basepath" );
+	projectOS.AppendPath( project );
+	idStr projectFile = projectOS;
+	projectFile.AppendPath( "project.daedalus" );
+
+	// the game's data, lowest first: Resurrection of Evil reads DOOM 3's too
+	idStrList data;
+	if( game.kind == GAME_DOOM3_ROE )
+	{
+		idStr base;
+		if( FindPath( game.folder, "base/", base ) )
+		{
+			data.Append( base );
+		}
+	}
+	data.Append( game.data );
+
+	fileSystem->CreateOSPath( projectFile.c_str() );
+	idFile* f = fileSystem->OpenExplicitFileWrite( projectFile.c_str() );
+	if( f == NULL )
+	{
+		error = va( "Couldn't write %s.", projectFile.c_str() );
+		return false;
+	}
+	f->Printf( "// Daedalus project over a game you own. Its files here are your mod;\n" );
+	f->Printf( "// the game's own files are read from where it's installed and never changed.\n" );
+	f->Printf( "name \"%s\"\n", Name( game.kind ) );
+	f->Printf( "game \"%s\"\n", Id( game.kind ) );
+	for( int i = 0; i < data.Num(); i++ )
+	{
+		f->Printf( "gameData \"%s\"\n", data[i].c_str() );
+	}
+	fileSystem->CloseFile( f );
+	return true;
+}
 /*
 ===============================================================================
 
@@ -567,8 +646,36 @@ static void RemoveGameFolder_f( const idCmdArgs& args )
 	}
 }
 
+static void MakeGameProject_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		common->Printf( "usage: makeGameProject <game id from listGames>\n" );
+		return;
+	}
+	const idList<installedGame_t>& list = GameLibrary::Games();
+	for( int i = 0; i < list.Num(); i++ )
+	{
+		if( idStr::Icmp( GameLibrary::Id( list[i].kind ), args.Argv( 1 ) ) == 0 )
+		{
+			idStr project, error;
+			if( GameLibrary::MakeModProject( list[i], project, error ) )
+			{
+				common->Printf( "Made project %s over %s\n", project.c_str(), list[i].data.c_str() );
+			}
+			else
+			{
+				common->Printf( "%s\n", error.c_str() );
+			}
+			return;
+		}
+	}
+	common->Printf( "No game %s found; see listGames.\n", args.Argv( 1 ) );
+}
+
 void GameLibrary::RegisterCommands()
 {
+	cmdSystem->AddCommand( "makeGameProject", MakeGameProject_f, CMD_FL_SYSTEM, "makes the mod project for a game found by listGames" );
 	cmdSystem->AddCommand( "listGames", ListGames_f, CMD_FL_SYSTEM, "lists the id Tech 4 games found on this computer" );
 	cmdSystem->AddCommand( "addGameFolder", AddGameFolder_f, CMD_FL_SYSTEM, "adds a folder to look for games in: a game's folder, or a folder of games" );
 	cmdSystem->AddCommand( "removeGameFolder", RemoveGameFolder_f, CMD_FL_SYSTEM, "stops looking for games in a folder" );

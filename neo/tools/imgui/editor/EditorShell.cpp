@@ -3915,7 +3915,7 @@ static void DrawGames()
 		return;
 	}
 
-	UI::Hint( "id Tech 4 games on this computer. Daedalus reads them where they're installed and never copies or shares their files. Opening one to play or edit is the next step." );
+	UI::Hint( "id Tech 4 games on this computer. Daedalus reads them where they're installed and never copies or shares their files. Open one to look through its levels and things; what you save goes in a mod folder of your own." );
 	ImGui::Spacing();
 
 	// adding a folder: the system's picker, or typed
@@ -3972,6 +3972,30 @@ static void DrawGames()
 		{
 			ImGui::TextColored( SupportColor( support ), "%s", GameLibrary::SupportLabel( support ) );
 			ImGui::TextWrapped( "%s", GameLibrary::SupportText( game.kind ) );
+			if( GameLibrary::CanOpen( game.kind ) )
+			{
+				const idStr project = GameLibrary::ModProjectName( game );
+				const bool isOpen = idStr::Icmp( cvarSystem->GetCVarString( "fs_game" ), project ) == 0;
+				ImGui::BeginDisabled( isOpen );
+				if( UI::ColorButton( isOpen ? ICON_OK "  Open now" : ICON_OPEN "  Open in Daedalus", UI::Accent() ) )
+				{
+					idStr made, error;
+					if( GameLibrary::MakeModProject( game, made, error ) )
+					{
+						SwitchProject( made );
+					}
+					else
+					{
+						Status( error );
+					}
+				}
+				ImGui::EndDisabled();
+				UI::Tip( va( "Restarts Daedalus into the project %s: the game's levels, models and materials show in Content, read from where it's installed. Whatever you save goes in that project's own folder, as your mod.", project.c_str() ) );
+			}
+			else
+			{
+				ImGui::TextColored( UI::Muted(), "Opening it in Daedalus comes in a later step." );
+			}
 			if( UI::IconButton( va( "showgame%d", i ), ICON_OPEN, "Show the folder" ) )
 			{
 				Sys_OpenFolder( game.data.c_str() );
@@ -10669,7 +10693,9 @@ void DrawMainMenuBar()
 	// right side: status, the level and the project
 	const char* game = cvarSystem->GetCVarString( "fs_game" );
 	const idStr level = document.IsOpen() ? va( ICON_MAP_FILE "  %s%s", document.Name(), document.IsDirty() ? "  \xe2\x80\xa2" : "" ) : "No level open";
-	const idStr project = ( game != NULL && game[0] != '\0' ) ? va( ICON_PROJECT "  %s", game ) : ICON_PROJECT "  Engine content";
+	const gameKind_t modOf = GameLibrary::ProjectGame( game );
+	const idStr project = modOf != GAME_KIND_COUNT ? va( ICON_PROJECT "  %s mod", GameLibrary::Name( modOf ) ) :
+						  ( game != NULL && game[0] != '\0' ) ? va( ICON_PROJECT "  %s", game ) : ICON_PROJECT "  Engine content";
 	const bool showStatus = statusMessage.Length() > 0 && Sys_Milliseconds() - statusTime < 4000;
 	const float gap = 24.0f * UI::Scale();
 	float rightWidth = ImGui::CalcTextSize( level.c_str() ).x + gap + ImGui::CalcTextSize( project.c_str() ).x + 16.0f * UI::Scale();
