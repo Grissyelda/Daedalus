@@ -116,6 +116,16 @@ void		IconCentered( ImDrawList* draw, const ImVec2& min, const ImVec2& max, cons
 // and an optional label; at the cursor, height h; returns true when clicked
 bool		PillButton( const char* id, const char* icon, const char* label, const ImVec4& color, float width, float h, bool enabled = true, bool darkText = true );
 
+// depth: 0 Create, 1 Understand, 2 Control (editor_depth)
+int			Depth();
+void		SetDepth( int depth );
+const char*	DepthName( int depth );
+// a card that belongs to a depth. Below it, only a "More: <title>" line is drawn, which opens the
+// card for this session; at Control, cards start open. Always pair with EndCard.
+bool		BeginCardAt( int depth, const char* id, const char* icon, const char* title, const char* help = NULL, bool defaultOpen = false );
+// the Create / Understand / Control control for the top bar; true when it changed
+bool		DepthSwitch();
+
 // a rounded panel with an icon title, optional help, and a fold arrow.
 // Content goes between BeginCard and EndCard only when BeginCard returns true; always call EndCard.
 bool		BeginCard( const char* id, const char* icon, const char* title, const char* help = NULL, bool defaultOpen = true );

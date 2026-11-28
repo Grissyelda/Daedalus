@@ -703,6 +703,7 @@ struct cardState_t
 	float		oldWorkMax;
 	float		oldContentMax;
 	bool		open;
+	bool		hidden;		// below the current depth: only a "More" line was drawn
 	ImGuiID		heightId;
 };
 static idStaticList<cardState_t, 8> cardStack;
@@ -718,6 +719,7 @@ bool BeginCard( const char* id, const char* icon, const char* title, const char*
 	card.start = ImGui::GetCursorScreenPos();
 	card.width = ImGui::GetContentRegionAvail().x;
 	card.open = *open;
+	card.hidden = false;
 	card.heightId = ImGui::GetID( "##height" );
 
 	const float pad = 10.0f * scale;
@@ -808,6 +810,11 @@ void EndCard()
 	ImGuiWindow* window = ImGui::GetCurrentWindow();
 	const cardState_t card = cardStack[cardStack.Num() - 1];
 	cardStack.SetNum( cardStack.Num() - 1 );
+	if( card.hidden )
+	{
+		ImGui::PopID();
+		return;
+	}
 
 	const float pad = 10.0f * scale;
 	if( card.open )
@@ -824,6 +831,103 @@ void EndCard()
 
 	ImGui::Dummy( ImVec2( 0.0f, 2.0f * scale ) );
 	ImGui::PopID();
+}
+
+/*
+===============================================================================
+
+	Depth: Create, Understand, Control
+
+===============================================================================
+*/
+
+static idCVar editor_depth( "editor_depth", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "how much the editor shows: 0 Create, 1 Understand, 2 Control", 0, 2 );
+
+int Depth()
+{
+	return idMath::ClampInt( 0, 2, editor_depth.GetInteger() );
+}
+
+void SetDepth( int depth )
+{
+	editor_depth.SetInteger( idMath::ClampInt( 0, 2, depth ) );
+}
+
+const char* DepthName( int depth )
+{
+	static const char* names[] = { "Create", "Understand", "Control" };
+	return names[idMath::ClampInt( 0, 2, depth )];
+}
+
+bool BeginCardAt( int depth, const char* id, const char* icon, const char* title, const char* help, bool defaultOpen )
+{
+	if( Depth() >= depth )
+	{
+		// in Control everything deeper starts open
+		return BeginCard( id, icon, title, help, defaultOpen || Depth() == 2 );
+	}
+
+	// below its depth: one quiet line that opens the card here, for this session
+	ImGui::PushID( id );
+	ImGuiStorage* storage = ImGui::GetStateStorage();
+	bool* revealed = storage->GetBoolRef( ImGui::GetID( "##revealed" ), false );
+	if( *revealed )
+	{
+		ImGui::PopID();
+		return BeginCard( id, icon, title, help, true );
+	}
+	ImGui::PushStyleColor( ImGuiCol_Text, MUTED );
+	if( ImGui::Selectable( va( ICON_CHEVRON_RIGHT "  More: %s", title ), false ) )
+	{
+		*revealed = true;
+	}
+	ImGui::PopStyleColor();
+	Tip( va( "Shown in %s and up. Click to open it here, or change the depth on the top bar.", DepthName( depth ) ) );
+	cardState_t card;
+	memset( &card, 0, sizeof( card ) );
+	card.hidden = true;
+	cardStack.Append( card );
+	return false;
+}
+
+bool DepthSwitch()
+{
+	bool changed = false;
+	const float h = ImGui::GetFrameHeight();
+	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 1.0f * scale, 0.0f ) );
+	for( int i = 0; i < 3; i++ )
+	{
+		const bool active = Depth() == i;
+		const char* name = DepthName( i );
+		const float w = ImGui::CalcTextSize( name ).x + 16.0f * scale;
+		const ImVec2 pos = ImGui::GetCursorScreenPos();
+		ImGui::PushID( i );
+		if( ImGui::InvisibleButton( "##depth", ImVec2( w, h ) ) && !active )
+		{
+			SetDepth( i );
+			changed = true;
+		}
+		const bool hovered = ImGui::IsItemHovered();
+		ImGui::PopID();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImDrawFlags corners = i == 0 ? ImDrawFlags_RoundCornersLeft : i == 2 ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone;
+		draw->AddRectFilled( pos, ImVec2( pos.x + w, pos.y + h ), active ? AccentU32( 0.85f ) : ImGui::ColorConvertFloat4ToU32( Grey( hovered ? 0.24f : 0.18f ) ), h * 0.5f, corners );
+		const ImVec2 ts = ImGui::CalcTextSize( name );
+		draw->AddText( ImVec2( idMath::Rint( pos.x + ( w - ts.x ) * 0.5f ), idMath::Rint( pos.y + ( h - ts.y ) * 0.5f ) ), ImGui::ColorConvertFloat4ToU32( active ? Grey( 0.06f ) : TEXT_COLOR ), name );
+		static const char* tips[] =
+		{
+			"Create: just what you need to make things. Deeper settings show as a 'More' line you can open.",
+			"Understand: also the settings behind each thing, folded, and the text files they make.",
+			"Control: everything open, raw keys and files included, for when you want full control.",
+		};
+		Tip( tips[i] );
+		if( i < 2 )
+		{
+			ImGui::SameLine();
+		}
+	}
+	ImGui::PopStyleVar();
+	return changed;
 }
 
 bool SearchField( const char* id, char* buffer, int bufferSize, const char* hint, float width )

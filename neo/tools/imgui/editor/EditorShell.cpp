@@ -2615,7 +2615,7 @@ static void DrawLightCard( idMapEntity* ent )
 // every key and value, for when the friendly cards don't cover something
 static void DrawAdvancedCard( idMapEntity* ent, const idDeclEntityDef* def )
 {
-	if( UI::BeginCard( "advanced", ICON_ADVANCED, "Advanced", "Every setting this thing has, as the raw keys and values the game reads.", false ) )
+	if( UI::BeginCardAt( 1, "advanced", ICON_ADVANCED, "Advanced", "Every setting this thing has, as the raw keys and values the game reads.", false ) )
 	{
 		int deleteIndex = -1;
 		const bool isWorld = document.selection.Primary().entity == 0;
@@ -4009,8 +4009,27 @@ static void EditorGames_f( const idCmdArgs& args )
 	common->Printf( "Your games: %d\n", GameLibrary::Games().Num() );
 }
 
+static void EditorDepth_f( const idCmdArgs& args )
+{
+	if( args.Argc() > 1 )
+	{
+		const char* a = args.Argv( 1 );
+		int d = atoi( a );
+		for( int i = 0; i < 3; i++ )
+		{
+			if( idStr::Icmp( a, UI::DepthName( i ) ) == 0 )
+			{
+				d = i;
+			}
+		}
+		UI::SetDepth( d );
+	}
+	common->Printf( "Depth: %s\n", UI::DepthName( UI::Depth() ) );
+}
+
 static void RegisterGameCommands()
 {
+	cmdSystem->AddCommand( "editorDepth", EditorDepth_f, CMD_FL_TOOL, "shows or sets how much the editor shows: Create, Understand or Control" );
 	cmdSystem->AddCommand( "editorGames", EditorGames_f, CMD_FL_TOOL, "opens Your games: the id Tech 4 games on this computer" );
 }
 
@@ -8735,7 +8754,7 @@ static void DrawMaterialPanel()
 	UI::EndCard();
 
 	// how it behaves
-	if( UI::BeginCard( "matbehave", ICON_SETTINGS, "Behaviour", "What happens when things touch it, and how it casts shadows." ) )
+	if( UI::BeginCardAt( 1, "matbehave", ICON_SETTINGS, "Behaviour", "What happens when things touch it, and how it casts shadows." ) )
 	{
 		int surfaceCount = 0;
 		const char** surfaces = Materials::SurfaceTypes( surfaceCount );
@@ -8760,6 +8779,25 @@ static void DrawMaterialPanel()
 		changed |= ImGui::Checkbox( "Casts shadows", &matSettings.shadows );
 		changed |= ImGui::Checkbox( "Solid", &matSettings.solid );
 		UI::Tip( "The player and things bump into it. Untick for things you can walk through, like curtains or water" );
+	}
+	UI::EndCard();
+
+	// Control: the file this material writes, as the engine reads it
+	if( UI::BeginCardAt( 2, "matfile", ICON_MAP_FILE, "File", "The material file Daedalus writes from these settings. The first line inside holds the settings; the rest is made from them." ) )
+	{
+		const idStr path = Materials::FilePath( matName );
+		char* text = NULL;
+		if( fileSystem->ReadFile( path, ( void** )&text ) > 0 && text != NULL )
+		{
+			ImGui::InputTextMultiline( "##mtr", text, strlen( text ) + 1, ImVec2( -FLT_MIN, 220.0f * UI::Scale() ), ImGuiInputTextFlags_ReadOnly );
+			fileSystem->FreeFile( text );
+		}
+		if( ImGui::Button( ICON_OPEN "  Show the file" ) )
+		{
+			idStr folder = fileSystem->RelativePathToOSPath( path, "fs_basepath" );
+			folder.StripFilename();
+			Sys_OpenFolder( folder );
+		}
 	}
 	UI::EndCard();
 
@@ -10359,6 +10397,14 @@ void DrawMainMenuBar()
 			showAbout = true;
 		}
 		ImGui::EndMenu();
+	}
+
+	// how much the editor shows
+	ImGui::SetCursorPosX( ImGui::GetCursorPosX() + 14.0f * UI::Scale() );
+	if( UI::DepthSwitch() )
+	{
+		Status( va( "Showing %s: %s", UI::DepthName( UI::Depth() ), UI::Depth() == 0 ? "just what you need to make things." : UI::Depth() == 1 ? "the settings behind things, folded." : "everything, open." ) );
+		Help::Event( va( "depth.%d", UI::Depth() ) );
 	}
 
 	// Play / Stop sits in the middle of the bar, like other editors
