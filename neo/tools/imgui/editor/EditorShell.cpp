@@ -7391,6 +7391,109 @@ static float ModeRowWidth( editMode_t mode )
 	}
 }
 
+static idCVar editor_toolsPanel( "editor_toolsPanel", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL | CVAR_NOCHEAT, "the tool dock is a panel you can dock anywhere, instead of floating over the view" );
+static idCVar editor_toolDockOffset( "editor_toolDockOffset", "0 0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_NOCHEAT, "where the tool dock was dragged to, from the bottom middle of the view" );
+static const char* WINDOW_TOOLS = ICON_BUILD "  Tools###Tools";
+
+// the tabs and tiles, in the overlay or in the Tools panel
+static void DrawToolDockContents()
+{
+	// mode tabs, centred over the tiles
+	float tabsWidth = 0.0f;
+	for( int i = 0; i < MODE_COUNT; i++ )
+	{
+		tabsWidth += ImGui::CalcTextSize( va( "%s  %s", modeInfo[i].icon, modeInfo[i].label ) ).x + 28.0f * UI::Scale() + ( i > 0 ? ImGui::GetStyle().ItemSpacing.x : 0.0f );
+	}
+	const float windowWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
+	if( windowWidth > tabsWidth )
+	{
+		ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( windowWidth - tabsWidth ) * 0.5f );
+	}
+	for( int i = 0; i < MODE_COUNT; i++ )
+	{
+		if( i > 0 )
+		{
+			ImGui::SameLine();
+		}
+		if( UI::ModeTab( modeInfo[i].icon, modeInfo[i].label, editMode == i, modeInfo[i].tip ) )
+		{
+			SetMode( ( editMode_t )i );
+		}
+	}
+
+	// the row of tiles, centred
+	const float rowWidth = ModeRowWidth( editMode );
+	if( windowWidth > rowWidth )
+	{
+		ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( windowWidth - rowWidth ) * 0.5f );
+	}
+	switch( editMode )
+	{
+		case MODE_BUILD:
+			DrawBuildTiles();
+			break;
+		case MODE_PAINT:
+			DrawPaintTiles();
+			break;
+		case MODE_LOGIC:
+			DrawLogicTiles();
+			break;
+		case MODE_LIGHT:
+			DrawLightTiles();
+			break;
+		default:
+			DrawKitTiles();
+			break;
+	}
+}
+
+// a grip at the dock's top left: drag to move the dock, right-click for where it lives
+static void DrawDockGrip()
+{
+	const float s = UI::Scale();
+	const ImVec2 back = ImGui::GetCursorPos();
+	ImGui::SetCursorPos( ImVec2( 6.0f * s, 6.0f * s ) );
+	const ImVec2 size( 12.0f * s, 22.0f * s );
+	ImGui::InvisibleButton( "##dockgrip", size );
+	const bool hovered = ImGui::IsItemHovered();
+	const ImVec2 min = ImGui::GetItemRectMin();
+	if( ImGui::IsItemActive() && ImGui::IsMouseDragging( ImGuiMouseButton_Left, 0.0f ) )
+	{
+		idVec2 offset;
+		sscanf( editor_toolDockOffset.GetString(), "%f %f", &offset.x, &offset.y );
+		offset.x += ImGui::GetIO().MouseDelta.x;
+		offset.y += ImGui::GetIO().MouseDelta.y;
+		editor_toolDockOffset.SetString( va( "%.0f %.0f", offset.x, offset.y ) );
+	}
+	if( hovered && ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+	{
+		editor_toolDockOffset.SetString( "0 0" );
+	}
+	ImDrawList* draw = ImGui::GetWindowDrawList();
+	const ImU32 dot = ImGui::ColorConvertFloat4ToU32( hovered || ImGui::IsItemActive() ? ImVec4( 0.9f, 0.9f, 0.92f, 1.0f ) : UI::Muted() );
+	for( int y = 0; y < 3; y++ )
+	{
+		for( int x = 0; x < 2; x++ )
+		{
+			draw->AddCircleFilled( ImVec2( min.x + ( 3.0f + x * 6.0f ) * s, min.y + ( 5.0f + y * 6.0f ) * s ), 1.6f * s, dot );
+		}
+	}
+	UI::Tip( "Drag to move the tool dock. Double-click puts it back in the middle; right-click to make it a panel you can dock anywhere." );
+	if( ImGui::BeginPopupContextItem( "##dockgripmenu" ) )
+	{
+		if( ImGui::MenuItem( ICON_DETACH "  Make it a panel" ) )
+		{
+			editor_toolsPanel.SetBool( true );
+		}
+		if( ImGui::MenuItem( "      Back to the middle" ) )
+		{
+			editor_toolDockOffset.SetString( "0 0" );
+		}
+		ImGui::EndPopup();
+	}
+	ImGui::SetCursorPos( back );
+}
+
 static void DrawToolDock( const ImGuiDockNode* central )
 {
 	// tiles shrink to fit narrow views; Build has the most: 13, a divider, the spacing and the padding
@@ -7398,7 +7501,42 @@ static void DrawToolDock( const ImGuiDockNode* central )
 	const float avail = central->Size.x - 24.0f * s;
 	dockTile = idMath::ClampFloat( 36.0f * s, UI::TileSize(), ( avail - 12.0f * 4.0f * s - 17.0f * s - 16.0f * s ) / 13.0f );
 
-	const ImVec2 pos( central->Pos.x + central->Size.x * 0.5f, central->Pos.y + central->Size.y - 12.0f * UI::Scale() );
+	// as a panel: dockable anywhere, moved by its tab; closing it puts it back over the view
+	if( editor_toolsPanel.GetBool() )
+	{
+		bool open = true;
+		ImGui::SetNextWindowSize( ImVec2( 760.0f * s, 150.0f * s ), ImGuiCond_FirstUseEver );
+		// the first time, it joins Content and Problems at the bottom
+		if( ImGui::FindWindowByName( WINDOW_TOOLS ) == NULL )
+		{
+			ImGuiWindow* content = ImGui::FindWindowByName( WINDOW_CONTENT_BROWSER );
+			if( content != NULL && content->DockId != 0 )
+			{
+				ImGui::SetNextWindowDockID( content->DockId, ImGuiCond_FirstUseEver );
+			}
+		}
+		ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing, ImVec2( 4.0f * s, 6.0f * s ) );
+		if( ImGui::Begin( WINDOW_TOOLS, &open, ImGuiWindowFlags_HorizontalScrollbar ) )
+		{
+			DrawToolDockContents();
+		}
+		ImGui::End();
+		ImGui::PopStyleVar();
+		if( !open )
+		{
+			editor_toolsPanel.SetBool( false );
+		}
+		// the context bar sits at the bottom of the view instead
+		dockTopCenter = ImVec2( central->Pos.x + central->Size.x * 0.5f, central->Pos.y + central->Size.y - 8.0f * s );
+		return;
+	}
+
+	idVec2 offset( 0, 0 );
+	sscanf( editor_toolDockOffset.GetString(), "%f %f", &offset.x, &offset.y );
+	ImVec2 pos( central->Pos.x + central->Size.x * 0.5f + offset.x, central->Pos.y + central->Size.y - 12.0f * UI::Scale() + offset.y );
+	// keep it reachable when the view shrinks
+	pos.x = idMath::ClampFloat( central->Pos.x + 60.0f * s, central->Pos.x + central->Size.x - 60.0f * s, pos.x );
+	pos.y = idMath::ClampFloat( central->Pos.y + 120.0f * s, central->Pos.y + central->Size.y, pos.y );
 	// the dock keeps the width of its widest tab, so the tabs don't jump about
 	float widest = 0.0f;
 	for( int i = 0; i < MODE_COUNT; i++ )
@@ -7408,53 +7546,8 @@ static void DrawToolDock( const ImGuiDockNode* central )
 	ImGui::SetNextWindowSizeConstraints( ImVec2( widest + 16.0f * UI::Scale(), 0.0f ), ImVec2( FLT_MAX, FLT_MAX ) );
 	if( BeginOverlay( "##tool_dock", pos, ImVec2( 0.5f, 1.0f ), 14.0f * UI::Scale() ) )
 	{
-		// mode tabs, centred over the tiles
-		float tabsWidth = 0.0f;
-		for( int i = 0; i < MODE_COUNT; i++ )
-		{
-			tabsWidth += ImGui::CalcTextSize( va( "%s  %s", modeInfo[i].icon, modeInfo[i].label ) ).x + 28.0f * UI::Scale() + ( i > 0 ? ImGui::GetStyle().ItemSpacing.x : 0.0f );
-		}
-		const float windowWidth = ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x;
-		if( windowWidth > tabsWidth )
-		{
-			ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( windowWidth - tabsWidth ) * 0.5f );
-		}
-		for( int i = 0; i < MODE_COUNT; i++ )
-		{
-			if( i > 0 )
-			{
-				ImGui::SameLine();
-			}
-			if( UI::ModeTab( modeInfo[i].icon, modeInfo[i].label, editMode == i, modeInfo[i].tip ) )
-			{
-				SetMode( ( editMode_t )i );
-			}
-		}
-
-		// the row of tiles, centred
-		const float rowWidth = ModeRowWidth( editMode );
-		if( windowWidth > rowWidth )
-		{
-			ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ( windowWidth - rowWidth ) * 0.5f );
-		}
-		switch( editMode )
-		{
-			case MODE_BUILD:
-				DrawBuildTiles();
-				break;
-			case MODE_PAINT:
-				DrawPaintTiles();
-				break;
-			case MODE_LOGIC:
-				DrawLogicTiles();
-				break;
-			case MODE_LIGHT:
-				DrawLightTiles();
-				break;
-			default:
-				DrawKitTiles();
-				break;
-		}
+		DrawToolDockContents();
+		DrawDockGrip();
 		dockTopCenter = ImVec2( ImGui::GetWindowPos().x + ImGui::GetWindowSize().x * 0.5f, ImGui::GetWindowPos().y );
 	}
 	EndOverlay();
@@ -10362,6 +10455,13 @@ void DrawMainMenuBar()
 		ImGui::MenuItem( WINDOW_PROBLEMS, NULL, &showProblems );
 		ImGui::MenuItem( WINDOW_MATERIAL, NULL, &showMaterialPanel );
 		ImGui::MenuItem( WINDOW_GAMES, NULL, &showGames );
+		{
+			bool toolsPanel = editor_toolsPanel.GetBool();
+			if( ImGui::MenuItem( ICON_BUILD "  Tools as a panel", NULL, &toolsPanel ) )
+			{
+				editor_toolsPanel.SetBool( toolsPanel );
+			}
+		}
 		ImGui::Separator();
 		ImGui::MenuItem( ICON_WIREFRAME "  Brush outlines", NULL, &view.wireframe );
 		ImGui::MenuItem( ICON_GRID "  Floor grid", NULL, &view.showGrid );
