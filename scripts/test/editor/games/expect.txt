@@ -1,0 +1,27 @@
+# nothing found before anything is added
+Games found: 0
+No id Tech 4 games in
+# a folder of games: six games in five installs (DOOM 3 brings Resurrection of Evil)
+games: 6 games.
+game: doom3bfg | DOOM 3 BFG Edition | Play and edit
+game: doom3 | DOOM 3 | Play and edit
+/games/Doom 3/base | found in your folder
+game: d3xp | DOOM 3: Resurrection of Evil | Play and edit
+/games/Doom 3/d3xp | found in your folder
+game: quake4 | Quake 4 | Edit; play with a port
+game: prey | Prey (2006) | Edit; play with a port
+game: wolf2009 | Wolfenstein (2009) | Look inside
+!/games/Notes
+# a Steam library listed in libraryfolders.vdf
+Games found: 7
+/lib2/steamapps/common/Doom 3/base | found in Steam
+# the data folder leads to its install
+q4base: 1 game.
+/solo/q4/q4base | found in your folder
+Games found: 8
+Removed
+Games found: 2
+# the panel
+Your games: 2
+!signal caught
+!Sys_Error

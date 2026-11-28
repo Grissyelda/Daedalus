@@ -45,6 +45,11 @@ sysFolder_t		Sys_IsFolder( const char* path );
 // use fs_debug to verbose Sys_ListFiles
 // returns -1 if directory was not found (the list is cleared)
 int				Sys_ListFiles( const char* directory, const char* extension, idList<class idStr>& list );
+// where game stores keep games: Steam's own folders (each has steamapps/), and folders that hold
+// games or folders of games (GOG installs). Only folders that exist.
+void			Sys_GameStoreFolders( idList<class idStr>& steamRoots, idList<class idStr>& gameFolders );
+// what is directly inside a folder (never below it), without "." and "..". False if it can't be read.
+bool			Sys_ListFolder( const char* folder, idList<class idStr>& folders, idList<class idStr>& files );
 
 const char* 	Sys_EXEPath();
 const char* 	Sys_CWD();

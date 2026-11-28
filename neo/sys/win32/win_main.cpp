@@ -1168,6 +1168,37 @@ int Sys_ListFiles( const char* directory, const char* extension, idStrList& list
 		return -1;
 	}
 
+	// Daedalus: a slash asks for the folders directly inside, as on the other platforms
+	if( extension && extension[0] == '/' && extension[1] == 0 )
+	{
+		list.Clear();
+		wchar_t searchPath[MAX_OSPATH];
+		swprintf( searchPath, MAX_OSPATH, L"%s\\*", wDir );
+		free( wDir );
+		WIN32_FIND_DATAW findData;
+		HANDLE hFind = FindFirstFileW( searchPath, &findData );
+		if( hFind == INVALID_HANDLE_VALUE )
+		{
+			return -1;
+		}
+		do
+		{
+			if( ( findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) == 0 ||
+					wcscmp( findData.cFileName, L"." ) == 0 || wcscmp( findData.cFileName, L".." ) == 0 )
+			{
+				continue;
+			}
+			char utf8Name[MAX_OSPATH];
+			if( WideCharToMultiByte( CP_UTF8, 0, findData.cFileName, -1, utf8Name, sizeof( utf8Name ), NULL, NULL ) > 0 )
+			{
+				list.Append( utf8Name );
+			}
+		}
+		while( FindNextFileW( hFind, &findData ) );
+		FindClose( hFind );
+		return list.Num();
+	}
+
 	idStr extPattern = "*";
 	if( extension && extension[0] )
 	{

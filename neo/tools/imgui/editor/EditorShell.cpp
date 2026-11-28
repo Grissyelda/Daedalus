@@ -39,6 +39,7 @@ along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorShapes.h"
 #include "EditorBrushOps.h"
 #include "EditorTheme.h"
+#include "framework/GameLibrary.h"
 
 #include "../../imgui/BFGimgui.h"
 #include "../../libs/imgui/imgui_internal.h"	// DockBuilder API
@@ -216,6 +217,7 @@ static const char* WINDOW_INSPECTOR			= ICON_INSPECTOR "  Inspector###Inspector"
 static const char* WINDOW_CONTENT_BROWSER	= ICON_CONTENT "  Content###Content Browser";
 static const char* WINDOW_PROBLEMS			= ICON_PROBLEMS "  Problems###Problems";
 static const char* WINDOW_MATERIAL			= ICON_MATERIAL "  Material###Material";
+static const char* WINDOW_GAMES			= ICON_PLAY "  Your games###Your games";
 
 // pieces (see the Pieces section)
 static void SelectHit( const Selection& hit, bool toggle );
@@ -622,12 +624,16 @@ static bool			playWithErrors = false;		// Play anyway: skip the question once
 static void			RegisterProblemCommands();
 // Materials (defined near the end)
 static bool			showMaterialPanel = false;
+static bool			showGames = false;
+static bool			gamesFocus = false;
 static void			OpenMaterialPanel( const char* declName );
 static void			RequestNewMaterial();
 static bool			DrawMaterialThumb( const char* declName, float size, bool selected = false );
 static void			MaterialsUpdate();
 static void			MaterialFilesRestored();
 static void			RegisterMaterialCommands();
+static void			RegisterGameCommands();
+static void			OpenGames();
 static bool			MaterialListed( const char* declName );
 
 // build the level when it needs it, then play it
@@ -1712,6 +1718,7 @@ static void RegisterCommands()
 	}
 	commandsRegistered = true;
 	RegisterProblemCommands();
+	RegisterGameCommands();
 	RegisterMaterialCommands();
 
 	cmdSystem->AddCommand( "editorPlay", EditorPlay_f, CMD_FL_SYSTEM, "plays the open level (or the given map) in the editor window" );
@@ -1839,7 +1846,8 @@ static int CopyFolder( const idStr& srcOS, const idStr& dstOS )
 		for( int i = 0; i < files.Num(); i++ )
 		{
 			const idStr& name = files[i];
-			if( name == "." || name == ".." )
+			// Windows lists files below subfolders too; those are copied with their folder
+			if( name == "." || name == ".." || name.Find( '/' ) >= 0 || name.Find( '\\' ) >= 0 )
 			{
 				continue;
 			}
@@ -3788,6 +3796,14 @@ static void DrawWelcome()
 		}
 
 		ImGui::Spacing();
+		ImGui::TextColored( UI::Muted(), "Own DOOM 3, Quake 4 or Prey? Daedalus can open them from where they're installed." );
+		ImGui::SameLine();
+		if( ImGui::SmallButton( "Your games" ) )
+		{
+			showWelcome = false;
+			OpenGames();
+		}
+		ImGui::Spacing();
 		bool again = editor_showWelcome.GetBool();
 		if( ImGui::Checkbox( "Show this when the editor opens", &again ) )
 		{
@@ -3808,6 +3824,172 @@ static void DrawWelcome()
 		UI::Tip( "Opens the Getting started lesson in the Help panel: it ticks off each step as you do it" );
 	}
 	ImGui::End();
+}
+
+/*
+===============================================================================
+
+	Your games
+
+	The id Tech 4 games installed on this computer (framework/GameLibrary).
+	Daedalus reads them where they are; it never copies or shares their files.
+
+===============================================================================
+*/
+
+static char gamesFolderInput[1024] = "";
+
+static void OpenGames()
+{
+	showGames = true;
+	gamesFocus = true;
+}
+
+static void AddGamesFolder( const char* folder )
+{
+	if( folder == NULL || folder[0] == 0 )
+	{
+		return;
+	}
+	const int found = GameLibrary::AddFolder( folder );
+	if( found == 0 )
+	{
+		Status( va( "No id Tech 4 games in %s. Pick the folder the game is installed in, or a folder of games.", folder ) );
+		return;
+	}
+	Status( va( "Found %d game%s in %s.", found, found == 1 ? "" : "s", folder ) );
+	OpenGames();
+}
+
+static ImVec4 SupportColor( gameSupport_t support )
+{
+	switch( support )
+	{
+		case SUPPORT_PLAY_EDIT:
+			return UI::Good();
+		case SUPPORT_EDIT_PORT:
+			return UI::Warn();
+		default:
+			return UI::Muted();
+	}
+}
+
+static void DrawGames()
+{
+	if( !showGames )
+	{
+		return;
+	}
+	ImGui::SetNextWindowSize( ImVec2( 560.0f * UI::Scale(), 600.0f * UI::Scale() ), ImGuiCond_FirstUseEver );
+	ImGui::SetNextWindowPos( ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2( 0.5f, 0.5f ) );
+	if( gamesFocus )
+	{
+		gamesFocus = false;
+		ImGui::SetNextWindowFocus();
+	}
+	if( !ImGui::Begin( WINDOW_GAMES, &showGames, ImGuiWindowFlags_NoDocking ) )
+	{
+		ImGui::End();
+		return;
+	}
+
+	UI::Hint( "id Tech 4 games on this computer. Daedalus reads them where they're installed and never copies or shares their files. Opening one to play or edit is the next step." );
+	ImGui::Spacing();
+
+	// adding a folder: the system's picker, or typed
+	if( UI::ColorButton( ICON_PLUS "  Add a folder", UI::Accent() ) )
+	{
+		char picked[1024];
+		if( Sys_OpenFolderDialog( "Pick a game's folder, or a folder of games", picked, sizeof( picked ) ) )
+		{
+			AddGamesFolder( picked );
+		}
+	}
+	UI::Tip( "A game's own folder (the one with base or q4base in it), or a folder that holds several games. You can also drop a folder on the window." );
+	ImGui::SameLine();
+	if( ImGui::Button( ICON_TURN_RIGHT "  Search again" ) )
+	{
+		GameLibrary::Refresh();
+	}
+	UI::Tip( "Looks again in your folders, Steam and GOG" );
+	ImGui::SameLine();
+	bool stores = cvarSystem->GetCVarBool( "games_searchStores" );
+	if( ImGui::Checkbox( "Look in Steam and GOG", &stores ) )
+	{
+		cvarSystem->SetCVarBool( "games_searchStores", stores );
+		GameLibrary::Refresh();
+	}
+	ImGui::SameLine();
+	UI::HelpButton( "panels/games", "About Your games" );
+
+	ImGui::SetNextItemWidth( -90.0f * UI::Scale() );
+	const bool enter = ImGui::InputTextWithHint( "##gamefolder", "Or type a folder, e.g. C:/Games/Doom 3", gamesFolderInput, sizeof( gamesFolderInput ), ImGuiInputTextFlags_EnterReturnsTrue );
+	ImGui::SameLine();
+	if( ( ImGui::Button( "Add", ImVec2( -1, 0 ) ) || enter ) && gamesFolderInput[0] )
+	{
+		AddGamesFolder( gamesFolderInput );
+		gamesFolderInput[0] = 0;
+	}
+
+	ImGui::Spacing();
+	const idList<installedGame_t>& games = GameLibrary::Games();
+	if( games.Num() == 0 )
+	{
+		UI::SectionLabel( "No games found yet" );
+		ImGui::TextWrapped( "Add the folder you installed a game to. Daedalus knows DOOM 3 BFG Edition, DOOM 3 and Resurrection of Evil, Quake 4, Prey (2006) and Wolfenstein (2009)." );
+	}
+	else
+	{
+		UI::SectionLabel( va( "%d game%s", games.Num(), games.Num() == 1 ? "" : "s" ) );
+	}
+	for( int i = 0; i < games.Num(); i++ )
+	{
+		const installedGame_t& game = games[i];
+		const gameSupport_t support = GameLibrary::Support( game.kind );
+		if( UI::BeginCard( va( "game%d", i ), ICON_PLAY, GameLibrary::Name( game.kind ) ) )
+		{
+			ImGui::TextColored( SupportColor( support ), "%s", GameLibrary::SupportLabel( support ) );
+			ImGui::TextWrapped( "%s", GameLibrary::SupportText( game.kind ) );
+			if( UI::IconButton( va( "showgame%d", i ), ICON_OPEN, "Show the folder" ) )
+			{
+				Sys_OpenFolder( game.data.c_str() );
+			}
+			ImGui::SameLine();
+			ImGui::PushStyleColor( ImGuiCol_Text, UI::Muted() );
+			ImGui::TextWrapped( "%s  (found in %s)", game.data.c_str(), game.foundBy.c_str() );
+			ImGui::PopStyleColor();
+		}
+		UI::EndCard();
+	}
+
+	const idStrList& folders = GameLibrary::Folders();
+	if( folders.Num() > 0 )
+	{
+		ImGui::Spacing();
+		UI::SectionLabel( "Your folders" );
+		for( int i = 0; i < folders.Num(); i++ )
+		{
+			if( UI::IconButton( va( "forget%d", i ), ICON_CLOSE, "Stop looking here. The games stay where they are." ) )
+			{
+				GameLibrary::RemoveFolder( folders[i] );
+				break;
+			}
+			ImGui::SameLine();
+			ImGui::TextUnformatted( folders[i].c_str() );
+		}
+	}
+	ImGui::End();
+}
+
+static void EditorGames_f( const idCmdArgs& args )
+{
+	OpenGames();
+	common->Printf( "Your games: %d\n", GameLibrary::Games().Num() );
+}
+
+static void RegisterGameCommands()
+{
+	cmdSystem->AddCommand( "editorGames", EditorGames_f, CMD_FL_TOOL, "opens Your games: the id Tech 4 games on this computer" );
 }
 
 static void DrawAbout()
@@ -6267,6 +6449,11 @@ static void ModelsUpdate()
 	idStr dropped;
 	while( Import::TakeDroppedFile( dropped ) )
 	{
+		if( Sys_IsFolder( dropped.c_str() ) == FOLDER_YES )
+		{
+			AddGamesFolder( dropped );
+			continue;
+		}
 		if( !Import::IsModelFile( dropped ) )
 		{
 			Status( "Drop .glb, .gltf or .obj models, or .png, .jpg or .tga pictures to make materials." );
@@ -10114,6 +10301,7 @@ void DrawMainMenuBar()
 		ImGui::MenuItem( WINDOW_CONTENT_BROWSER, NULL, &showContentBrowser );
 		ImGui::MenuItem( WINDOW_PROBLEMS, NULL, &showProblems );
 		ImGui::MenuItem( WINDOW_MATERIAL, NULL, &showMaterialPanel );
+		ImGui::MenuItem( WINDOW_GAMES, NULL, &showGames );
 		ImGui::Separator();
 		ImGui::MenuItem( ICON_WIREFRAME "  Brush outlines", NULL, &view.wireframe );
 		ImGui::MenuItem( ICON_GRID "  Floor grid", NULL, &view.showGrid );
@@ -10464,6 +10652,7 @@ void Draw( unsigned int mainDockSpaceId )
 	DrawBuildLog();
 	DrawAbout();
 	DrawWelcome();
+	DrawGames();
 	DrawNewProjectDialog();
 	DrawMakePieceDialog();
 	DrawImportDialog();

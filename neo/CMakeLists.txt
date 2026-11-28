@@ -1239,6 +1239,8 @@ if(MSVC)
 		winmm
 		wsock32
 		Shlwapi
+		ole32
+		uuid
 		${Vulkan_LIBRARIES}
 		${OpenAL_LIBRARIES}
 		${FFmpeg_LIBRARIES}

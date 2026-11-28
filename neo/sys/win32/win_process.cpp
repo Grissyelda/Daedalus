@@ -31,6 +31,7 @@ along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <shellapi.h>
 #include <commdlg.h>
+#include <shobjidl.h>
 
 #pragma comment( lib, "comdlg32.lib" )
 #pragma comment( lib, "shell32.lib" )
@@ -289,4 +290,151 @@ bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int 
 	}
 	const int n = WideCharToMultiByte( CP_UTF8, 0, file, -1, path, pathSize, NULL, NULL );
 	return n > 0;
+}
+
+bool Sys_OpenFolderDialog( const char* title, char* path, int pathSize )
+{
+	if( path == NULL || pathSize <= 1 )
+	{
+		return false;
+	}
+	path[0] = '\0';
+
+	const HRESULT init = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE );
+	bool picked = false;
+	IFileOpenDialog* dialog = NULL;
+	if( SUCCEEDED( CoCreateInstance( CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS( &dialog ) ) ) )
+	{
+		DWORD options = 0;
+		dialog->GetOptions( &options );
+		dialog->SetOptions( options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST );
+		idList<wchar_t> wideTitle = Widen( title );
+		dialog->SetTitle( wideTitle.Ptr() );
+		if( SUCCEEDED( dialog->Show( win32.hWnd ) ) )
+		{
+			IShellItem* item = NULL;
+			if( SUCCEEDED( dialog->GetResult( &item ) ) )
+			{
+				PWSTR folder = NULL;
+				if( SUCCEEDED( item->GetDisplayName( SIGDN_FILESYSPATH, &folder ) ) )
+				{
+					picked = WideCharToMultiByte( CP_UTF8, 0, folder, -1, path, pathSize, NULL, NULL ) > 0;
+					CoTaskMemFree( folder );
+				}
+				item->Release();
+			}
+		}
+		dialog->Release();
+	}
+	if( SUCCEEDED( init ) )
+	{
+		CoUninitialize();
+	}
+	return picked;
+}
+
+// a string value from an open registry key, as UTF-8
+static bool RegistryString( HKEY key, const wchar_t* subKey, const wchar_t* value, idStr& out )
+{
+	wchar_t buffer[MAX_PATH * 4];
+	DWORD size = sizeof( buffer );
+	if( RegGetValueW( key, subKey, value, RRF_RT_REG_SZ, NULL, buffer, &size ) != ERROR_SUCCESS )
+	{
+		return false;
+	}
+	char utf8[MAX_PATH * 4];
+	if( WideCharToMultiByte( CP_UTF8, 0, buffer, -1, utf8, sizeof( utf8 ), NULL, NULL ) <= 0 )
+	{
+		return false;
+	}
+	out = utf8;
+	out.BackSlashesToSlashes();
+	return true;
+}
+
+static void AddFolderIfThere( idStrList& list, const idStr& folder )
+{
+	if( folder.Length() > 0 && Sys_IsFolder( folder.c_str() ) == FOLDER_YES )
+	{
+		list.AddUnique( folder );
+	}
+}
+
+bool Sys_ListFolder( const char* folder, idStrList& folders, idStrList& files )
+{
+	folders.Clear();
+	files.Clear();
+	idStr search = folder;
+	search.SlashesToBackSlashes();
+	search.StripTrailing( '\\' );
+	search += "\\*";
+	idList<wchar_t> wide = Widen( search.c_str() );
+	WIN32_FIND_DATAW data;
+	HANDLE find = FindFirstFileW( wide.Ptr(), &data );
+	if( find == INVALID_HANDLE_VALUE )
+	{
+		return false;
+	}
+	do
+	{
+		if( wcscmp( data.cFileName, L"." ) == 0 || wcscmp( data.cFileName, L".." ) == 0 )
+		{
+			continue;
+		}
+		char name[MAX_PATH * 4];
+		if( WideCharToMultiByte( CP_UTF8, 0, data.cFileName, -1, name, sizeof( name ), NULL, NULL ) <= 0 )
+		{
+			continue;
+		}
+		if( data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY )
+		{
+			folders.Append( name );
+		}
+		else
+		{
+			files.Append( name );
+		}
+	}
+	while( FindNextFileW( find, &data ) );
+	FindClose( find );
+	return true;
+}
+
+void Sys_GameStoreFolders( idStrList& steamRoots, idStrList& gameFolders )
+{
+	idStr path;
+	if( RegistryString( HKEY_CURRENT_USER, L"Software\\Valve\\Steam", L"SteamPath", path ) )
+	{
+		AddFolderIfThere( steamRoots, path );
+	}
+	HKEY key;
+	if( RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"SOFTWARE\\Valve\\Steam", 0, KEY_READ | KEY_WOW64_32KEY, &key ) == ERROR_SUCCESS )
+	{
+		if( RegistryString( key, NULL, L"InstallPath", path ) )
+		{
+			AddFolderIfThere( steamRoots, path );
+		}
+		RegCloseKey( key );
+	}
+	AddFolderIfThere( steamRoots, "C:/Program Files (x86)/Steam" );
+
+	// GOG keeps one key per game, each with its install path
+	if( RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"SOFTWARE\\GOG.com\\Games", 0, KEY_READ | KEY_WOW64_32KEY, &key ) == ERROR_SUCCESS )
+	{
+		for( DWORD i = 0; ; i++ )
+		{
+			wchar_t name[256];
+			DWORD length = sizeof( name ) / sizeof( name[0] );
+			if( RegEnumKeyExW( key, i, name, &length, NULL, NULL, NULL, NULL ) != ERROR_SUCCESS )
+			{
+				break;
+			}
+			if( RegistryString( key, name, L"path", path ) )
+			{
+				AddFolderIfThere( gameFolders, path );
+			}
+		}
+		RegCloseKey( key );
+	}
+	AddFolderIfThere( gameFolders, "C:/GOG Games" );
 }

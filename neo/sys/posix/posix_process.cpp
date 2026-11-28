@@ -31,6 +31,8 @@ along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -333,4 +335,94 @@ bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int 
 		return RunDialog( argv, path, pathSize );
 	}
 	return false;
+}
+
+bool Sys_OpenFolderDialog( const char* title, char* path, int pathSize )
+{
+	if( path == NULL || pathSize <= 1 )
+	{
+		return false;
+	}
+	path[0] = '\0';
+	if( HaveProgram( "zenity" ) )
+	{
+		const idStr titleArg = va( "--title=%s", title );
+		const char* argv[] = { "zenity", "--file-selection", "--directory", titleArg.c_str(), NULL };
+		return RunDialog( argv, path, pathSize );
+	}
+	if( HaveProgram( "kdialog" ) )
+	{
+		const char* argv[] = { "kdialog", "--title", title, "--getexistingdirectory", ".", NULL };
+		return RunDialog( argv, path, pathSize );
+	}
+	return false;
+}
+
+bool Sys_ListFolder( const char* folder, idStrList& folders, idStrList& files )
+{
+	folders.Clear();
+	files.Clear();
+	DIR* dir = opendir( folder );
+	if( dir == NULL )
+	{
+		return false;
+	}
+	struct dirent* entry;
+	while( ( entry = readdir( dir ) ) != NULL )
+	{
+		if( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 )
+		{
+			continue;
+		}
+		idStr path = folder;
+		path.AppendPath( entry->d_name );
+		struct stat st;
+		if( stat( path.c_str(), &st ) != 0 )
+		{
+			continue;
+		}
+		if( S_ISDIR( st.st_mode ) )
+		{
+			folders.Append( entry->d_name );
+		}
+		else if( S_ISREG( st.st_mode ) )
+		{
+			files.Append( entry->d_name );
+		}
+	}
+	closedir( dir );
+	return true;
+}
+
+void Sys_GameStoreFolders( idStrList& steamRoots, idStrList& gameFolders )
+{
+	const char* home = getenv( "HOME" );
+	if( home == NULL || home[0] == 0 )
+	{
+		return;
+	}
+	const char* steam[] =
+	{
+		"/.steam/steam",
+		"/.local/share/Steam",
+		"/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+		"/Library/Application Support/Steam",
+	};
+	for( int i = 0; i < ( int )( sizeof( steam ) / sizeof( steam[0] ) ); i++ )
+	{
+		idStr path = idStr( home ) + steam[i];
+		if( Sys_IsFolder( path.c_str() ) == FOLDER_YES )
+		{
+			steamRoots.AddUnique( path );
+		}
+	}
+	const char* games[] = { "/GOG Games", "/Games" };
+	for( int i = 0; i < ( int )( sizeof( games ) / sizeof( games[0] ) ); i++ )
+	{
+		idStr path = idStr( home ) + games[i];
+		if( Sys_IsFolder( path.c_str() ) == FOLDER_YES )
+		{
+			gameFolders.AddUnique( path );
+		}
+	}
 }

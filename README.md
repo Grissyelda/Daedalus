@@ -15,6 +15,7 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 - **Two looks.** A stylized material path and a PBR material path, switchable per project and per material.
 - **Platforms:** Windows, Linux and Steam Deck (Steam Deck is the performance floor).
 - **Single-player** games.
+- **Your id Tech 4 games, opened in place.** If you own DOOM 3, Quake 4, Prey or Wolfenstein (2009), Daedalus reads them from your own install to play and mod them with modern comforts. No game files come with Daedalus or ever go into this repository; your changes go in a mod folder of your own.
 
 ## What works today
 
@@ -27,9 +28,11 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 - **Background builds** with leak finding.
 - **Problems:** errors, warnings and notes about the level, each pointing at the thing at fault with a next step and often a one-click fix. They show in the Outliner, the view and the Inspector too; Play asks first when there are errors, and **Check every level** checks the whole project.
 - **Help:** a page for every panel and tool, and lessons that tick off as you go.
+- **Your games:** finds the id Tech 4 games installed on your computer (in Steam, GOG, or folders you add) and says what Daedalus can do with each.
 
 ## Next up
 
+- Opening a game you own: browse its levels, models and materials in the editor, and play DOOM 3 and Resurrection of Evil from your own install.
 - A view of the level's areas and portals, and light looks with one-click baked lighting.
 - Then behavior: When/Do rule cards on objects that open up into node graphs and Doom Script.
 
