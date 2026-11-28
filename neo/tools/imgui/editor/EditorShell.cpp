@@ -614,6 +614,8 @@ static int			LevelErrorCount();								// errors Play would run into
 static void			RequestPlayWithErrors( bool fromCamera );
 static void			DrawSelectionProblems();
 static void			DrawProblemMarkers( const ImGuiDockNode* central );
+static void			DrawLiveBanner( const ImGuiDockNode* central );
+static void			DrawLiveSelection();
 static bool			playWithErrors = false;		// Play anyway: skip the question once
 static void			RegisterProblemCommands();
 
@@ -750,6 +752,95 @@ static int			liveRevision = -1;
 static bool			liveGeometryChanged = false;		// brushes changed since Play started: a rebuild is needed
 static bool			liveSessionActive = false;
 
+// what each change made while paused did: shown over the view and in the Inspector, summed up on resume
+enum liveTag_t
+{
+	LIVE_IN_GAME,			// already in the running game
+	LIVE_NEXT_PLAY,			// saved, but only matters when Play starts again (the player start)
+	LIVE_REBUILD			// brushes or level settings: the level is rebuilt and reloaded on resume
+};
+struct liveChange_t
+{
+	idStr			name;
+	idStr			what;
+	liveTag_t		tag;
+};
+static idList<liveChange_t>	liveChanges;
+static bool			liveChangesOpen = false;
+static idStr		whenPlayingCommand;		// editorWhenPlaying: run once the game is up
+
+static const char* LiveTagLabel( liveTag_t tag )
+{
+	switch( tag )
+	{
+		case LIVE_IN_GAME:
+			return "In the game";
+		case LIVE_NEXT_PLAY:
+			return "Next time you play";
+		default:
+			return "Rebuilds when you resume";
+	}
+}
+
+static const char* LiveTagCode( liveTag_t tag )
+{
+	return tag == LIVE_IN_GAME ? "in_game" : ( tag == LIVE_NEXT_PLAY ? "next_play" : "rebuild" );
+}
+
+static const char* LiveTagIcon( liveTag_t tag )
+{
+	return tag == LIVE_IN_GAME ? ICON_OK : ( tag == LIVE_NEXT_PLAY ? ICON_PLAYER : ICON_BUILD );
+}
+
+static ImVec4 LiveTagColor( liveTag_t tag )
+{
+	return tag == LIVE_IN_GAME ? UI::Good() : ( tag == LIVE_NEXT_PLAY ? UI::Accent() : UI::Warn() );
+}
+
+// one thing's latest change; a rebuild, once needed, stays needed
+static void LiveNote( const char* name, const char* what, liveTag_t tag )
+{
+	for( int i = 0; i < liveChanges.Num(); i++ )
+	{
+		if( liveChanges[i].name.Cmp( name ) == 0 )
+		{
+			liveChanges[i].what = what;
+			liveChanges[i].tag = ( liveTag_t )Max( ( int )liveChanges[i].tag, ( int )tag );
+			return;
+		}
+	}
+	liveChange_t& change = liveChanges.Alloc();
+	change.name = name;
+	change.what = what;
+	change.tag = tag;
+}
+
+static const liveChange_t* FindLiveChange( const char* name )
+{
+	for( int i = 0; i < liveChanges.Num(); i++ )
+	{
+		if( liveChanges[i].name.Cmp( name ) == 0 )
+		{
+			return &liveChanges[i];
+		}
+	}
+	return NULL;
+}
+
+static void LiveCounts( int& inGame, int& nextPlay, int& rebuild )
+{
+	inGame = nextPlay = rebuild = 0;
+	for( int i = 0; i < liveChanges.Num(); i++ )
+	{
+		( liveChanges[i].tag == LIVE_IN_GAME ? inGame : ( liveChanges[i].tag == LIVE_NEXT_PLAY ? nextPlay : rebuild ) )++;
+	}
+}
+
+static bool IsPlayerStart( const idDict& args )
+{
+	return idStr::Icmp( args.GetString( "classname" ), "info_player_start" ) == 0;
+}
+
 static unsigned int GeometryHash( const idMapEntity* ent )
 {
 	unsigned int hash = 0;
@@ -811,6 +902,7 @@ static void LiveCaptureBase()
 	liveBase.Clear();
 	liveWorldKeys.Clear();
 	liveGeometryChanged = false;
+	liveChanges.Clear();
 	const idMapFile* map = document.Map();
 	if( map == NULL )
 	{
@@ -848,7 +940,7 @@ static int FindLive( const char* name )
 }
 
 // a game entity made again from the editor's settings
-static void LiveRespawn( const char* name, const idDict& args )
+static bool LiveRespawn( const char* name, const idDict& args )
 {
 	idEntity* old = gameEdit->FindEntity( name );
 	if( old != NULL )
@@ -858,6 +950,7 @@ static void LiveRespawn( const char* name, const idDict& args )
 	idEntity* spawned = NULL;
 	gameEdit->SpawnEntityDef( args, &spawned );
 	LiveLog( spawned != NULL ? "respawned" : "couldn't respawn", name );
+	return spawned != NULL;
 }
 
 static void LiveUpdateLight( const char* name, const idDict& oldArgs, const idDict& args )
@@ -924,12 +1017,23 @@ static void LiveSync()
 			{
 				liveGeometryChanged = true;
 				LiveLog( "new brushes (rebuild needed):", name );
+				LiveNote( name, "added (made of brushes)", LIVE_REBUILD );
 			}
 			else
 			{
 				idEntity* spawned = NULL;
 				gameEdit->SpawnEntityDef( ent->epairs, &spawned );
 				LiveLog( "spawned", name );
+				if( spawned == NULL )
+				{
+					// it couldn't be made in the running game: the reload will have it
+					liveGeometryChanged = true;
+					LiveNote( name, "added, but the running game couldn't make it", LIVE_REBUILD );
+				}
+				else
+				{
+					LiveNote( name, "added", IsPlayerStart( ent->epairs ) ? LIVE_NEXT_PLAY : LIVE_IN_GAME );
+				}
 			}
 			continue;
 		}
@@ -941,6 +1045,7 @@ static void LiveSync()
 		{
 			liveGeometryChanged = true;
 			LiveLog( "brushes changed (rebuild needed):", name );
+			LiveNote( name, i == 0 ? "the level's brushes changed" : "its brushes changed", LIVE_REBUILD );
 		}
 		else if( argsChanged )
 		{
@@ -948,14 +1053,22 @@ static void LiveSync()
 			{
 				// level settings are read when the level loads
 				liveGeometryChanged = true;
+				LiveNote( name, "level settings changed", LIVE_REBUILD );
 			}
 			else if( idStr::Icmp( ent->epairs.GetString( "classname" ), "light" ) == 0 && idStr::Icmp( live.args.GetString( "classname" ), "light" ) == 0 )
 			{
 				LiveUpdateLight( name, live.args, ent->epairs );
+				LiveNote( name, "light changed", LIVE_IN_GAME );
+			}
+			else if( LiveRespawn( name, ent->epairs ) )
+			{
+				LiveNote( name, IsPlayerStart( ent->epairs ) ? "moved or changed; you start there next time" : "made again with its new settings",
+						  IsPlayerStart( ent->epairs ) ? LIVE_NEXT_PLAY : LIVE_IN_GAME );
 			}
 			else
 			{
-				LiveRespawn( name, ent->epairs );
+				liveGeometryChanged = true;
+				LiveNote( name, "changed, but the running game couldn't remake it", LIVE_REBUILD );
 			}
 		}
 		live.args = ent->epairs;
@@ -973,6 +1086,7 @@ static void LiveSync()
 		{
 			liveGeometryChanged = true;
 		}
+		LiveNote( liveBase[i].name, "removed", liveBase[i].geometryHash != 0 ? LIVE_REBUILD : ( IsPlayerStart( liveBase[i].args ) ? LIVE_NEXT_PLAY : LIVE_IN_GAME ) );
 		idEntity* ent = gameEdit->FindEntity( liveBase[i].name );
 		if( ent != NULL )
 		{
@@ -1044,6 +1158,38 @@ static void ReloadAtPlayer()
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", document.Name() ) );
 }
 
+// on resume: one line about what the changes made while paused did
+static void LiveSummary()
+{
+	int inGame, nextPlay, rebuild;
+	LiveCounts( inGame, nextPlay, rebuild );
+	common->Printf( "Editor: resumed: %d in the game, %d next time you play, %d rebuilt\n", inGame, nextPlay, rebuild );
+	if( liveChanges.Num() == 0 )
+	{
+		return;
+	}
+	idStr text;
+	if( rebuild > 0 )
+	{
+		text = va( "Rebuilding for %d change%s", rebuild, rebuild == 1 ? "" : "s" );
+		if( inGame > 0 )
+		{
+			text += va( "; %d already in the game", inGame );
+		}
+		text += ". The game carries on when it's done.";
+	}
+	else
+	{
+		text = va( "Resumed with %d change%s in the game", inGame, inGame == 1 ? "" : "s" );
+		if( nextPlay > 0 )
+		{
+			text += va( "; %d take%s effect next time you play", nextPlay, nextPlay == 1 ? "s" : "" );
+		}
+		text += ".";
+	}
+	Status( text );
+}
+
 static void ResumePlay()
 {
 	if( !playPaused )
@@ -1055,6 +1201,7 @@ static void ResumePlay()
 		return;		// already rebuilding; the game carries on when it's done
 	}
 	LiveSync();
+	LiveSummary();
 	if( liveGeometryChanged )
 	{
 		// brushes are compiled into the level: rebuild it, then reload around the player
@@ -1067,10 +1214,6 @@ static void ResumePlay()
 		if( LevelNeedsBuild( document.Name() ) )
 		{
 			StartBuild( document.Name(), BUILD_THEN_RELOAD );
-			if( BuildRunning() )
-			{
-				Status( "Rebuilding the level. The game carries on when it's done." );
-			}
 		}
 		else
 		{
@@ -1079,6 +1222,8 @@ static void ResumePlay()
 		return;
 	}
 	playPaused = false;
+	liveChanges.Clear();		// they're in the game now
+	liveChangesOpen = false;
 	view.ClearOutlines();
 	FocusGame();
 	Help::Event( "play.resume" );
@@ -3072,6 +3217,7 @@ static void DrawInspectorHeader( const char* icon, const char* title, const char
 		UI::Hint( usage );
 	}
 	ImGui::Spacing();
+	DrawLiveSelection();
 	DrawSelectionProblems();
 }
 
@@ -7408,6 +7554,7 @@ static void DrawViewOverlay()
 	DrawToolDock( central );
 	DrawContextBar();
 	DrawPieceEditBanner( central );
+	DrawLiveBanner( central );
 	DrawProblemMarkers( central );
 	Help::DrawLessonStrip( ImVec2( central->Pos.x + central->Size.x, central->Pos.y ) );
 }
@@ -7765,6 +7912,147 @@ bool IsEditing()
 bool IsPlayPaused()
 {
 	return IsEditorMode() && IsPlaying() && playPaused;
+}
+
+/*
+===============================================================================
+
+	Live-edit status
+
+	While Play is paused, a strip over the view says what the changes made so
+	far did to the running game, and the Inspector says it for the selection.
+
+===============================================================================
+*/
+
+static void DrawLiveBanner( const ImGuiDockNode* central )
+{
+	if( !IsPlaying() || !playPaused || playReloading )
+	{
+		return;
+	}
+	const float pad = 10.0f * UI::Scale();
+	float y = central->Pos.y + pad + ImGui::GetFrameHeight() + 34.0f * UI::Scale() + ( IsEditingPiece() ? 52.0f * UI::Scale() : 0.0f );
+	// below the lesson card, when one is showing
+	const ImGuiWindow* lesson = ImGui::FindWindowByName( "##lessonstrip" );
+	if( lesson != NULL && lesson->WasActive )
+	{
+		y = Max( y, lesson->Pos.y + lesson->Size.y + pad * 0.6f );
+	}
+	if( BeginOverlay( "##live_banner", ImVec2( central->Pos.x + central->Size.x * 0.5f, y ), ImVec2( 0.5f, 0.0f ), 10.0f * UI::Scale() ) )
+	{
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextColored( UI::Warn(), ICON_PAUSE );
+		ImGui::SameLine();
+		ImGui::TextUnformatted( "Paused" );
+		int inGame, nextPlay, rebuild;
+		LiveCounts( inGame, nextPlay, rebuild );
+		if( liveChanges.Num() == 0 )
+		{
+			ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
+			ImGui::TextDisabled( "Changes you make go straight into the game where they can." );
+		}
+		else
+		{
+			const int counts[3] = { inGame, nextPlay, rebuild };
+			const liveTag_t tags[3] = { LIVE_IN_GAME, LIVE_NEXT_PLAY, LIVE_REBUILD };
+			for( int i = 0; i < 3; i++ )
+			{
+				if( counts[i] == 0 )
+				{
+					continue;
+				}
+				ImGui::SameLine( 0.0f, 14.0f * UI::Scale() );
+				ImGui::TextColored( LiveTagColor( tags[i] ), "%s", LiveTagIcon( tags[i] ) );
+				ImGui::SameLine();
+				static const char* phrases[3] = { "in the game", "next time you play", "rebuild when you resume" };
+				ImGui::Text( "%d %s", counts[i], phrases[i] );
+			}
+			ImGui::SameLine( 0.0f, 12.0f * UI::Scale() );
+			if( ImGui::SmallButton( liveChangesOpen ? ICON_CHEVRON_DOWN "  Hide" : ICON_CHEVRON_RIGHT "  Changes" ) )
+			{
+				liveChangesOpen = !liveChangesOpen;
+			}
+			UI::Tip( "What each change did to the running game" );
+			if( liveChangesOpen && ImGui::BeginTable( "livechanges", 3, ImGuiTableFlags_SizingFixedFit ) )
+			{
+				for( int i = 0; i < liveChanges.Num() && i < 12; i++ )
+				{
+					const liveChange_t& c = liveChanges[i];
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex( 0 );
+					ImGui::TextColored( LiveTagColor( c.tag ), "%s", LiveTagIcon( c.tag ) );
+					ImGui::TableSetColumnIndex( 1 );
+					ImGui::TextUnformatted( c.name == "worldspawn" ? "The level" : c.name.c_str() );
+					ImGui::TableSetColumnIndex( 2 );
+					ImGui::TextDisabled( "%s: %s", LiveTagLabel( c.tag ), c.what.c_str() );
+				}
+				ImGui::EndTable();
+				if( liveChanges.Num() > 12 )
+				{
+					ImGui::TextDisabled( "...and %d more", liveChanges.Num() - 12 );
+				}
+			}
+			if( rebuild > 0 )
+			{
+				ImGui::TextDisabled( "Resume (F5) rebuilds the level and puts you back where you were." );
+			}
+		}
+	}
+	EndOverlay();
+}
+
+// the Inspector's line for the selection, while paused
+static void DrawLiveSelection()
+{
+	if( !IsPlaying() || !playPaused )
+	{
+		return;
+	}
+	const Selection sel = document.selection.Primary();
+	const idMapFile* map = document.Map();
+	if( map == NULL || sel.entity < 0 || sel.entity >= map->GetNumEntities() )
+	{
+		return;
+	}
+	const idStr name = sel.entity == 0 ? idStr( "worldspawn" ) : idStr( map->GetEntity( sel.entity )->epairs.GetString( "name" ) );
+	const liveChange_t* change = FindLiveChange( name );
+	if( change == NULL )
+	{
+		return;
+	}
+	ImGui::TextColored( LiveTagColor( change->tag ), "%s", LiveTagIcon( change->tag ) );
+	ImGui::SameLine();
+	ImGui::PushTextWrapPos( 0.0f );
+	ImGui::Text( "%s: %s.", LiveTagLabel( change->tag ), change->what.c_str() );
+	ImGui::PopTextWrapPos();
+	ImGui::Spacing();
+}
+
+// editorLiveChanges: list what the changes made while paused did
+static void EditorLiveChanges_f( const idCmdArgs& args )
+{
+	if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "show" ) == 0 )
+	{
+		liveChangesOpen = true;
+	}
+	if( playPaused )
+	{
+		LiveSync();
+	}
+	for( int i = 0; i < liveChanges.Num(); i++ )
+	{
+		common->Printf( "live: %s %s: %s\n", LiveTagCode( liveChanges[i].tag ), liveChanges[i].name.c_str(), liveChanges[i].what.c_str() );
+	}
+	int inGame, nextPlay, rebuild;
+	LiveCounts( inGame, nextPlay, rebuild );
+	common->Printf( "live changes: %d in the game, %d next time you play, %d rebuild\n", inGame, nextPlay, rebuild );
+}
+
+// editorWhenPlaying <command>: run it once the game is up and the player is in (for tests)
+static void EditorWhenPlaying_f( const idCmdArgs& args )
+{
+	whenPlayingCommand = args.Args();
 }
 
 /*
@@ -8776,6 +9064,8 @@ static void RegisterProblemCommands()
 	cmdSystem->AddCommand( "editorCheckProject", EditorCheckProject_f, CMD_FL_SYSTEM, "checks every level in the project for problems" );
 	cmdSystem->AddCommand( "editorPlace", EditorPlace_f, CMD_FL_SYSTEM, "adds a thing: editorPlace <classname> <x> <y> <z> [key value]..." );
 	cmdSystem->AddCommand( "editorSetKey", EditorSetKey_f, CMD_FL_SYSTEM, "changes a setting of the selected thing" );
+	cmdSystem->AddCommand( "editorLiveChanges", EditorLiveChanges_f, CMD_FL_SYSTEM, "lists what the changes made while paused did to the running game (show: open the list over the view)" );
+	cmdSystem->AddCommand( "editorWhenPlaying", EditorWhenPlaying_f, CMD_FL_SYSTEM, "runs a command once the game is up and the player is in" );
 }
 
 void DrawWorld()
@@ -9058,12 +9348,12 @@ void DrawMainMenuBar()
 	{
 		const bool rebuilding = building && buildThen == BUILD_THEN_RELOAD;
 		ImGui::BeginDisabled( rebuilding );
-		if( UI::ColorButton( rebuilding ? ICON_BUILD "  Building" : ICON_PLAY "  Resume", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
+		if( UI::ColorButton( rebuilding ? ICON_BUILD "  Building" : ( liveGeometryChanged ? ICON_BUILD "  Resume" : ICON_PLAY "  Resume" ), UI::Good(), ImVec2( buttonWidth, 0 ) ) )
 		{
 			ResumePlay();
 		}
 		ImGui::EndDisabled();
-		UI::Tip( liveGeometryChanged ? "Carry on playing (F5). Your brush changes are built first, then the level reloads around you." :
+		UI::Tip( liveGeometryChanged ? "Rebuild and carry on (F5): some changes need the level rebuilt, so it's built first and then reloads around you." :
 				 "Carry on playing from where you were, with your changes (F5)" );
 		ImGui::SameLine( 0.0f, 6.0f * UI::Scale() );
 		if( UI::ColorButton( ICON_STOP "  Stop", UI::Bad(), ImVec2( stopWidth, 0 ) ) )
@@ -9241,6 +9531,11 @@ void Draw( unsigned int mainDockSpaceId )
 			{
 				Status( "The camera was inside something solid, so you start at the player start." );
 			}
+		}
+		if( whenPlayingCommand.Length() > 0 && !playReloading && inGame && gameEdit->PlayerIsValid() && !playTeleportPending )
+		{
+			cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "%s\n", whenPlayingCommand.c_str() ) );
+			whenPlayingCommand.Clear();
 		}
 		// panels step aside while playing; the menu bar keeps Stop visible
 		return;

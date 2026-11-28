@@ -1,0 +1,13 @@
+# Play starts and the paused part runs
+Editor: playing testmaps/live_test
+# each change says what it did
+live: in_game light_main: light changed
+live: next_play info_player_start_1: moved or changed; you start there next time
+live: in_game light_0: added
+live: rebuild worldspawn: the level's brushes changed
+live changes: 2 in the game, 1 next time you play, 1 rebuild
+# resume sums up, rebuilds and reloads around the player
+Editor: resumed: 2 in the game, 1 next time you play, 1 rebuilt
+Editor: reloading testmaps/live_test around the player
+# the reloaded level starts a fresh list
+live changes: 0 in the game, 0 next time you play, 0 rebuild

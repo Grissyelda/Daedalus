@@ -22,14 +22,13 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 - **Things:** lights with presets, doors, player starts and every placeable definition, edited through Inspector cards.
 - **Pieces (prefabs):** linked copies with per-copy overrides, edited in place, nestable.
 - **Models:** drag in a glTF, GLB or OBJ file and it becomes a placeable model with PBR materials, updating by itself when you save it again in Blender.
-- **Play:** in the same window, from the player start or the camera; pausing brings the editor back and edits flow into the game.
+- **Play:** in the same window, from the player start or the camera; pausing brings the editor back and edits flow into the game, each marked as in the game, next time you play, or rebuilt when you resume.
 - **Background builds** with leak finding.
 - **Problems:** errors, warnings and notes about the level, each pointing at the thing at fault with a next step and often a one-click fix. They show in the Outliner, the view and the Inspector too; Play asks first when there are errors, and **Check every level** checks the whole project.
 - **Help:** a page for every panel and tool, and lessons that tick off as you go.
 
 ## Next up
 
-- Clearer live editing: what went into the running game, and what needs a rebuild.
 - A material editor with PBR presets, a view of the level's areas and portals, and light looks with one-click baked lighting.
 - Then behavior: When/Do rule cards on objects that open up into node graphs and Doom Script.
 
