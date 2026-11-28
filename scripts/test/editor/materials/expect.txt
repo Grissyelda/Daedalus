@@ -1,0 +1,20 @@
+# dropped pictures: sorted into slots by name, grouped into materials, preset guessed from the name
+Editor: Made the materials brick_wall, poster from the pictures.
+material textures/brick_wall: loaded, editable, 3 stages
+  preset Brick, tint 1.00 1.00 1.00, roughness 0.80, metal 0.00, glow 0.00, seethrough 0, opacity 1.00, twosided 0, shadows 1, solid 1, surface stone
+  color picture: textures/brick_wall/color_
+  normal picture: textures/brick_wall/normal_
+  rough picture: textures/brick_wall/rough_
+  surface type 2, two-sided 0, casts shadows 1, translucent 0
+!(MISSING)
+# a preset, then changes, then undo
+made material lamp_glass
+material lamp_glass: opacity set
+  preset Glass, tint 0.50 0.80 1.00, roughness 0.05, metal 0.00, glow 0.00, seethrough 2, opacity 0.40, twosided 1
+  preset Glass, tint 0.50 0.80 1.00, roughness 0.05, metal 0.00, glow 0.00, seethrough 2, opacity 0.25, twosided 1
+  surface type 7, two-sided 1, casts shadows 0, translucent 1
+# an editable copy of a hand-written material keeps its picture
+made material grid_floor, a copy of textures/dev/grid_floor
+  color picture: textures/grid_floor/color_
+# painted on a brush, the level has no problems
+mats: problems: 0 errors, 0 warnings, 0 notes

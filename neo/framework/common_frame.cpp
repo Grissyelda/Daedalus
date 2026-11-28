@@ -907,6 +907,12 @@ void idCommonLocal::Frame()
 			// in non-smp mode, run the commands we just generated, instead of
 			// frame-delayed ones from a background thread
 			renderCommands = renderSystem->SwapCommandBuffers_FinishCommandBuffers();
+
+			// Daedalus: send pictures first used this frame to the GPU before they're drawn (see below)
+			if( globalImages->HasDeferredImages() )
+			{
+				globalImages->LoadDeferredImages();
+			}
 		}
 
 		//----------------------------------------
@@ -924,6 +930,15 @@ void idCommonLocal::Frame()
 		// make sure the game / draw thread has completed
 		// This may block if the game is taking longer than the render back end
 		gameThread.WaitForThread();
+
+		// Daedalus: pictures first used after the level loaded (a material made or changed in the
+		// editor, a thumbnail) are only queued; nothing sent them to the GPU, and drawing one
+		// stopped the engine. Send them now, while the game thread and the back end are idle,
+		// so they're ready for the next frame's drawing.
+		if( globalImages->HasDeferredImages() )
+		{
+			globalImages->LoadDeferredImages();
+		}
 
 		// Daedalus: editor panels in windows of their own are made, moved and drawn here, on the
 		// main thread, now that the game thread's ImGui frame is done and the back end is idle

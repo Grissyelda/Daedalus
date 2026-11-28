@@ -33,6 +33,7 @@ along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorPrefabs.h"
 #include "EditorImport.h"
 #include "EditorProblems.h"
+#include "EditorMaterials.h"
 #include "EditorHelp.h"
 #include "EditorView.h"
 #include "EditorShapes.h"
@@ -214,6 +215,7 @@ static const char* WINDOW_OUTLINER			= ICON_OUTLINER "  Outliner###Outliner";
 static const char* WINDOW_INSPECTOR			= ICON_INSPECTOR "  Inspector###Inspector";
 static const char* WINDOW_CONTENT_BROWSER	= ICON_CONTENT "  Content###Content Browser";
 static const char* WINDOW_PROBLEMS			= ICON_PROBLEMS "  Problems###Problems";
+static const char* WINDOW_MATERIAL			= ICON_MATERIAL "  Material###Material";
 
 // pieces (see the Pieces section)
 static void SelectHit( const Selection& hit, bool toggle );
@@ -618,6 +620,15 @@ static void			DrawLiveBanner( const ImGuiDockNode* central );
 static void			DrawLiveSelection();
 static bool			playWithErrors = false;		// Play anyway: skip the question once
 static void			RegisterProblemCommands();
+// Materials (defined near the end)
+static bool			showMaterialPanel = false;
+static void			OpenMaterialPanel( const char* declName );
+static void			RequestNewMaterial();
+static bool			DrawMaterialThumb( const char* declName, float size, bool selected = false );
+static void			MaterialsUpdate();
+static void			MaterialFilesRestored();
+static void			RegisterMaterialCommands();
+static bool			MaterialListed( const char* declName );
 
 // build the level when it needs it, then play it
 static void Play( const char* mapName )
@@ -1701,6 +1712,7 @@ static void RegisterCommands()
 	}
 	commandsRegistered = true;
 	RegisterProblemCommands();
+	RegisterMaterialCommands();
 
 	cmdSystem->AddCommand( "editorPlay", EditorPlay_f, CMD_FL_SYSTEM, "plays the open level (or the given map) in the editor window" );
 	cmdSystem->AddCommand( "editorStop", EditorStop_f, CMD_FL_SYSTEM, "stops playing and returns to the editor" );
@@ -2856,13 +2868,17 @@ static void DrawMaterialField( const char* current, int key )
 		brushMaterialFor = key;
 	}
 
+	DrawMaterialThumb( current, ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.y );
+	ImGui::SameLine();
+	ImGui::BeginGroup();
 	ImGui::PushFont( UI::Font( UI::FONT_BOLD ) );
 	ImGui::TextUnformatted( ShortMaterialName( current ).c_str() );
 	ImGui::PopFont();
 	ImGui::TextDisabled( "%s", current );
+	ImGui::EndGroup();
 
 	const float buttonWidth = ImGui::GetFrameHeight();
-	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x - ( buttonWidth + ImGui::GetStyle().ItemSpacing.x ) * 2.0f );
+	ImGui::SetNextItemWidth( ImGui::GetContentRegionAvail().x - ( buttonWidth + ImGui::GetStyle().ItemSpacing.x ) * 3.0f );
 	const bool entered = ImGui::InputTextWithHint( "##material", "material name", brushMaterialBuffer, sizeof( brushMaterialBuffer ), ImGuiInputTextFlags_EnterReturnsTrue );
 	ImGui::SameLine();
 	if( UI::IconButton( "apply", ICON_OK, "Use the material typed here (Enter)" ) || entered )
@@ -2874,6 +2890,11 @@ static void DrawMaterialField( const char* current, int key )
 	{
 		document.SetMaterial( currentMaterial );
 		idStr::Copynz( brushMaterialBuffer, currentMaterial.c_str(), sizeof( brushMaterialBuffer ) );
+	}
+	ImGui::SameLine();
+	if( UI::IconButton( "editmaterial", ICON_SETTINGS, "Open this material in the Material panel" ) )
+	{
+		OpenMaterialPanel( current );
 	}
 }
 
@@ -3507,12 +3528,22 @@ static void DrawContentBrowser()
 			ImGui::TextDisabled( ICON_PAINT "  %s", ShortMaterialName( currentMaterial ).c_str() );
 			UI::Tip( va( "Painting with %s. Clicking a material here makes it the paint material, and puts it on anything selected.", currentMaterial.c_str() ) );
 
+			ImGui::SameLine();
+			if( ImGui::SmallButton( ICON_PLUS "  New material" ) )
+			{
+				RequestNewMaterial();
+			}
+			UI::Tip( "Make a new material. You can also drop pictures on the editor: they become a material." );
+
 			ImGui::BeginChild( "materials" );
+			const float tile = 72.0f * UI::Scale();
+			const int perRow = Max( 1, ( int )( ImGui::GetContentRegionAvail().x / ( tile + ImGui::GetStyle().ItemSpacing.x ) ) );
+			int shown = 0;
 			const int count = declManager->GetNumDecls( DECL_MATERIAL );
 			for( int i = 0; i < count; i++ )
 			{
 				const idDecl* decl = declManager->DeclByIndex( DECL_MATERIAL, i, false );
-				if( decl == NULL || decl->GetName()[0] == '_' )
+				if( decl == NULL || !MaterialListed( decl->GetName() ) )
 				{
 					continue;
 				}
@@ -3520,7 +3551,19 @@ static void DrawContentBrowser()
 				{
 					continue;
 				}
-				if( ImGui::Selectable( va( ICON_MATERIAL "  %s", decl->GetName() ), currentMaterial.Icmp( decl->GetName() ) == 0 ) )
+				if( shown++ % perRow != 0 )
+				{
+					ImGui::SameLine();
+				}
+				ImGui::PushID( i );
+				const bool clicked = DrawMaterialThumb( decl->GetName(), tile, currentMaterial.Icmp( decl->GetName() ) == 0 );
+				UI::Tip( va( "%s\nClick: paint with it (and put it on anything selected). Double-click: open it in the Material panel.", decl->GetName() ) );
+				if( clicked && ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+				{
+					OpenMaterialPanel( decl->GetName() );
+				}
+				ImGui::PopID();
+				if( clicked )
 				{
 					// new brushes use it from now on; selected ones get it straight away
 					currentMaterial = decl->GetName();
@@ -5603,6 +5646,7 @@ static void PieceFilesRestored()
 {
 	ForgetAllPrefabs();
 	pieceListDirty = true;
+	MaterialFilesRestored();
 }
 
 // "Show me" in a lesson: open the dock tab before the slash, make the control after it glow
@@ -6192,6 +6236,19 @@ static bool ImportModel( const char* osPath, bool place, bool atMouse )
 	return true;
 }
 
+// a file dropped on the window: pictures become materials, models come in as models
+static void FileDropped( const char* osPath )
+{
+	if( Materials::IsPictureFile( osPath ) )
+	{
+		Materials::QueueDroppedPicture( osPath );
+	}
+	else
+	{
+		Import::QueueDroppedFile( osPath );
+	}
+}
+
 // once a frame: sources that changed, files saved into the import folder, files dropped on the window
 static void ModelsUpdate()
 {
@@ -6212,7 +6269,7 @@ static void ModelsUpdate()
 	{
 		if( !Import::IsModelFile( dropped ) )
 		{
-			Status( "Only .glb, .gltf and .obj models can be dropped here." );
+			Status( "Drop .glb, .gltf or .obj models, or .png, .jpg or .tga pictures to make materials." );
 			continue;
 		}
 		// dropped on the view: place it where it landed (the mouse position arrives with the next events)
@@ -6625,7 +6682,7 @@ static void EditorListImports_f( const idCmdArgs& args )
 static void EditorDropFile_f( const idCmdArgs& args )
 {
 	// what dropping a file on the window does, for tests
-	Import::QueueDroppedFile( args.Args() );
+	FileDropped( args.Args() );
 }
 
 /*
@@ -6895,21 +6952,38 @@ static void DrawPaintTiles()
 	}
 	if( ImGui::BeginPopup( "##material_picker" ) )
 	{
-		UI::SearchField( "##pickfilter", materialFilter, sizeof( materialFilter ), "Find a material", 320.0f * UI::Scale() );
-		ImGui::BeginChild( "##picklist", ImVec2( 320.0f * UI::Scale(), 300.0f * UI::Scale() ) );
+		UI::SearchField( "##pickfilter", materialFilter, sizeof( materialFilter ), "Find a material", 260.0f * UI::Scale() );
+		ImGui::SameLine();
+		if( ImGui::Button( ICON_PLUS "  New" ) )
+		{
+			ImGui::CloseCurrentPopup();
+			RequestNewMaterial();
+		}
+		UI::Tip( "Make a new material (or drop pictures on the editor)" );
+		ImGui::BeginChild( "##picklist", ImVec2( 360.0f * UI::Scale(), 320.0f * UI::Scale() ) );
+		const float tile = 64.0f * UI::Scale();
+		const int perRow = Max( 1, ( int )( ImGui::GetContentRegionAvail().x / ( tile + ImGui::GetStyle().ItemSpacing.x ) ) );
+		int shown = 0;
 		const int count = declManager->GetNumDecls( DECL_MATERIAL );
 		for( int i = 0; i < count; i++ )
 		{
 			const idDecl* decl = declManager->DeclByIndex( DECL_MATERIAL, i, false );
-			if( decl == NULL || decl->GetName()[0] == '_' || ( materialFilter[0] != '\0' && idStr::FindText( decl->GetName(), materialFilter, false ) < 0 ) )
+			if( decl == NULL || !MaterialListed( decl->GetName() ) || ( materialFilter[0] != '\0' && idStr::FindText( decl->GetName(), materialFilter, false ) < 0 ) )
 			{
 				continue;
 			}
-			if( ImGui::Selectable( decl->GetName(), currentMaterial.Icmp( decl->GetName() ) == 0 ) )
+			if( shown++ % perRow != 0 )
+			{
+				ImGui::SameLine();
+			}
+			ImGui::PushID( i );
+			if( DrawMaterialThumb( decl->GetName(), tile, currentMaterial.Icmp( decl->GetName() ) == 0 ) )
 			{
 				currentMaterial = decl->GetName();
 				ImGui::CloseCurrentPopup();
 			}
+			UI::Tip( decl->GetName() );
+			ImGui::PopID();
 		}
 		ImGui::EndChild();
 		ImGui::EndPopup();
@@ -6918,6 +6992,16 @@ static void DrawPaintTiles()
 	if( UI::ToolTile( "apply", ICON_PAINT, "Apply", false, "Put the current material on everything selected (whole brushes, or just the selected faces)", !document.selection.IsEmpty(), dockTile ) )
 	{
 		document.SetMaterial( currentMaterial );
+	}
+	ImGui::SameLine();
+	if( UI::ToolTile( "editmat", ICON_SETTINGS, "Edit", false, "Change the paint material in the Material panel: pictures, colour, how rough or shiny it is", true, dockTile ) )
+	{
+		OpenMaterialPanel( currentMaterial );
+	}
+	ImGui::SameLine();
+	if( UI::ToolTile( "newmat", ICON_PLUS, "New", false, "Make a new material. You can also drop pictures on the editor: they become a material.", true, dockTile ) )
+	{
+		RequestNewMaterial();
 	}
 	ImGui::SameLine();
 	if( UI::ToolTile( "fit", ICON_FIT, "Fit", false, "Stretch the texture to cover each selected face once (Shift+click faces to select them)", document.selection.IsFaces(), dockTile ) )
@@ -7912,6 +7996,779 @@ bool IsEditing()
 bool IsPlayPaused()
 {
 	return IsEditorMode() && IsPlaying() && playPaused;
+}
+
+/*
+===============================================================================
+
+	Materials (see EditorMaterials.h)
+
+	The Material panel shows one material: a picture of it, where it's used,
+	and, for materials made in the editor, its preset, pictures, look and
+	behaviour. Changes are written to its .mtr file when a control is let go,
+	the level shows them straight away, and undo covers them. Pictures dropped
+	on the editor become materials, or fill the open material's slots when
+	they're dropped on the panel.
+
+===============================================================================
+*/
+
+static idStr		matDecl;					// the material shown in the panel
+static idStr		matName;					// its editor name, when the editor made it
+static Materials::settings_t	matSettings;	// the panel's working copy
+static int			matLoadedFor = -1;			// reload the working copy when this changes
+static int			matLoadCounter = 0;
+static bool			matPanelHovered = false;	// last frame: pictures dropped on it fill its slots
+static bool			matFocus = false;
+static bool			newMaterialRequest = false;
+static char			newMaterialName[64];
+static int			newMaterialPreset = 0;
+static idStr		materialError;
+
+static bool MaterialListed( const char* declName )
+{
+	return declName[0] != '_' && idStr::Icmpn( declName, "editorpic/", 10 ) != 0 && idStr::Icmpn( declName, "lighteditor/", 12 ) != 0;
+}
+
+static void ReloadMaterialPanel()
+{
+	matLoadCounter++;
+}
+
+static void LoadMaterialPanel()
+{
+	matLoadedFor = matLoadCounter;
+	matName = Materials::EditableName( matDecl );
+	if( matName.Length() > 0 )
+	{
+		Materials::Load( matName, matSettings );
+	}
+}
+
+static void OpenMaterialPanel( const char* declName )
+{
+	matDecl = declName;
+	showMaterialPanel = true;
+	matFocus = true;
+	ReloadMaterialPanel();
+	LoadMaterialPanel();
+	Help::Event( "material.open" );
+}
+
+static void RequestNewMaterial()
+{
+	newMaterialRequest = true;
+}
+
+// undo put material files back: load whatever changed, and show it
+static void MaterialFilesRestored()
+{
+	declManager->Reload( false );
+	ReloadMaterialPanel();
+	LoadMaterialPanel();
+}
+
+// a material's picture, drawn flat; a click on it returns true
+static bool DrawMaterialThumb( const char* declName, float size, bool selected )
+{
+	const idMaterial* thumb = Materials::Thumbnail( declName );
+	const ImVec2 at = ImGui::GetCursorScreenPos();
+	ImGui::PushID( declName );
+	const bool clicked = ImGui::InvisibleButton( "thumb", ImVec2( size, size ) );
+	ImGui::PopID();
+	ImDrawList* draw = ImGui::GetWindowDrawList();
+	const ImVec2 end( at.x + size, at.y + size );
+	draw->AddRectFilled( at, end, IM_COL32( 30, 34, 40, 255 ), 4.0f * UI::Scale() );
+	if( thumb != NULL )
+	{
+		draw->AddImageRounded( ( ImTextureID )thumb, at, end, ImVec2( 0, 0 ), ImVec2( 1, 1 ), IM_COL32_WHITE, 4.0f * UI::Scale() );
+	}
+	else
+	{
+		const ImVec2 iconSize = ImGui::CalcTextSize( ICON_MATERIAL );
+		draw->AddText( ImVec2( at.x + ( size - iconSize.x ) * 0.5f, at.y + ( size - iconSize.y ) * 0.5f ), ImGui::GetColorU32( UI::Muted() ), ICON_MATERIAL );
+	}
+	if( selected || ImGui::IsItemHovered() )
+	{
+		draw->AddRect( at, end, ImGui::GetColorU32( selected ? UI::Accent() : UI::Muted() ), 4.0f * UI::Scale(), 0, selected ? 2.0f : 1.0f );
+	}
+	return clicked;
+}
+
+// a picture by its project path, drawn flat
+static void DrawPictureThumb( const idStr& picture, float size )
+{
+	const ImVec2 at = ImGui::GetCursorScreenPos();
+	ImGui::Dummy( ImVec2( size, size ) );
+	ImDrawList* draw = ImGui::GetWindowDrawList();
+	const ImVec2 end( at.x + size, at.y + size );
+	draw->AddRectFilled( at, end, IM_COL32( 30, 34, 40, 255 ), 4.0f * UI::Scale() );
+	if( picture.Length() > 0 )
+	{
+		idStr image = picture;
+		image.StripFileExtension();
+		const idMaterial* mat = declManager->FindMaterial( va( "editorpic/%s", image.c_str() ) );
+		draw->AddImageRounded( ( ImTextureID )mat, at, end, ImVec2( 0, 0 ), ImVec2( 1, 1 ), IM_COL32_WHITE, 4.0f * UI::Scale() );
+	}
+	else
+	{
+		draw->AddRect( at, end, ImGui::GetColorU32( UI::Muted( ) ), 4.0f * UI::Scale(), 0, 1.0f );
+		const ImVec2 plus = ImGui::CalcTextSize( ICON_PLUS );
+		draw->AddText( ImVec2( at.x + ( size - plus.x ) * 0.5f, at.y + ( size - plus.y ) * 0.5f ), ImGui::GetColorU32( UI::Muted() ), ICON_PLUS );
+	}
+}
+
+// write the working copy, as one undo step when a level is open
+static bool SaveMaterial( const char* label )
+{
+	if( matName.Length() == 0 )
+	{
+		return false;
+	}
+	matSettings.preset = matSettings.preset.Length() > 0 ? matSettings.preset : idStr( "Custom" );
+	idStr before, after, error;
+	const bool existed = fileSystem->ReadFile( Materials::FilePath( matName ), NULL, NULL ) > 0;
+	const bool recordUndo = document.IsOpen() && !document.IsChangeOpen();
+	if( recordUndo )
+	{
+		document.BeginChange( label );
+	}
+	const bool ok = Materials::Save( matName, matSettings, error, &before, &after );
+	if( recordUndo )
+	{
+		if( ok && before != after )
+		{
+			document.RecordFileWrite( Materials::FilePath( matName ), existed, before, after );
+			document.EndChange();
+		}
+		else
+		{
+			document.CancelChange();
+		}
+	}
+	if( !ok )
+	{
+		materialError = error;
+		Status( error );
+	}
+	else
+	{
+		materialError.Clear();
+		Help::Event( "material.changed" );
+	}
+	return ok;
+}
+
+// pictures go into the open material's slots, by what their names say
+static void FillSlotsFromPictures( const idStrList& files )
+{
+	idStr error;
+	int placed = 0;
+	for( int i = 0; i < files.Num(); i++ )
+	{
+		bool known;
+		const Materials::slot_t slot = Materials::GuessSlot( files[i], known );
+		if( Materials::SetPicture( matName, matSettings, slot, files[i], error ) )
+		{
+			placed++;
+			if( slot == Materials::SLOT_GLOW && matSettings.glow <= 0.0f )
+			{
+				matSettings.glow = 1.0f;
+			}
+		}
+	}
+	if( placed > 0 && SaveMaterial( "Add pictures to material" ) )
+	{
+		Status( va( "Put %d picture%s into %s.", placed, placed == 1 ? "" : "s", matName.c_str() ) );
+	}
+	else if( error.Length() > 0 )
+	{
+		Status( error );
+	}
+}
+
+static void MaterialsUpdate()
+{
+	idStrList files;
+	if( Materials::TakeDroppedPictures( files ) && !IsPlaying() )
+	{
+		if( showMaterialPanel && matPanelHovered && matName.Length() > 0 )
+		{
+			FillSlotsFromPictures( files );
+			return;
+		}
+		idStrList made;
+		idStr message;
+		if( Materials::CreateFromPictures( files, made, message ) )
+		{
+			currentMaterial = Materials::DeclName( made[0] );
+			OpenMaterialPanel( currentMaterial );
+			Help::Event( "material.made" );
+		}
+		Status( message );
+	}
+}
+
+static void DrawNewMaterialDialog()
+{
+	if( newMaterialRequest )
+	{
+		newMaterialRequest = false;
+		idStr::Copynz( newMaterialName, Materials::UniqueName( "new_material" ), sizeof( newMaterialName ) );
+		ImGui::OpenPopup( "New material" );
+	}
+	ImGui::SetNextWindowSize( ImVec2( 440.0f * UI::Scale(), 0.0f ) );
+	if( !ImGui::BeginPopupModal( "New material", NULL, ImGuiWindowFlags_NoResize ) )
+	{
+		return;
+	}
+	UI::Hint( "Pick what it's like; you can add pictures and change everything after. Quicker still: drop a set of pictures (colour, normal, roughness ...) on the editor and they become a material." );
+	ImGui::Spacing();
+	UI::FieldLabel( "Name" );
+	ImGui::SetNextItemWidth( -FLT_MIN );
+	ImGui::InputText( "##newmatname", newMaterialName, sizeof( newMaterialName ) );
+	UI::FieldLabel( "Like" );
+	int presetCount = 0;
+	const Materials::preset_t* presets = Materials::Presets( presetCount );
+	ImGui::SetNextItemWidth( -FLT_MIN );
+	if( ImGui::BeginCombo( "##newmatpreset", presets[newMaterialPreset].name ) )
+	{
+		for( int i = 0; i < presetCount; i++ )
+		{
+			if( ImGui::Selectable( presets[i].name, i == newMaterialPreset ) )
+			{
+				newMaterialPreset = i;
+			}
+			UI::Tip( presets[i].hint );
+		}
+		ImGui::EndCombo();
+	}
+	Hint( presets[newMaterialPreset].hint );
+	ImGui::Spacing();
+	if( UI::ColorButton( ICON_PLUS "  Make it", UI::Accent() ) )
+	{
+		const idStr name = Materials::UniqueName( newMaterialName );
+		idStr error;
+		if( Materials::Create( name, presets[newMaterialPreset].name, error ) )
+		{
+			currentMaterial = Materials::DeclName( name );
+			OpenMaterialPanel( currentMaterial );
+			Status( va( "Made %s. Add pictures in the Material panel, or drop them on it.", name.c_str() ) );
+			Help::Event( "material.made" );
+			ImGui::CloseCurrentPopup();
+		}
+		else
+		{
+			Status( error );
+		}
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( "Cancel" ) || ImGui::IsKeyPressed( ImGuiKey_Escape ) )
+	{
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+}
+
+static void DrawMaterialPanel()
+{
+	// the first time, it joins the Inspector's tabs
+	if( ImGui::FindWindowByName( WINDOW_MATERIAL ) == NULL )
+	{
+		ImGuiWindow* inspector = ImGui::FindWindowByName( WINDOW_INSPECTOR );
+		if( inspector != NULL && inspector->DockId != 0 )
+		{
+			ImGui::SetNextWindowDockID( inspector->DockId, ImGuiCond_FirstUseEver );
+		}
+	}
+	if( matFocus )
+	{
+		matFocus = false;
+		ImGui::SetNextWindowFocus();
+	}
+	if( !ImGui::Begin( WINDOW_MATERIAL, &showMaterialPanel ) )
+	{
+		matPanelHovered = false;
+		ImGui::End();
+		return;
+	}
+	matPanelHovered = ImGui::IsWindowHovered( ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem );
+	if( matDecl.Length() == 0 )
+	{
+		matDecl = currentMaterial;
+	}
+	if( matLoadedFor != matLoadCounter )
+	{
+		LoadMaterialPanel();
+	}
+
+	// header: the picture, the name, where it's used
+	const float thumb = 72.0f * UI::Scale();
+	DrawMaterialThumb( matDecl, thumb );
+	ImGui::SameLine();
+	ImGui::BeginGroup();
+	ImGui::PushFont( UI::Font( UI::FONT_TITLE ) );
+	ImGui::TextUnformatted( ShortMaterialName( matDecl ).c_str() );
+	ImGui::PopFont();
+	ImGui::TextDisabled( "%s", matDecl.c_str() );
+	const int uses = Materials::CountUses( document.Map(), matDecl );
+	ImGui::TextDisabled( "%s", uses == 0 ? "Not used in this level" : ( uses == 1 ? "On 1 face in this level" : va( "On %d faces in this level", uses ) ) );
+	ImGui::EndGroup();
+	{
+		const float startY = ImGui::GetCursorPosY();
+		ImGui::SameLine( ImGui::GetContentRegionMax().x - ImGui::GetFrameHeight() );
+		UI::HelpButton( "panels/material", "About the Material panel" );
+		ImGui::SetCursorPosY( startY );
+	}
+
+	if( ImGui::Button( ICON_PAINT "  Paint with it" ) )
+	{
+		currentMaterial = matDecl;
+		SetMode( MODE_PAINT );
+		Status( va( "Painting with %s.", ShortMaterialName( matDecl ).c_str() ) );
+	}
+	UI::Tip( "Make it the paint material (the Paint tab)" );
+	// the buttons wrap when the panel is narrow
+	auto nextButton = []( const char* text )
+	{
+		const float width = ImGui::CalcTextSize( text ).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		const float lastEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+		if( lastEnd + ImGui::GetStyle().ItemSpacing.x + width < ImGui::GetWindowContentRegionMax().x )
+		{
+			ImGui::SameLine();
+		}
+	};
+	nextButton( ICON_OK "  Put on selection" );
+	ImGui::BeginDisabled( document.selection.IsEmpty() );
+	if( ImGui::Button( ICON_OK "  Put on selection" ) )
+	{
+		document.SetMaterial( matDecl );
+	}
+	ImGui::EndDisabled();
+	UI::Tip( "Put it on everything selected: whole brushes, or just the selected faces" );
+	nextButton( ICON_PLUS "  New" );
+	if( ImGui::Button( ICON_PLUS "  New" ) )
+	{
+		RequestNewMaterial();
+	}
+	UI::Tip( "Make a new material" );
+	ImGui::Spacing();
+
+	if( matName.Length() == 0 )
+	{
+		const idMaterial* mat = declManager->FindMaterial( matDecl, false );
+		if( mat == NULL || mat->GetState() == DS_DEFAULTED )
+		{
+			ImGui::TextColored( UI::Warn(), ICON_WARNING );
+			ImGui::SameLine();
+			ImGui::TextWrapped( "There's no material called %s.", matDecl.c_str() );
+		}
+		else
+		{
+			UI::Hint( va( "This material comes from %s, written by hand or made by bringing in a model, so the panel can't change it. Make an editable copy to change it here; the copy uses the same pictures.", mat->GetFileName() ) );
+			if( ImGui::Button( ICON_DUPLICATE "  Make an editable copy" ) )
+			{
+				idStr name, error;
+				if( Materials::MakeEditableCopy( matDecl, name, error ) )
+				{
+					OpenMaterialPanel( Materials::DeclName( name ) );
+					Status( va( "Made %s, an editable copy. Put it on surfaces to use it.", name.c_str() ) );
+				}
+				else
+				{
+					Status( error );
+				}
+			}
+		}
+		ImGui::End();
+		return;
+	}
+
+	ImGui::BeginChild( "matsettings" );
+	bool changed = false;		// one-shot controls: save now
+	const char* label = "Change material";
+
+	// what it's like
+	if( UI::BeginCard( "matpreset", ICON_SPARKLES, "Like", "Start from what it's like: a preset sets how rough and shiny it is, whether you can see through it, and what it sounds like underfoot." ) )
+	{
+		int presetCount = 0;
+		const Materials::preset_t* presets = Materials::Presets( presetCount );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		if( ImGui::BeginCombo( "##preset", matSettings.preset.c_str() ) )
+		{
+			for( int i = 0; i < presetCount; i++ )
+			{
+				if( ImGui::Selectable( presets[i].name, matSettings.preset.Icmp( presets[i].name ) == 0 ) )
+				{
+					Materials::ApplyPreset( matSettings, presets[i].name );
+					changed = true;
+					label = "Change material preset";
+				}
+				UI::Tip( presets[i].hint );
+			}
+			ImGui::EndCombo();
+		}
+	}
+	UI::EndCard();
+
+	// pictures
+	if( UI::BeginCard( "matpictures", ICON_MATERIAL, "Pictures", "The pictures it's made of. Drop picture files on this panel to put them in (which goes where is worked out from their names), or choose one for a slot." ) )
+	{
+		const float pic = 52.0f * UI::Scale();
+		for( int i = 0; i < Materials::SLOT_COUNT; i++ )
+		{
+			const Materials::slot_t slot = ( Materials::slot_t )i;
+			ImGui::PushID( i );
+			DrawPictureThumb( matSettings.pictures[i], pic );
+			UI::Tip( Materials::SlotHint( slot ) );
+			ImGui::SameLine();
+			ImGui::BeginGroup();
+			ImGui::TextUnformatted( Materials::SlotLabel( slot ) );
+			if( ImGui::SmallButton( matSettings.pictures[i].Length() > 0 ? "Change" : "Choose" ) )
+			{
+				char path[MAX_OSPATH] = "";
+				if( Sys_OpenFileDialog( va( "Choose the %s picture", Materials::SlotLabel( slot ) ), "Pictures|*.png;*.jpg;*.jpeg;*.tga;*.bmp", path, sizeof( path ) ) )
+				{
+					idStr error;
+					if( Materials::SetPicture( matName, matSettings, slot, path, error ) )
+					{
+						changed = true;
+						label = "Choose material picture";
+						if( slot == Materials::SLOT_GLOW && matSettings.glow <= 0.0f )
+						{
+							matSettings.glow = 1.0f;
+						}
+					}
+					else
+					{
+						Status( error );
+					}
+				}
+			}
+			if( matSettings.pictures[i].Length() > 0 )
+			{
+				ImGui::SameLine();
+				if( ImGui::SmallButton( ICON_CLOSE ) )
+				{
+					matSettings.pictures[i].Clear();
+					changed = true;
+					label = "Remove material picture";
+				}
+				UI::Tip( "Take this picture out" );
+			}
+			ImGui::EndGroup();
+			ImGui::PopID();
+			if( i % 2 == 0 && ImGui::GetContentRegionAvail().x > pic * 4.5f )
+			{
+				ImGui::SameLine( ImGui::GetContentRegionAvail().x * 0.5f + ImGui::GetCursorPosX() * 0.5f );
+			}
+		}
+	}
+	UI::EndCard();
+
+	// how it looks
+	bool commit = false;		// drags and sliders: save when let go
+	if( UI::BeginCard( "matlook", ICON_EYE, "Look", "Colour, how rough or shiny it is, and whether you can see through it." ) )
+	{
+		UI::FieldLabel( "Tint" );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		ImGui::ColorEdit3( "##tint", matSettings.tint.ToFloatPtr(), ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel );
+		commit |= ImGui::IsItemDeactivatedAfterEdit();
+		UI::Tip( matSettings.pictures[Materials::SLOT_COLOR].Length() > 0 ? "Tints the colour picture" : "The colour of the surface (there's no colour picture)" );
+
+		UI::FieldLabel( "Roughness" );
+		ImGui::BeginDisabled( matSettings.pictures[Materials::SLOT_ROUGH].Length() > 0 );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		ImGui::SliderFloat( "##rough", &matSettings.roughness, 0.0f, 1.0f, matSettings.pictures[Materials::SLOT_ROUGH].Length() > 0 ? "from the picture" : "%.2f" );
+		commit |= ImGui::IsItemDeactivatedAfterEdit();
+		ImGui::EndDisabled();
+		UI::Tip( "0 is smooth and shiny, like polished stone; 1 is rough and matte, like chalk" );
+
+		UI::FieldLabel( "Metal" );
+		ImGui::BeginDisabled( matSettings.pictures[Materials::SLOT_METAL].Length() > 0 );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		ImGui::SliderFloat( "##metal", &matSettings.metal, 0.0f, 1.0f, matSettings.pictures[Materials::SLOT_METAL].Length() > 0 ? "from the picture" : "%.2f" );
+		commit |= ImGui::IsItemDeactivatedAfterEdit();
+		ImGui::EndDisabled();
+		UI::Tip( "1 for bare metal, 0 for everything else (painted metal included)" );
+
+		UI::FieldLabel( "Glow" );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		ImGui::SliderFloat( "##glow", &matSettings.glow, 0.0f, 4.0f, matSettings.glow <= 0.0f ? "none" : "%.2f" );
+		commit |= ImGui::IsItemDeactivatedAfterEdit();
+		UI::Tip( "How bright it glows. It shines without light, but doesn't light the room: add a light for that." );
+
+		UI::FieldLabel( "See-through" );
+		static const char* seeLabels[] = { "No", "Cut out (from the colour picture's transparency)", "See-through all over (glass, water)" };
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		if( ImGui::BeginCombo( "##see", seeLabels[matSettings.transparency] ) )
+		{
+			for( int i = 0; i < 3; i++ )
+			{
+				if( ImGui::Selectable( seeLabels[i], matSettings.transparency == i ) )
+				{
+					matSettings.transparency = i;
+					changed = true;
+					label = "Change material transparency";
+				}
+			}
+			ImGui::EndCombo();
+		}
+		if( matSettings.transparency == Materials::SEE_THROUGH )
+		{
+			UI::FieldLabel( "Opacity" );
+			ImGui::SetNextItemWidth( -FLT_MIN );
+			ImGui::SliderFloat( "##opacity", &matSettings.opacity, 0.0f, 1.0f, "%.2f" );
+			commit |= ImGui::IsItemDeactivatedAfterEdit();
+			UI::Hint( "See-through materials aren't lit by lights, so keep them for glass, water and the like." );
+		}
+	}
+	UI::EndCard();
+
+	// how it behaves
+	if( UI::BeginCard( "matbehave", ICON_SETTINGS, "Behaviour", "What happens when things touch it, and how it casts shadows." ) )
+	{
+		int surfaceCount = 0;
+		const char** surfaces = Materials::SurfaceTypes( surfaceCount );
+		UI::FieldLabel( "Sounds like" );
+		ImGui::SetNextItemWidth( -FLT_MIN );
+		if( ImGui::BeginCombo( "##surface", matSettings.surface.c_str() ) )
+		{
+			for( int i = 0; i < surfaceCount; i++ )
+			{
+				if( ImGui::Selectable( surfaces[i], matSettings.surface.Icmp( surfaces[i] ) == 0 ) )
+				{
+					matSettings.surface = surfaces[i];
+					changed = true;
+					label = "Change material surface";
+				}
+			}
+			ImGui::EndCombo();
+		}
+		UI::Tip( "The surface type: which footsteps and impact effects the game uses on it" );
+		changed |= ImGui::Checkbox( "Both sides", &matSettings.twoSided );
+		UI::Tip( "Draw the back of the surface too, for thin things like leaves, fences and cloth" );
+		changed |= ImGui::Checkbox( "Casts shadows", &matSettings.shadows );
+		changed |= ImGui::Checkbox( "Solid", &matSettings.solid );
+		UI::Tip( "The player and things bump into it. Untick for things you can walk through, like curtains or water" );
+	}
+	UI::EndCard();
+
+	if( materialError.Length() > 0 )
+	{
+		ImGui::TextColored( UI::Bad(), ICON_ERROR );
+		ImGui::SameLine();
+		ImGui::TextWrapped( "%s", materialError.c_str() );
+	}
+	UI::Hint( va( "Saved in %s. Changes show in the level as soon as you let go, and undo puts them back.", Materials::FilePath( matName ).c_str() ) );
+	ImGui::EndChild();
+
+	if( changed || commit )
+	{
+		SaveMaterial( label );		// the preset name stays: it's where the material started
+	}
+	ImGui::End();
+}
+
+/*
+-------------------------------------------------------------------------------
+	material console commands (for tests and scripting)
+-------------------------------------------------------------------------------
+*/
+
+// editorNewMaterial <name> [preset words...]
+static void EditorNewMaterial_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 2 )
+	{
+		common->Printf( "usage: editorNewMaterial <name> [preset]\n" );
+		return;
+	}
+	const idStr name = Materials::UniqueName( args.Argv( 1 ) );
+	idStr error;
+	if( Materials::Create( name, args.Argc() > 2 ? args.Args( 2 ) : "Stone", error ) )
+	{
+		OpenMaterialPanel( Materials::DeclName( name ) );
+		common->Printf( "made material %s\n", name.c_str() );
+	}
+	else
+	{
+		common->Printf( "couldn't make material: %s\n", error.c_str() );
+	}
+}
+
+// editorEditMaterial <material>: show it in the panel
+static void EditorEditMaterial_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		common->Printf( "usage: editorEditMaterial <material>\n" );
+		return;
+	}
+	OpenMaterialPanel( args.Argv( 1 ) );
+	common->Printf( "editing %s (%s)\n", matDecl.c_str(), matName.Length() > 0 ? "editable" : "not editable" );
+}
+
+// editorMaterialSetting <setting> <value>: change the panel's material, as the panel would
+static void EditorMaterialSetting_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 || matName.Length() == 0 )
+	{
+		common->Printf( "usage: editorMaterialSetting <preset|tint|roughness|metal|glow|seethrough|opacity|twosided|shadows|solid|surface> <value>, with an editable material in the panel\n" );
+		return;
+	}
+	const idStr key = args.Argv( 1 );
+	const idStr value = args.Args( 2 );
+	Materials::settings_t& s = matSettings;
+	if( key.Icmp( "preset" ) == 0 )
+	{
+		Materials::ApplyPreset( s, value );
+	}
+	else if( key.Icmp( "tint" ) == 0 )
+	{
+		sscanf( value.c_str(), "%f %f %f", &s.tint.x, &s.tint.y, &s.tint.z );
+	}
+	else if( key.Icmp( "roughness" ) == 0 )
+	{
+		s.roughness = atof( value );
+	}
+	else if( key.Icmp( "metal" ) == 0 )
+	{
+		s.metal = atof( value );
+	}
+	else if( key.Icmp( "glow" ) == 0 )
+	{
+		s.glow = atof( value );
+	}
+	else if( key.Icmp( "seethrough" ) == 0 )
+	{
+		s.transparency = idMath::ClampInt( 0, 2, atoi( value ) );
+	}
+	else if( key.Icmp( "opacity" ) == 0 )
+	{
+		s.opacity = atof( value );
+	}
+	else if( key.Icmp( "twosided" ) == 0 )
+	{
+		s.twoSided = atoi( value ) != 0;
+	}
+	else if( key.Icmp( "shadows" ) == 0 )
+	{
+		s.shadows = atoi( value ) != 0;
+	}
+	else if( key.Icmp( "solid" ) == 0 )
+	{
+		s.solid = atoi( value ) != 0;
+	}
+	else if( key.Icmp( "surface" ) == 0 )
+	{
+		s.surface = value;
+	}
+	else
+	{
+		common->Printf( "no setting called %s\n", key.c_str() );
+		return;
+	}
+	common->Printf( SaveMaterial( "Change material" ) ? "material %s: %s set\n" : "material %s: couldn't set %s\n", matName.c_str(), key.c_str() );
+}
+
+// editorMaterialPicture <slot|auto> <file>|none: put a picture into the panel's material
+static void EditorMaterialPicture_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 3 || matName.Length() == 0 )
+	{
+		common->Printf( "usage: editorMaterialPicture <color|normal|rough|metal|ao|glow|auto> <file>|none, with an editable material in the panel\n" );
+		return;
+	}
+	const idStr file = args.Args( 2 );
+	if( idStr::Icmp( args.Argv( 1 ), "auto" ) == 0 )
+	{
+		idStrList files;
+		files.Append( file );
+		FillSlotsFromPictures( files );
+		return;
+	}
+	for( int i = 0; i < Materials::SLOT_COUNT; i++ )
+	{
+		if( idStr::Icmp( args.Argv( 1 ), Materials::SlotKey( ( Materials::slot_t )i ) ) == 0 )
+		{
+			idStr error;
+			if( !Materials::SetPicture( matName, matSettings, ( Materials::slot_t )i, file.Icmp( "none" ) == 0 ? "" : file.c_str(), error ) )
+			{
+				common->Printf( "couldn't set the picture: %s\n", error.c_str() );
+				return;
+			}
+			common->Printf( SaveMaterial( "Choose material picture" ) ? "material %s: %s picture set\n" : "material %s: couldn't save\n", matName.c_str(), args.Argv( 1 ) );
+			return;
+		}
+	}
+	common->Printf( "no picture slot called %s\n", args.Argv( 1 ) );
+}
+
+// editorMaterialFromPictures <file> [file...]: as if the pictures were dropped on the editor
+static void EditorMaterialFromPictures_f( const idCmdArgs& args )
+{
+	for( int i = 1; i < args.Argc(); i++ )
+	{
+		Materials::QueueDroppedPicture( args.Argv( i ) );
+	}
+}
+
+// editorMaterialInfo [material]: what the editor knows about a material
+static void EditorMaterialInfo_f( const idCmdArgs& args )
+{
+	const idStr decl = args.Argc() > 1 ? idStr( args.Argv( 1 ) ) : matDecl;
+	const idMaterial* mat = declManager->FindMaterial( decl, false );
+	const idStr name = Materials::EditableName( decl );
+	common->Printf( "material %s: %s, %s, %d stages, %d uses\n", decl.c_str(), mat == NULL ? "missing" : ( mat->GetState() == DS_DEFAULTED ? "defaulted" : "loaded" ),
+					name.Length() > 0 ? "editable" : "not editable", mat != NULL ? mat->GetNumStages() : 0, Materials::CountUses( document.Map(), decl ) );
+	if( name.Length() > 0 )
+	{
+		Materials::settings_t s;
+		Materials::Load( name, s );
+		common->Printf( "  preset %s, tint %.2f %.2f %.2f, roughness %.2f, metal %.2f, glow %.2f, seethrough %d, opacity %.2f, twosided %d, shadows %d, solid %d, surface %s\n",
+						s.preset.c_str(), s.tint.x, s.tint.y, s.tint.z, s.roughness, s.metal, s.glow, s.transparency, s.opacity, s.twoSided, s.shadows, s.solid, s.surface.c_str() );
+		for( int i = 0; i < Materials::SLOT_COUNT; i++ )
+		{
+			const idStr& pic = s.pictures[i];
+			common->Printf( "  %s picture: %s%s\n", Materials::SlotKey( ( Materials::slot_t )i ), pic.Length() > 0 ? pic.c_str() : "none",
+							pic.Length() > 0 && fileSystem->ReadFile( pic, NULL, NULL ) <= 0 ? " (MISSING)" : "" );
+		}
+	}
+	if( mat != NULL )
+	{
+		common->Printf( "  surface type %d, two-sided %d, casts shadows %d, translucent %d\n", ( int )mat->GetSurfaceType(), mat->GetCullType() == CT_TWO_SIDED, mat->SurfaceCastsShadow(), mat->Coverage() == MC_TRANSLUCENT );
+	}
+}
+
+static void EditorMaterialCopy_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		common->Printf( "usage: editorMaterialCopy <material>\n" );
+		return;
+	}
+	idStr name, error;
+	if( Materials::MakeEditableCopy( args.Argv( 1 ), name, error ) )
+	{
+		OpenMaterialPanel( Materials::DeclName( name ) );
+		common->Printf( "made material %s, a copy of %s\n", name.c_str(), args.Argv( 1 ) );
+	}
+	else
+	{
+		common->Printf( "couldn't copy: %s\n", error.c_str() );
+	}
+}
+
+static void RegisterMaterialCommands()
+{
+	cmdSystem->AddCommand( "editorNewMaterial", EditorNewMaterial_f, CMD_FL_SYSTEM, "makes a material: editorNewMaterial <name> [preset]" );
+	cmdSystem->AddCommand( "editorEditMaterial", EditorEditMaterial_f, CMD_FL_SYSTEM, "shows a material in the Material panel" );
+	cmdSystem->AddCommand( "editorMaterialSetting", EditorMaterialSetting_f, CMD_FL_SYSTEM, "changes a setting of the panel's material" );
+	cmdSystem->AddCommand( "editorMaterialPicture", EditorMaterialPicture_f, CMD_FL_SYSTEM, "puts a picture into the panel's material: editorMaterialPicture <slot|auto> <file>|none" );
+	cmdSystem->AddCommand( "editorMaterialFromPictures", EditorMaterialFromPictures_f, CMD_FL_SYSTEM, "makes materials from pictures, as if they were dropped on the editor" );
+	cmdSystem->AddCommand( "editorMaterialInfo", EditorMaterialInfo_f, CMD_FL_SYSTEM, "prints what the editor knows about a material" );
+	cmdSystem->AddCommand( "editorMaterialCopy", EditorMaterialCopy_f, CMD_FL_SYSTEM, "makes an editable copy of a material" );
 }
 
 /*
@@ -9256,6 +10113,7 @@ void DrawMainMenuBar()
 		ImGui::MenuItem( Help::WINDOW_HELP, "F1", &Help::Visible() );
 		ImGui::MenuItem( WINDOW_CONTENT_BROWSER, NULL, &showContentBrowser );
 		ImGui::MenuItem( WINDOW_PROBLEMS, NULL, &showProblems );
+		ImGui::MenuItem( WINDOW_MATERIAL, NULL, &showMaterialPanel );
 		ImGui::Separator();
 		ImGui::MenuItem( ICON_WIREFRAME "  Brush outlines", NULL, &view.wireframe );
 		ImGui::MenuItem( ICON_GRID "  Floor grid", NULL, &view.showGrid );
@@ -9477,8 +10335,9 @@ void Draw( unsigned int mainDockSpaceId )
 
 	RegisterCommands();
 	BuildUpdate();
-	Sys_FileDropped = Import::QueueDroppedFile;
+	Sys_FileDropped = FileDropped;
 	ModelsUpdate();
+	MaterialsUpdate();
 	RefreshProblems( false );
 	document.afterChange = PieceAfterChange;
 	document.filesRestored = PieceFilesRestored;
@@ -9584,6 +10443,10 @@ void Draw( unsigned int mainDockSpaceId )
 	{
 		DrawProblems();
 	}
+	if( showMaterialPanel )
+	{
+		DrawMaterialPanel();
+	}
 	if( Help::Visible() )
 	{
 		// the first time, it joins the Inspector's tabs
@@ -9604,6 +10467,7 @@ void Draw( unsigned int mainDockSpaceId )
 	DrawNewProjectDialog();
 	DrawMakePieceDialog();
 	DrawImportDialog();
+	DrawNewMaterialDialog();
 	DrawPlayErrorsDialog();
 	UI::DrawHighlights();
 	DrawOpenProjectDialog();

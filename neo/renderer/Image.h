@@ -578,6 +578,10 @@ public:
 	void				PrintMemInfo( MemInfo_t* mi );
 
 	void				LoadDeferredImages( nvrhi::ICommandList* commandList = nullptr );
+	bool				HasDeferredImages() const		// Daedalus: queued images not sent to the GPU yet
+	{
+		return imagesToLoad.Num() > 0;
+	}
 
 	// built-in images
 	void				CreateIntrinsicImages();

@@ -3704,10 +3704,12 @@ bool idMaterial::SetDefaultText()
 
 		// RB: HACK super hack for light editor 2D rendering
 		idStr matName = GetName();
-		if( matName.IcmpPrefix( "lighteditor/" ) == 0 )
+		// Daedalus: "editorpic/<picture>" draws a picture flat too, for thumbnails in the editor
+		if( matName.IcmpPrefix( "lighteditor/" ) == 0 || matName.IcmpPrefix( "editorpic/" ) == 0 )
 		{
 			idStr imageName = GetName();
 			imageName.StripLeading( "lighteditor/" );
+			imageName.StripLeading( "editorpic/" );
 
 			idStr::snPrintf( generated, sizeof( generated ),
 							 "material %s // IMPLICITLY GENERATED\n"

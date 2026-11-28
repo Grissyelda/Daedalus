@@ -1,0 +1,6 @@
+# the level with the new material compiles and loads, with its pictures found
+seconds for dmap
+SpawnPlayer: 0
+!Couldn't load image: textures/brick_wall
+!signal caught
+!Sys_Error

@@ -22,6 +22,7 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 - **Things:** lights with presets, doors, player starts and every placeable definition, edited through Inspector cards.
 - **Pieces (prefabs):** linked copies with per-copy overrides, edited in place, nestable.
 - **Models:** drag in a glTF, GLB or OBJ file and it becomes a placeable model with PBR materials, updating by itself when you save it again in Blender.
+- **Materials:** drop a set of pictures on the editor and they become a material; change it in the Material panel (presets, pictures, roughness, metal, glow, see-through, surface sounds) and see it in the level as you go.
 - **Play:** in the same window, from the player start or the camera; pausing brings the editor back and edits flow into the game, each marked as in the game, next time you play, or rebuilt when you resume.
 - **Background builds** with leak finding.
 - **Problems:** errors, warnings and notes about the level, each pointing at the thing at fault with a next step and often a one-click fix. They show in the Outliner, the view and the Inspector too; Play asks first when there are errors, and **Check every level** checks the whole project.
@@ -29,7 +30,7 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 
 ## Next up
 
-- A material editor with PBR presets, a view of the level's areas and portals, and light looks with one-click baked lighting.
+- A view of the level's areas and portals, and light looks with one-click baked lighting.
 - Then behavior: When/Do rule cards on objects that open up into node graphs and Doom Script.
 
 ## Building
@@ -79,6 +80,7 @@ Run the executable from the repository root (or a package folder), next to `cont
 - **Play** (top centre, **F5**) saves and runs the open level. **Esc** pauses it and brings the editor back with the game still loaded: changes go into the game, and brush changes rebuild the level around you when you carry on (**F5**). **F10** stops.
 - Levels are compiled by `rbdmap`, which ships next to the editor and runs in the background (the bar left of Play shows how far it's got), so the editor never freezes. Play builds when the level needs it; **File → Build** (**Ctrl+B**) builds without playing. What the build says shows up in **Problems**, with the full build log a click away.
 - **Models:** drag a `.glb`, `.gltf` or `.obj` file onto the window, use **Kits → Bring in**, or drop it in the project's `import/` folder. It's copied into `models/imported/` with its textures and materials, and appears as a tile in **Kits**. Saving the source file again updates the model in the level. The Inspector's Model card sets its size (pick what program it was made in) and which way it faces.
+- **Materials:** drop picture files on the window (`brick_color.png`, `brick_normal.png`, `brick_roughness.png` ...) and they become a material, each picture in its place. The **Material** panel (Paint tab → **Edit**, or double-click a material in Content) changes it: a preset to start from, its pictures, tint, roughness, metal, glow, see-through, and how it sounds underfoot. Each material is one file, `materials/<name>.mtr`, with its pictures in `textures/<name>/`.
 - **Pieces** (prefabs): select things and press **Make piece** to save them in `maps/prefabs/`, then place copies from **Kits**. Copies stay linked: **Edit piece** changes the piece right where a copy sits (the rest of the level turns to ghosts); then **Save to every copy** changes the piece and every copy, or **Save to this copy** keeps the changes in that copy alone. Undo undoes changes to pieces too, and the previous version of a piece is kept as `maps/prefabs/<name>.bak`. A double-click picks one part of a copy; changing it changes only that copy, and the Inspector marks it with **Revert** and **Apply to all copies**. Pieces can contain pieces.
 - **File → New Project** creates a project folder from `template/` and asks whether it starts with the stylized or the PBR look. **File → Open Project** switches to another project.
 - Start with `+set editor 0` to run as the game, without the editor. `editor_uiScale` makes the editor's text and controls bigger or smaller.
