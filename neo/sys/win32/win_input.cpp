@@ -459,6 +459,11 @@ void IN_DeactivateMouseIfWindowed()
 Sys_ShutdownInput
 ===========
 */
+// Daedalus: the sampling thread stops before input shuts down; it used to run on while the
+// process quit (restarting into another project) and lock a mutex that was already gone
+static volatile bool joystickThreadQuit = false;
+static volatile bool joystickThreadRunning = false;
+
 void Sys_ShutdownInput()
 {
 	joystickThreadQuit = true;
@@ -857,11 +862,6 @@ JoystickSamplingThread
 static int	threadTimeDeltas[256];
 static int	threadPacket[256];
 static int	threadCount;
-// Daedalus: the sampling thread stops before input shuts down; it used to run on while the
-// process quit (restarting into another project) and lock a mutex that was already gone
-static volatile bool joystickThreadQuit = false;
-static volatile bool joystickThreadRunning = false;
-
 void JoystickSamplingThread( void* data )
 {
 	static int prevTime = 0;
