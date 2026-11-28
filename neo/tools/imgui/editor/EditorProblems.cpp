@@ -17,6 +17,8 @@ or (at your option) any later version.
 #include "precompiled.h"
 #pragma hdrstop
 
+#if defined( DAEDALUS_EDITOR )
+
 #include "EditorProblems.h"
 #include "EditorPrefabs.h"
 #include "EditorImport.h"
@@ -492,3 +494,5 @@ void CheckLevel( const idMapFile* map, levelKind_t kind, idList<problem_t>& out 
 
 } // namespace Problems
 } // namespace DaedalusEditor
+
+#endif // DAEDALUS_EDITOR
