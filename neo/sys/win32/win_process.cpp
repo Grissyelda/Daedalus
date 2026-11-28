@@ -253,7 +253,7 @@ void Sys_OpenFolder( const char* osPath )
 	ShellExecuteW( NULL, L"open", wide.Ptr(), NULL, NULL, SW_SHOWNORMAL );
 }
 
-bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int pathSize )
+static bool RunFileDialog( const char* title, const char* filter, char* path, int pathSize )
 {
 	if( path == NULL || pathSize <= 1 )
 	{
@@ -278,7 +278,7 @@ bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int 
 	OPENFILENAMEW ofn;
 	memset( &ofn, 0, sizeof( ofn ) );
 	ofn.lStructSize = sizeof( ofn );
-	ofn.hwndOwner = win32.hWnd;
+	ofn.hwndOwner = NULL;	// see RunOnDialogThread
 	ofn.lpstrFilter = wideFilter.Ptr();
 	ofn.lpstrFile = file;
 	ofn.nMaxFile = sizeof( file ) / sizeof( file[0] );
@@ -292,7 +292,7 @@ bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int 
 	return n > 0;
 }
 
-bool Sys_OpenFolderDialog( const char* title, char* path, int pathSize )
+static bool RunFolderDialog( const char* title, char* path, int pathSize )
 {
 	if( path == NULL || pathSize <= 1 )
 	{
@@ -310,7 +310,7 @@ bool Sys_OpenFolderDialog( const char* title, char* path, int pathSize )
 		dialog->SetOptions( options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST );
 		idList<wchar_t> wideTitle = Widen( title );
 		dialog->SetTitle( wideTitle.Ptr() );
-		if( SUCCEEDED( dialog->Show( win32.hWnd ) ) )
+		if( SUCCEEDED( dialog->Show( NULL ) ) )
 		{
 			IShellItem* item = NULL;
 			if( SUCCEEDED( dialog->GetResult( &item ) ) )
@@ -331,6 +331,58 @@ bool Sys_OpenFolderDialog( const char* title, char* path, int pathSize )
 		CoUninitialize();
 	}
 	return picked;
+}
+
+/*
+The editor asks for dialogs from the game thread, while the main thread waits for that thread and
+pumps no messages. A dialog owned by the main window then deadlocks (it sends its owner messages),
+and the folder picker needs a single-threaded COM apartment, which the game thread may not have.
+So each dialog runs on a thread of its own, with no owner, and the caller waits for it.
+*/
+struct dialogJob_t
+{
+	bool		folder;
+	const char*	title;
+	const char*	filter;
+	char*		path;
+	int			pathSize;
+	bool		result;
+};
+
+static DWORD WINAPI DialogThread( LPVOID param )
+{
+	dialogJob_t* job = ( dialogJob_t* )param;
+	job->result = job->folder ? RunFolderDialog( job->title, job->path, job->pathSize ) : RunFileDialog( job->title, job->filter, job->path, job->pathSize );
+	return 0;
+}
+
+static bool RunOnDialogThread( dialogJob_t& job )
+{
+	job.result = false;
+	if( job.path != NULL && job.pathSize > 0 )
+	{
+		job.path[0] = '\0';
+	}
+	HANDLE thread = CreateThread( NULL, 0, DialogThread, &job, 0, NULL );
+	if( thread == NULL )
+	{
+		return false;
+	}
+	WaitForSingleObject( thread, INFINITE );
+	CloseHandle( thread );
+	return job.result;
+}
+
+bool Sys_OpenFileDialog( const char* title, const char* filter, char* path, int pathSize )
+{
+	dialogJob_t job = { false, title, filter, path, pathSize, false };
+	return RunOnDialogThread( job );
+}
+
+bool Sys_OpenFolderDialog( const char* title, char* path, int pathSize )
+{
+	dialogJob_t job = { true, title, NULL, path, pathSize, false };
+	return RunOnDialogThread( job );
 }
 
 // a string value from an open registry key, as UTF-8
