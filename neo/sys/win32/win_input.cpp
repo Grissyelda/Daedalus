@@ -537,13 +537,15 @@ void IN_Frame()
 	{
 		shouldGrab = false;
 	}
+	// Daedalus: a released mouse is released in full screen too (menus drawn with ImGui need
+	// the cursor; full screen used to keep it grabbed, so the menu's pointer never moved)
+	if( win32.mouseReleased )
+	{
+		shouldGrab = false;
+	}
 	// if fullscreen, we always want the mouse
 	if( !win32.cdsFullscreen )
 	{
-		if( win32.mouseReleased )
-		{
-			shouldGrab = false;
-		}
 		if( win32.movingWindow )
 		{
 			shouldGrab = false;

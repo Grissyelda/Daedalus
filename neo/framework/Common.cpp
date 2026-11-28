@@ -1832,6 +1832,12 @@ bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 	{
 		return true;
 	}
+	// Daedalus: while the game menu is up it gets the mouse and keys first (the game's own
+	// menu handling would otherwise take them before ImGui sees them); Esc still closes it below
+	if( GameMenu::IsOpen() && !( event->evType == SE_KEY && event->evValue == K_ESCAPE ) && ImGuiHook::InjectSysEvent( event ) )
+	{
+		return true;
+	}
 
 	// hitting escape anywhere brings up the menu
 	if( game && game->IsInGame() )
