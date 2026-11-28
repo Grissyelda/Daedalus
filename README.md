@@ -88,7 +88,7 @@ Run the executable from the repository root (or a package folder), next to `cont
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). In short: enable the hygiene hook, and commit with your GitHub noreply address.
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: enable the hygiene hook, and commit with your GitHub noreply address. The decisions that shape the code are recorded in [docs/adr](docs/adr).
 
 ## License
 
