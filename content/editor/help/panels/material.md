@@ -27,3 +27,9 @@ Materials written by hand, or made by bringing in a model, can't be changed here
 ## Where it's kept
 
 Each material is one file, `materials/<name>.mtr`, with its pictures in `textures/<name>/`. Near the top of the material is one settings line that the panel reads; it writes everything else.
+
+## One picture is enough
+
+A material only needs a **colour** picture. The **Roughness**, **Metal** and **Glow** sliders stand in for the other pictures. To get bumps too, use **Make bumps and roughness** under the pictures: it reads the light parts of the colour picture as raised and the dark parts as dents, and makes a bumps (normal) picture and a roughness picture from it. **Bumps** sets how deep they look. Undo puts your own pictures back.
+
+Where to get pictures: free ready-made sets from ambientCG or Poly Haven (drop a whole set on the editor and every slot fills in), Krita or GIMP to paint your own, Material Maker to build them from patterns, and ArmorPaint or Blender to paint on a model.

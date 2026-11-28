@@ -600,6 +600,108 @@ bool SetPicture( const char* name, settings_t& s, slot_t slot, const char* osPat
 	return true;
 }
 
+// bumps and roughness from the colour picture: brightness is read as height (light is high),
+// its slope makes the normal map, and its local contrast makes the roughness
+bool MakeFromColor( const char* name, settings_t& s, float bumps, float roughness, bool makeNormal, bool makeRough, idStr& error )
+{
+	if( s.pictures[SLOT_COLOR].Length() == 0 )
+	{
+		error = "Put a colour picture in first: the others are made from it.";
+		return false;
+	}
+	picture_t color;
+	if( !color.LoadProject( s.pictures[SLOT_COLOR] ) )
+	{
+		error = va( "Couldn't read %s.", s.pictures[SLOT_COLOR].c_str() );
+		return false;
+	}
+	const int w = color.width;
+	const int h = color.height;
+	idList<float> height;
+	height.SetNum( w * h );
+	for( int i = 0; i < w * h; i++ )
+	{
+		const byte* p = color.pixels + i * 4;
+		height[i] = ( 0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2] ) / 255.0f;
+	}
+	// a light blur, so noise in the picture doesn't turn into sharp bumps (wraps, as textures tile)
+	idList<float> smooth;
+	smooth.SetNum( w * h );
+	for( int y = 0; y < h; y++ )
+	{
+		for( int x = 0; x < w; x++ )
+		{
+			float sum = 0.0f;
+			for( int dy = -1; dy <= 1; dy++ )
+			{
+				for( int dx = -1; dx <= 1; dx++ )
+				{
+					sum += height[( ( y + dy + h ) % h ) * w + ( x + dx + w ) % w];
+				}
+			}
+			smooth[y * w + x] = sum / 9.0f;
+		}
+	}
+	auto H = [&]( int x, int y )
+	{
+		return smooth[( ( y + h ) % h ) * w + ( x + w ) % w];
+	};
+
+	idList<byte> out;
+	out.SetNum( w * h * 4 );
+	if( makeNormal )
+	{
+		const float strength = 2.0f + bumps * 14.0f;
+		for( int y = 0; y < h; y++ )
+		{
+			for( int x = 0; x < w; x++ )
+			{
+				// Sobel
+				const float gx = ( H( x + 1, y - 1 ) + 2.0f * H( x + 1, y ) + H( x + 1, y + 1 ) ) - ( H( x - 1, y - 1 ) + 2.0f * H( x - 1, y ) + H( x - 1, y + 1 ) );
+				const float gy = ( H( x - 1, y + 1 ) + 2.0f * H( x, y + 1 ) + H( x + 1, y + 1 ) ) - ( H( x - 1, y - 1 ) + 2.0f * H( x, y - 1 ) + H( x + 1, y - 1 ) );
+				idVec3 n( -gx * strength, gy * strength, 1.0f );	// OpenGL-style green up, as id Tech 4 reads them
+				n.Normalize();
+				byte* o = out.Ptr() + ( y * w + x ) * 4;
+				o[0] = ( byte )idMath::ClampInt( 0, 255, idMath::Ftoi( ( n.x * 0.5f + 0.5f ) * 255.0f + 0.5f ) );
+				o[1] = ( byte )idMath::ClampInt( 0, 255, idMath::Ftoi( ( n.y * 0.5f + 0.5f ) * 255.0f + 0.5f ) );
+				o[2] = ( byte )idMath::ClampInt( 0, 255, idMath::Ftoi( ( n.z * 0.5f + 0.5f ) * 255.0f + 0.5f ) );
+				o[3] = 255;
+			}
+		}
+		idStr path;
+		if( !StorePicture( name, slotKeys[SLOT_NORMAL], out.Ptr(), w, h, path ) )
+		{
+			error = va( "Couldn't write the picture into %s.", PictureFolder( name ).c_str() );
+			return false;
+		}
+		s.pictures[SLOT_NORMAL] = path;
+	}
+	if( makeRough )
+	{
+		// rougher where the picture is busy and dark (cracks, grime), smoother where it's even
+		for( int y = 0; y < h; y++ )
+		{
+			for( int x = 0; x < w; x++ )
+			{
+				const float detail = idMath::Fabs( height[y * w + x] - H( x, y ) ) * 4.0f;
+				float r = roughness + ( 0.5f - H( x, y ) ) * 0.35f + detail;
+				r = idMath::ClampFloat( 0.02f, 1.0f, r );
+				byte* o = out.Ptr() + ( y * w + x ) * 4;
+				o[0] = o[1] = o[2] = ( byte )idMath::Ftoi( r * 255.0f + 0.5f );
+				o[3] = 255;
+			}
+		}
+		idStr path;
+		if( !StorePicture( name, slotKeys[SLOT_ROUGH], out.Ptr(), w, h, path ) )
+		{
+			error = va( "Couldn't write the picture into %s.", PictureFolder( name ).c_str() );
+			return false;
+		}
+		s.pictures[SLOT_ROUGH] = path;
+	}
+	return true;
+}
+
 // roughness, metal and occlusion in one picture, as the renderer wants them (R, G, B)
 static bool MakeRmao( const char* name, const settings_t& s, idStr& path )
 {

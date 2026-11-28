@@ -134,6 +134,9 @@ bool			Create( const char* name, const char* preset, idStr& error );
 // put a picture (any file the editor can read) in a slot, as a .png in the material's folder
 bool			SetPicture( const char* name, settings_t& s, slot_t slot, const char* osPath, idStr& error );
 
+// make the bumps (normal) and/or roughness pictures from the colour picture; bumps and roughness are 0..1
+bool			MakeFromColor( const char* name, settings_t& s, float bumps, float roughness, bool makeNormal, bool makeRough, idStr& error );
+
 // pictures dropped together: one material each set; returns the names made
 bool			CreateFromPictures( const idStrList& osPaths, idStrList& made, idStr& message );
 

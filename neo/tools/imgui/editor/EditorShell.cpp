@@ -8336,6 +8336,7 @@ bool IsPlayPaused()
 
 static idStr		matDecl;					// the material shown in the panel
 static idStr		matName;					// its editor name, when the editor made it
+static float		matMakeBumps = 0.5f;		// Make bumps and roughness: how deep
 static Materials::settings_t	matSettings;	// the panel's working copy
 static int			matLoadedFor = -1;			// reload the working copy when this changes
 static int			matLoadCounter = 0;
@@ -8784,6 +8785,35 @@ static void DrawMaterialPanel()
 				ImGui::SameLine( ImGui::GetContentRegionAvail().x * 0.5f + ImGui::GetCursorPosX() * 0.5f );
 			}
 		}
+
+		// one colour picture is enough: the bumps and roughness can be made from it
+		if( matSettings.pictures[Materials::SLOT_COLOR].Length() > 0 )
+		{
+			ImGui::Spacing();
+			UI::SectionLabel( "Made from the colour picture" );
+			UI::FieldLabel( "Bumps" );
+			ImGui::SetNextItemWidth( -FLT_MIN );
+			ImGui::SliderFloat( "##makebumps", &matMakeBumps, 0.0f, 1.0f, matMakeBumps < 0.05f ? "Flat" : matMakeBumps < 0.4f ? "Gentle" : matMakeBumps < 0.75f ? "Clear" : "Deep" );
+			UI::Tip( "How deep the bumps look: light parts of the picture are read as raised, dark parts as dents" );
+			const bool hasNormal = matSettings.pictures[Materials::SLOT_NORMAL].Length() > 0;
+			const bool hasRough = matSettings.pictures[Materials::SLOT_ROUGH].Length() > 0;
+			if( ImGui::Button( ICON_SPARKLES "  Make bumps and roughness", ImVec2( -FLT_MIN, 0 ) ) )
+			{
+				idStr error;
+				if( Materials::MakeFromColor( matName, matSettings, matMakeBumps, matSettings.roughness, true, true, error ) )
+				{
+					changed = true;
+					label = "Make pictures from colour";
+					Status( "Made the bumps and roughness pictures from the colour picture." );
+				}
+				else
+				{
+					Status( error );
+				}
+			}
+			UI::Tip( hasNormal || hasRough ? "Replaces the bumps and roughness pictures with ones made from the colour picture (undo brings yours back). The Roughness slider below sets how rough it is overall." :
+					 "Makes a bumps (normal) picture and a roughness picture from the colour picture, so one picture gives a full material. The Roughness slider below sets how rough it is overall." );
+		}
 	}
 	UI::EndCard();
 
@@ -9100,8 +9130,27 @@ static void EditorMaterialCopy_f( const idCmdArgs& args )
 	}
 }
 
+// editorMaterialMake [bumps 0..1]: make the open material's bumps and roughness from its colour picture
+static void EditorMaterialMake_f( const idCmdArgs& args )
+{
+	if( matName.Length() == 0 )
+	{
+		common->Printf( "No editable material is open.\n" );
+		return;
+	}
+	idStr error;
+	if( !Materials::MakeFromColor( matName, matSettings, args.Argc() > 1 ? atof( args.Argv( 1 ) ) : matMakeBumps, matSettings.roughness, true, true, error ) )
+	{
+		common->Printf( "Couldn't make the pictures: %s\n", error.c_str() );
+		return;
+	}
+	SaveMaterial( "Make pictures from colour" );
+	common->Printf( "Made from colour: %s %s\n", matSettings.pictures[Materials::SLOT_NORMAL].c_str(), matSettings.pictures[Materials::SLOT_ROUGH].c_str() );
+}
+
 static void RegisterMaterialCommands()
 {
+	cmdSystem->AddCommand( "editorMaterialMake", EditorMaterialMake_f, CMD_FL_TOOL, "makes the open material's bumps and roughness pictures from its colour picture" );
 	cmdSystem->AddCommand( "editorNewMaterial", EditorNewMaterial_f, CMD_FL_SYSTEM, "makes a material: editorNewMaterial <name> [preset]" );
 	cmdSystem->AddCommand( "editorEditMaterial", EditorEditMaterial_f, CMD_FL_SYSTEM, "shows a material in the Material panel" );
 	cmdSystem->AddCommand( "editorMaterialSetting", EditorMaterialSetting_f, CMD_FL_SYSTEM, "changes a setting of the panel's material" );

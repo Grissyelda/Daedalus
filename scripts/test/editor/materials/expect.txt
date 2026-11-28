@@ -18,3 +18,5 @@ made material grid_floor, a copy of textures/dev/grid_floor
   color picture: textures/grid_floor/color_
 # painted on a brush, the level has no problems
 mats: problems: 0 errors, 0 warnings, 0 notes
+# one colour picture makes the bumps and roughness pictures too
+Made from colour: textures/poster/normal_
