@@ -112,6 +112,16 @@ public:
 	void			Shutdown();
 
 	idList<idVec3>	leakPath;				// the last build's leak, from inside out to the void (drawn in red)
+
+	// the last build's areas and the portals between them (from <level>.proc)
+	struct portal_t
+	{
+		idList<idVec3>	points;
+		int				areas[2];
+	};
+	idList<portal_t>	portals;
+	int				numAreas = 0;
+	bool			showAreas = false;		// draw the portals
 	idStrList		focusOwners;			// a piece being edited: things not owned by these are drawn as ghosts
 	bool			wireframe = false;		// draw triangle outlines over everything
 	bool			showGrid = true;		// a grid on the floor plane

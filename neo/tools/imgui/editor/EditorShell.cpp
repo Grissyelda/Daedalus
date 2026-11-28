@@ -41,6 +41,8 @@ along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorTheme.h"
 #include "framework/GameLibrary.h"
 
+#define ICON_LAYERS_AREAS ICON_OUTLINER	// layers
+
 #include "../../imgui/BFGimgui.h"
 #include "../../libs/imgui/imgui_internal.h"	// DockBuilder API
 #include "../../libs/imgui/ImGuizmo.h"
@@ -207,6 +209,8 @@ static void TurnSelection( float degrees );
 static void FitSelectedFaces();
 
 static void SwitchProject( const char* name );
+static void MakePortal();
+static void LoadPortals( const char* mapName );
 static void PlayGame( const char* project, const char* level );
 static void CenterPlanOnCamera();
 static void BeginCornerMove();
@@ -1298,6 +1302,10 @@ static void BuildUpdate()
 	const buildThen_t then = buildThen;
 	buildThen = BUILD_THEN_NOTHING;
 	Help::Event( buildLeaked ? "build.leak" : buildFailed ? "build.failed" : "build.done" );
+	if( !buildFailed )
+	{
+		LoadPortals( buildResultMap );
+	}
 	if( buildFailed )
 	{
 		if( then == BUILD_THEN_PLAY )
@@ -3714,6 +3722,47 @@ static void DrawContentBrowser()
 	ImGui::End();
 }
 
+// the areas and portals the last build made (maps/<level>.proc: interAreaPortals)
+static void LoadPortals( const char* mapName )
+{
+	view.portals.Clear();
+	view.numAreas = 0;
+	char* text = NULL;
+	if( fileSystem->ReadFile( va( "maps/%s.proc", mapName ), ( void** )&text ) <= 0 || text == NULL )
+	{
+		return;
+	}
+	// a level with no portals is one area, and its .proc has no portal block
+	view.numAreas = 1;
+	idLexer src( text, idStr::Length( text ), "proc", LEXFL_NOERRORS | LEXFL_NOSTRINGCONCAT );
+	idToken token;
+	while( src.ReadToken( &token ) )
+	{
+		if( token != "interAreaPortals" )
+		{
+			continue;
+		}
+		src.ExpectTokenString( "{" );
+		view.numAreas = src.ParseInt();
+		const int count = src.ParseInt();
+		for( int i = 0; i < count && !src.EndOfFile(); i++ )
+		{
+			View::portal_t& portal = view.portals.Alloc();
+			const int numPoints = src.ParseInt();
+			portal.areas[0] = src.ParseInt();
+			portal.areas[1] = src.ParseInt();
+			for( int j = 0; j < numPoints; j++ )
+			{
+				idVec3 p;
+				src.Parse1DMatrix( 3, p.ToFloatPtr() );
+				portal.points.Append( p );
+			}
+		}
+		break;
+	}
+	fileSystem->FreeFile( text );
+}
+
 // load the leak line dmap wrote (maps/<level>.lin) and look along it
 static void ShowLeak()
 {
@@ -4086,8 +4135,25 @@ static void EditorDepth_f( const idCmdArgs& args )
 	common->Printf( "Depth: %s\n", UI::DepthName( UI::Depth() ) );
 }
 
+static void EditorAreas_f( const idCmdArgs& args )
+{
+	if( document.IsOpen() )
+	{
+		LoadPortals( document.Name() );
+	}
+	view.showAreas = true;
+	common->Printf( "Areas: %d, portals: %d\n", view.numAreas, view.portals.Num() );
+}
+
+static void EditorMakePortal_f( const idCmdArgs& args )
+{
+	MakePortal();
+}
+
 static void RegisterGameCommands()
 {
+	cmdSystem->AddCommand( "editorAreas", EditorAreas_f, CMD_FL_TOOL, "shows the last build's areas and portals, and prints how many" );
+	cmdSystem->AddCommand( "editorMakePortal", EditorMakePortal_f, CMD_FL_TOOL, "turns the selected brushes into a portal" );
 	cmdSystem->AddCommand( "editorDepth", EditorDepth_f, CMD_FL_TOOL, "shows or sets how much the editor shows: Create, Understand or Control" );
 	cmdSystem->AddCommand( "editorGames", EditorGames_f, CMD_FL_TOOL, "opens Your games: the id Tech 4 games on this computer" );
 }
@@ -5510,6 +5576,16 @@ static void DrawViewBar( const ImGuiDockNode* central )
 		UI::IconToggle( "outlines", ICON_WIREFRAME, NULL, &view.wireframe, "Brush outlines" );
 		ImGui::SameLine();
 		UI::IconToggle( "floor", ICON_GRID, NULL, &view.showGrid, "Floor grid" );
+		ImGui::SameLine();
+		if( UI::IconToggle( "areas", ICON_LAYERS_AREAS, NULL, &view.showAreas, "Areas and portals: the doorways (portals) that split the level into areas, from the last build. The game only draws areas the player can see through portals, so they make big levels faster." ) && view.showAreas )
+		{
+			if( view.portals.Num() == 0 && document.IsOpen() )
+			{
+				LoadPortals( document.Name() );
+			}
+			Status( view.numAreas == 0 ? "Build the level (Ctrl+B) to see its areas and portals." :
+					va( "%d area%s, %d portal%s (cyan), from the last build.", view.numAreas, view.numAreas == 1 ? "" : "s", view.portals.Num(), view.portals.Num() == 1 ? "" : "s" ) );
+		}
 	}
 	EndOverlay();
 }
@@ -7302,6 +7378,35 @@ static void DrawPaintTiles()
 	}
 }
 
+// paint every face of the selected brushes with the portal material
+static void MakePortal()
+{
+	idList<Selection> brushes;
+	document.SelectedBrushes( brushes );
+	if( brushes.Num() == 0 )
+	{
+		Status( "Select a thin brush that fills a doorway first." );
+		return;
+	}
+	document.BeginChange( "Make portal" );
+	for( int i = 0; i < brushes.Num(); i++ )
+	{
+		idMapPrimitive* prim = document.Map()->GetEntity( brushes[i].entity )->GetPrimitive( brushes[i].primitive );
+		if( prim->GetType() != idMapPrimitive::TYPE_BRUSH )
+		{
+			continue;
+		}
+		idMapBrush* brush = static_cast<idMapBrush*>( prim );
+		for( int j = 0; j < brush->GetNumSides(); j++ )
+		{
+			brush->GetSide( j )->SetMaterial( "textures/common/visportal" );
+		}
+	}
+	document.EndChange();
+	Status( "Made a portal. Build (Ctrl+B), then turn on Areas in the view bar to see the areas it splits." );
+	Help::Event( "portal.made" );
+}
+
 static void DrawLogicTiles()
 {
 	// level brushes can be turned into things that move or act
@@ -7343,6 +7448,12 @@ static void DrawLogicTiles()
 	if( UI::ToolTile( "ungroup", ICON_UNGROUP, "Undo it", false, "Turn the selected door (or other brush thing) back into plain level brushes", brushEntity, dockTile ) )
 	{
 		document.UngroupSelection();
+	}
+
+	ImGui::SameLine();
+	if( UI::ToolTile( "portal", ICON_LAYERS_AREAS, "Portal", false, "Turn the selected brushes into a portal: a see-through doorway that splits the level into areas, so the game only draws what the player can see.\n\nDraw a thin brush that fills a doorway from wall to wall, then click. Build, then turn on Areas in the view bar to check it.", brushes.Num() > 0, dockTile ) )
+	{
+		MakePortal();
 	}
 
 	TileDivider();

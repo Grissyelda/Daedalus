@@ -888,6 +888,24 @@ void View::Draw( const Document& doc )
 		world->DebugArrow( colorRed, leakPath[leakPath.Num() - 2 >= 0 ? leakPath.Num() - 2 : 0], leakPath[leakPath.Num() - 1], 12 );
 	}
 
+	// portals between areas, each outlined with a cross so it reads as a doorway's "window"
+	if( showAreas )
+	{
+		for( int i = 0; i < portals.Num(); i++ )
+		{
+			const idList<idVec3>& pts = portals[i].points;
+			for( int j = 0; j < pts.Num(); j++ )
+			{
+				world->DebugLine( colorCyan, pts[j], pts[( j + 1 ) % pts.Num()], 0, true );
+			}
+			if( pts.Num() >= 4 )
+			{
+				world->DebugLine( idVec4( 0.0f, 1.0f, 1.0f, 0.4f ), pts[0], pts[2], 0, true );
+				world->DebugLine( idVec4( 0.0f, 1.0f, 1.0f, 0.4f ), pts[1], pts[3], 0, true );
+			}
+		}
+	}
+
 	const idMapFile* map = doc.Map();
 	if( map != NULL )
 	{

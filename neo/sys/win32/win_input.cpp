@@ -461,6 +461,11 @@ Sys_ShutdownInput
 */
 void Sys_ShutdownInput()
 {
+	joystickThreadQuit = true;
+	for( int i = 0; i < 100 && joystickThreadRunning; i++ )
+	{
+		Sleep( 5 );
+	}
 	IN_DeactivateMouse();
 	IN_DeactivateKeyboard();
 	if( win32.g_pKeyboard )
@@ -852,12 +857,18 @@ JoystickSamplingThread
 static int	threadTimeDeltas[256];
 static int	threadPacket[256];
 static int	threadCount;
+// Daedalus: the sampling thread stops before input shuts down; it used to run on while the
+// process quit (restarting into another project) and lock a mutex that was already gone
+static volatile bool joystickThreadQuit = false;
+static volatile bool joystickThreadRunning = false;
+
 void JoystickSamplingThread( void* data )
 {
 	static int prevTime = 0;
 	static uint64 nextCheck[MAX_JOYSTICKS] = { 0 };
 	const uint64 waitTime = 5000000; // poll every 5 seconds to see if a controller was connected
-	while( 1 )
+	joystickThreadRunning = true;
+	while( !joystickThreadQuit )
 	{
 		// hopefully we see close to 4000 usec each loop
 		int	now = Sys_Microseconds();
@@ -933,6 +944,7 @@ void JoystickSamplingThread( void* data )
 		// we want this to be processed at least 250 times a second
 		WaitForSingleObject( win32.g_Joystick.timer, INFINITE );
 	}
+	joystickThreadRunning = false;
 }
 
 
