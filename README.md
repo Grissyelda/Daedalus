@@ -4,18 +4,33 @@ An all-in-one game editor and engine built on id Tech 4: one program that opens 
 
 Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3-BFG), a modernized Doom 3 BFG Edition source port. That gives us DX12 and Vulkan through NVRHI, physically based rendering, baked global illumination, soft shadows and glTF 2 model support out of the gates.
 
-> **Status: pre-alpha (milestone 0).** Daedalus now runs standalone, with its own small engine content and no Doom 3 data. It opens into an editor shell whose Play button runs a level in the same window. Level editing, the inspector and the other tools arrive from milestone 1 onward, so it isn't ready to make a game with yet.
+> **Status: pre-alpha.** You can block out a level, light it, place things, make reusable pieces, bring in models and play it in the same window, with live edits while the game is paused. Logic, AI, dialogue and the other gameplay systems aren't built yet, so it isn't ready to make a whole game with.
 
 ## Goals
 
 - **One executable.** It starts in the editor, and Play runs the game in the same window. Shipped games are built without the editor.
-- **Uniquely approachable tools.** Brush blockout and mesh placement, a property inspector, a content browser, node-graph scripting, a conversation editor and a visual UI editor, with undo everywhere and readable error messages. Think Project Spark or Dreams, but with a much higher ceiling. There will be three levels of complexity:
-Create, Understand, and Control. E.G; Block coding into nodes into Doom script. This philosophy will be carried over engine-wide. 
+- **Uniquely approachable tools.** Brush blockout and mesh placement, a property inspector, a content browser, node-graph scripting, a conversation editor and a visual UI editor, with undo everywhere and readable error messages. Think Project Spark or Dreams, but with a much higher ceiling. Every system has three levels: **Create**, **Understand** and **Control**. For example, behavior starts as simple When/Do blocks, which open up into node graphs, which open up into Doom Script.
 - **Live iteration.** Changes to maps, scripts, definitions, UI and imported models show up in the running game within seconds.
 - **Standalone.** New projects need no Doom 3 game data.
 - **Two looks.** A stylized material path and a PBR material path, switchable per project and per material.
 - **Platforms:** Windows, Linux and Steam Deck (Steam Deck is the performance floor).
 - **Single-player** games.
+
+## What works today
+
+- **Building levels:** brushes, seven drag-in shapes, carving, cutting, corner editing, texture lock, per-face painting, a 3D view and a top-down plan view, with undo for everything.
+- **Things:** lights with presets, doors, player starts and every placeable definition, edited through Inspector cards.
+- **Pieces (prefabs):** linked copies with per-copy overrides, edited in place, nestable.
+- **Models:** drag in a glTF, GLB or OBJ file and it becomes a placeable model with PBR materials, updating by itself when you save it again in Blender.
+- **Play:** in the same window, from the player start or the camera; pausing brings the editor back and edits flow into the game.
+- **Background builds** with leak finding, and a **Problems** panel that checks the level.
+- **Help:** a page for every panel and tool, and lessons that tick off as you go.
+
+## Next up
+
+- Problems that point at the thing at fault and say how to fix it, plus a whole-project check.
+- A material editor with PBR presets, a view of the level's areas and portals, and light looks with one-click baked lighting.
+- Then behavior: When/Do rule cards on objects that open up into node graphs and Doom Script.
 
 ## Building
 
@@ -47,6 +62,14 @@ cmake --build --preset linux-release
 
 Shaders compile into `content/renderprogs2` as part of the build. Every push also builds Windows and Linux packages on GitHub Actions (see the **Build** workflow's artifacts).
 
+The editor has scripted tests that drive it through console commands and check what it prints:
+
+```
+bash scripts/test/run_editor_tests.sh build/linux-release/Daedalus
+```
+
+Each test is a folder in `scripts/test/editor/`. CI runs them on every push.
+
 ## Running
 
 Run the executable from the repository root (or a package folder), next to `content/`. It opens the editor:
@@ -55,6 +78,7 @@ Run the executable from the repository root (or a package folder), next to `cont
 - The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** panels dock around it. Drag a panel's tab to rearrange them, or out of the window onto another monitor (`editor_detachablePanels 0` turns that off). **View → Reset layout** puts them back.
 - **Play** (top centre, **F5**) saves and runs the open level. **Esc** pauses it and brings the editor back with the game still loaded: changes go into the game, and brush changes rebuild the level around you when you carry on (**F5**). **F10** stops.
 - Levels are compiled by `rbdmap`, which ships next to the editor and runs in the background (the bar left of Play shows how far it's got), so the editor never freezes. Play builds when the level needs it; **File → Build** (**Ctrl+B**) builds without playing. What the build says shows up in **Problems**, with the full build log a click away.
+- **Models:** drag a `.glb`, `.gltf` or `.obj` file onto the window, use **Kits → Bring in**, or drop it in the project's `import/` folder. It's copied into `models/imported/` with its textures and materials, and appears as a tile in **Kits**. Saving the source file again updates the model in the level. The Inspector's Model card sets its size (pick what program it was made in) and which way it faces.
 - **Pieces** (prefabs): select things and press **Make piece** to save them in `maps/prefabs/`, then place copies from **Kits**. Copies stay linked: **Edit piece** changes the piece right where a copy sits (the rest of the level turns to ghosts); then **Save to every copy** changes the piece and every copy, or **Save to this copy** keeps the changes in that copy alone. Undo undoes changes to pieces too, and the previous version of a piece is kept as `maps/prefabs/<name>.bak`. A double-click picks one part of a copy; changing it changes only that copy, and the Inspector marks it with **Revert** and **Apply to all copies**. Pieces can contain pieces.
 - **File → New Project** creates a project folder from `template/` and asks whether it starts with the stylized or the PBR look. **File → Open Project** switches to another project.
 - Start with `+set editor 0` to run as the game, without the editor. `editor_uiScale` makes the editor's text and controls bigger or smaller.
