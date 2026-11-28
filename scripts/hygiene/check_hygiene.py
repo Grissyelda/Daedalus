@@ -12,6 +12,9 @@ Usage:
   check_hygiene.py --commits A..B        check every commit in a range (CI)
   check_hygiene.py --commit SHA          check one commit
 
+Every mode also checks the third-party list (third_party.json, THIRD_PARTY.md):
+anything in neo/libs, neo/extern or the content fonts must be listed.
+
 Personal terms (your real name, other emails, machine names) go in a file named
 .hygiene-denylist at the repository root, one per line. That file is ignored by
 git, so the terms themselves never reach the repository.
@@ -228,6 +231,11 @@ def main():
         problems = []
         for sha in shas:
             problems += check_commit(sha, denylist)
+
+    # the third-party list must cover everything bundled (checked on the tree as it is)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import third_party
+    problems += ["third-party list: " + p for p in third_party.check(root)]
 
     if problems:
         print("Hygiene check failed. Daedalus is public, so these must not be committed:\n")

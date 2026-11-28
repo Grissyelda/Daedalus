@@ -1,0 +1,275 @@
+{
+  "about": "Every third-party component in the Daedalus repository. THIRD_PARTY.md is generated from this file by scripts/hygiene/third_party.py; the hygiene check fails when a folder in neo/libs or neo/extern, or a font in content, isn't listed here. Full license texts are in LICENSE_EXCEPTIONS.md and next to each component.",
+  "components": [
+    {
+      "name": "Doom 3 BFG Edition GPL source and RBDOOM-3-BFG",
+      "paths": [
+        "neo"
+      ],
+      "license": "GPL-3.0 with id Software's additional terms",
+      "source": "https://github.com/RobertBeckebans/RBDOOM-3-BFG",
+      "use": "The engine Daedalus is built on",
+      "notes": "See LICENSE.md and docs/UPSTREAM.md."
+    },
+    {
+      "name": "Dear ImGui (with ImGuizmo)",
+      "paths": [
+        "neo/libs/imgui"
+      ],
+      "license": "MIT",
+      "source": "https://github.com/ocornut/imgui, https://github.com/CedricGuillemet/ImGuizmo",
+      "use": "Built in: the editor's interface and gizmos"
+    },
+    {
+      "name": "ImTui (with PDCurses)",
+      "paths": [
+        "neo/libs/imtui"
+      ],
+      "license": "MIT; PDCurses public domain",
+      "source": "https://github.com/ggerganov/imtui",
+      "use": "Not built"
+    },
+    {
+      "name": "BinPack2D",
+      "paths": [
+        "neo/libs/binpack2d"
+      ],
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/chris-stones/BinPack2D",
+      "use": "Built in: packing rectangles into texture atlases"
+    },
+    {
+      "name": "FFmpeg (prebuilt for Windows)",
+      "paths": [
+        "neo/libs/ffmpeg-win64"
+      ],
+      "license": "GPL-3.0 build",
+      "source": "https://ffmpeg.org",
+      "use": "Optional, off by default (FFMPEG): Bink videos use libbinkdec instead"
+    },
+    {
+      "name": "irrXML",
+      "paths": [
+        "neo/libs/irrxml"
+      ],
+      "license": "zlib",
+      "source": "https://irrlicht.sourceforge.io",
+      "use": "Built in: reading XML"
+    },
+    {
+      "name": "Intel ISPC Texture Compressor",
+      "paths": [
+        "neo/libs/ispc_texcomp"
+      ],
+      "license": "MIT",
+      "source": "https://github.com/GameTechDev/ISPCTextureCompressor",
+      "use": "Built in: compressing textures"
+    },
+    {
+      "name": "libbinkdec",
+      "paths": [
+        "neo/libs/libbinkdec"
+      ],
+      "license": "LGPL-2.1",
+      "source": "Based on FFmpeg's Bink decoder (https://ffmpeg.org)",
+      "use": "Built in: playing Bink videos",
+      "notes": "LGPL code may be used under the GPL, as here."
+    },
+    {
+      "name": "Mesa R11G11B10 helpers",
+      "paths": [
+        "neo/libs/mesa"
+      ],
+      "license": "MIT",
+      "source": "https://www.mesa3d.org",
+      "use": "Built in: packing HDR colours"
+    },
+    {
+      "name": "MinGW compatibility headers",
+      "paths": [
+        "neo/libs/mingw-hacks"
+      ],
+      "license": "MIT (sal.h, from PortAudio); LGPL-2.1+ (Wine dsound and XInput headers)",
+      "source": "https://www.portaudio.com, https://www.winehq.org",
+      "use": "Only when building for Windows with MinGW (not our builds)"
+    },
+    {
+      "name": "Mikkelsen tangent space (MikkTSpace)",
+      "paths": [
+        "neo/libs/mikktspace"
+      ],
+      "license": "zlib",
+      "source": "https://github.com/mmikk/MikkTSpace",
+      "use": "Built in: normal-map tangents for models"
+    },
+    {
+      "name": "Intel Masked Software Occlusion Culling",
+      "paths": [
+        "neo/libs/moc"
+      ],
+      "license": "Apache-2.0",
+      "source": "https://github.com/GameTechDev/MaskedOcclusionCulling",
+      "use": "Built in: skipping hidden objects when drawing"
+    },
+    {
+      "name": "Ogg Vorbis",
+      "paths": [
+        "neo/libs/oggvorbis"
+      ],
+      "license": "BSD-3-Clause",
+      "source": "https://xiph.org",
+      "use": "Built in: playing .ogg sounds"
+    },
+    {
+      "name": "OpenAL Soft (prebuilt for Windows)",
+      "paths": [
+        "neo/libs/openal-soft"
+      ],
+      "license": "LGPL-2.0",
+      "source": "https://openal-soft.org",
+      "use": "Optional, off by default on Windows (OPENAL): Windows uses XAudio2; Linux links the system's OpenAL"
+    },
+    {
+      "name": "Optick",
+      "paths": [
+        "neo/libs/optick"
+      ],
+      "license": "MIT",
+      "source": "https://github.com/bombomby/optick",
+      "use": "Built in, switched off (USE_OPTICK=0): profiler hooks"
+    },
+    {
+      "name": "RapidJSON",
+      "paths": [
+        "neo/libs/rapidjson"
+      ],
+      "license": "MIT (parts BSD and JSON License)",
+      "source": "https://github.com/Tencent/rapidjson",
+      "use": "Built in: reading and writing JSON (glTF, model import)"
+    },
+    {
+      "name": "RenderDoc in-application API header",
+      "paths": [
+        "neo/libs/renderdoc"
+      ],
+      "license": "MIT",
+      "source": "https://renderdoc.org",
+      "use": "Built in: lets RenderDoc capture frames"
+    },
+    {
+      "name": "stb (image, image write, image resize)",
+      "paths": [
+        "neo/libs/stb"
+      ],
+      "license": "Public domain or MIT",
+      "source": "https://github.com/nothings/stb",
+      "use": "Built in: reading and writing pictures"
+    },
+    {
+      "name": "TiMidity",
+      "paths": [
+        "neo/libs/timidity"
+      ],
+      "license": "GPL, LGPL or Artistic License (your choice)",
+      "source": "http://www.cgs.fi/~tt/discontinued.html",
+      "use": "Not built (only with the classic Doom code, which Daedalus removed)"
+    },
+    {
+      "name": "TinyEXR (with OpenEXR parts)",
+      "paths": [
+        "neo/libs/tinyexr"
+      ],
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/syoyo/tinyexr",
+      "use": "Built in: reading and writing EXR pictures"
+    },
+    {
+      "name": "Vulkan Memory Allocator",
+      "paths": [
+        "neo/libs/vma"
+      ],
+      "license": "MIT",
+      "source": "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator",
+      "use": "Built in: Vulkan memory"
+    },
+    {
+      "name": "zlib and minizip",
+      "paths": [
+        "neo/libs/zlib"
+      ],
+      "license": "zlib",
+      "source": "https://zlib.net",
+      "use": "Built in: compression and .zip files"
+    },
+    {
+      "name": "NVRHI",
+      "paths": [
+        "neo/extern/nvrhi"
+      ],
+      "license": "MIT",
+      "source": "https://github.com/RobertBeckebans/nvrhi (fork of https://github.com/NVIDIA-RTX/NVRHI)",
+      "use": "Built in: the DX12 and Vulkan renderer layer",
+      "notes": "A git submodule; its own third-party notices are in ThirdPartyLicenses.txt."
+    },
+    {
+      "name": "ShaderMake",
+      "paths": [
+        "neo/extern/ShaderMake"
+      ],
+      "license": "MIT",
+      "source": "https://github.com/RobertBeckebans/ShaderMake (fork of https://github.com/NVIDIA-RTX/ShaderMake)",
+      "use": "Build tool: compiles the shaders",
+      "notes": "A git submodule."
+    },
+    {
+      "name": "AlchemyAO and Deep G-Buffer shaders (NVIDIA Research)",
+      "paths": [
+        "neo/shaders/builtin/SSAO",
+        "neo/shaders/builtin/SSGI"
+      ],
+      "license": "BSD",
+      "source": "https://research.nvidia.com",
+      "use": "Built in: ambient occlusion and screen-space indirect light"
+    },
+    {
+      "name": "Hash functions (Base64, MD4, MD5, CRC32)",
+      "paths": [
+        "neo/idlib/Base64.cpp",
+        "neo/idlib/hashing/MD4.cpp",
+        "neo/idlib/hashing/MD5.cpp",
+        "neo/idlib/hashing/CRC32.cpp"
+      ],
+      "license": "BSD-style (Base64), RSA (MD4), public domain (MD5), zlib (CRC32)",
+      "source": "See LICENSE_EXCEPTIONS.md",
+      "use": "Built in"
+    },
+    {
+      "name": "Inter",
+      "paths": [
+        "content/editor/fonts/Inter-Regular.ttf",
+        "content/editor/fonts/Inter-SemiBold.ttf"
+      ],
+      "license": "OFL-1.1",
+      "source": "https://github.com/rsms/inter",
+      "use": "Font: the editor's text (a Latin subset, made by scripts/content/make_editor_fonts.py)"
+    },
+    {
+      "name": "Lucide icons",
+      "paths": [
+        "content/editor/fonts/lucide.ttf"
+      ],
+      "license": "ISC",
+      "source": "https://lucide.dev",
+      "use": "Font: the editor's icons (a subset, made by scripts/content/make_editor_fonts.py)"
+    },
+    {
+      "name": "DejaVu Sans",
+      "paths": [
+        "content/newfonts/daedalussans"
+      ],
+      "license": "Bitstream Vera license (and public domain changes)",
+      "source": "https://dejavu-fonts.github.io",
+      "use": "Font: the in-game font daedalussans (rendered by scripts/content/make_font.py)"
+    }
+  ]
+}

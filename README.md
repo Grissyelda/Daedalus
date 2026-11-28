@@ -92,7 +92,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). In short: enable the hygiene hook, and c
 
 ## License
 
-Daedalus's code is licensed under the GNU General Public License v3 with id Software's additional terms. See [LICENSE.md](LICENSE.md) and [LICENSE_EXCEPTIONS.md](LICENSE_EXCEPTIONS.md) for third-party components under other licenses.
+Daedalus's code is licensed under the GNU General Public License v3 with id Software's additional terms. See [LICENSE.md](LICENSE.md). [THIRD_PARTY.md](THIRD_PARTY.md) lists every bundled component and its license; [LICENSE_EXCEPTIONS.md](LICENSE_EXCEPTIONS.md) has the full texts.
 
 Games made with Daedalus must publish their engine and game code under the same terms. Their art, maps, audio and writing are not covered by the GPL and can stay proprietary.
 
