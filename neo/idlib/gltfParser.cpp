@@ -2118,6 +2118,15 @@ bool GLTF_Parser::Load( idStr filename )
 	}
 
 	common->SetRefreshOnPrint( true );
+	// Daedalus: switch it off again on every way out; left on, the next warning
+	// redraws the screen from inside the renderer and the frame fails
+	struct refreshOff_t
+	{
+		~refreshOff_t()
+		{
+			common->SetRefreshOnPrint( false );
+		}
+	} refreshOff;
 	if( filename.CheckExtension( ".glb" ) )
 	{
 		if( !loadGLB( filename ) )
@@ -2128,9 +2137,11 @@ bool GLTF_Parser::Load( idStr filename )
 	else if( filename.CheckExtension( ".gltf" ) )
 	{
 		int length = fileSystem->ReadFile( filename, NULL );
-		if( !length )
+		if( length <= 0 )
 		{
-			common->FatalError( "Failed to read file" );
+			// Daedalus: a missing model is the editor's problem to report, not a reason to quit
+			common->Warning( "Failed to read %s", filename.c_str() );
+			return false;
 		}
 
 		data = gltfData::Data( filename , true );

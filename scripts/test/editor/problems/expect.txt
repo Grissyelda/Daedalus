@@ -1,0 +1,23 @@
+# the test room is clean
+clean: problems: 0 errors, 0 warnings, 0 notes
+# each check finds its problem, on the right thing
+before: problem: error unknown_type [not_a_real_thing_0]
+before: problem: error duplicate_name [info_player_start_1]
+before: problem: warning broken_link [info_player_start_1] "info_player_start_1" links to "nowhere" (target)
+before: problem: warning missing_model [func_static_0]
+before: problem: warning missing_material [] The material "textures/not_a_texture" doesn't exist
+before: problems: 2 errors, 3 warnings, 0 notes
+# Play asks first
+Editor: Play is waiting: the level has 2 errors
+!Editor: playing testmaps/problem_test
+# the one-click fixes work and the problems go
+fixed duplicate_name
+fixed broken_link
+fixed missing_material
+!after: problem: error duplicate_name
+!after: problem: warning broken_link
+!after: problem: warning missing_material
+after: problems: 1 errors, 1 warnings, 0 notes
+# every level: the saved file, read back from disk
+level testmaps/problem_test: 1 error, 1 warning
+level testmaps/test_room: no problems

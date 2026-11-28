@@ -45,7 +45,7 @@ ICONS = {
     "TOP_VIEW": "map", "VIEW_3D": "cuboid", "EYE": "eye", "EYE_OFF": "eye-off",
     # panels
     "OUTLINER": "layers", "INSPECTOR": "sliders-horizontal", "CONTENT": "library", "PROBLEMS": "triangle-alert",
-    "WARNING": "triangle-alert", "INFO": "info", "OK": "check", "CLOSE": "x", "HELP": "circle-help", "SEARCH": "search",
+    "WARNING": "triangle-alert", "ERROR": "circle-x", "INFO": "info", "OK": "check", "CLOSE": "x", "HELP": "circle-help", "SEARCH": "search",
     "LESSONS": "graduation-cap", "BOOK": "book-open", "KEYBOARD": "keyboard", "MAP_FILE": "file", "MATERIAL": "image",
     "CHEVRON_DOWN": "chevron-down", "CHEVRON_RIGHT": "chevron-right", "PLUS": "plus", "MINUS": "minus",
     "DETACH": "external-link", "ADVANCED": "settings",

@@ -32,6 +32,7 @@ along with Daedalus.  If not, see <http://www.gnu.org/licenses/>.
 #include "EditorDocument.h"
 #include "EditorPrefabs.h"
 #include "EditorImport.h"
+#include "EditorProblems.h"
 #include "EditorHelp.h"
 #include "EditorView.h"
 #include "EditorShapes.h"
@@ -229,10 +230,8 @@ static void FinishPieceEdit( pieceEditEnd_t end );
 static bool DrawPieceInspector();
 static void DrawPartCard();
 static void PlacePiece( const char* name, const idVec3& point );
-static void DrawPieceProblems( bool& any );
 static void PlaceModel( const char* name, const idVec3& point );
 static void DrawModelCard( idMapEntity* ent );
-static void DrawModelProblems( bool& any );
 static void DrawContentModels();
 static void DrawModelTiles();
 static int CountModelTiles();
@@ -338,6 +337,7 @@ static bool			buildFailed = false;
 static idStr		buildResultMap;
 static int			buildSeconds = 0;
 static idStrList	buildProblems;			// warnings and errors of the last build
+static idList<bool>	buildProblemIsError;	// which of them are errors
 static ID_TIME_T	buildMapTime = FILE_NOT_FOUND_TIMESTAMP;	// when the level being built was saved
 static bool			showBuildLog = false;
 static bool			focusProblems = false;		// bring Problems to the front (a build failed)
@@ -459,9 +459,10 @@ static void BuildReadLine( const char* line )
 	if( strstr( line, "leaked" ) != NULL )
 	{
 		buildLeaked = true;
-		text = "The level leaks: there's a gap somewhere between the inside and the void outside, so it can't be built. Show draws a red line from inside, out through the gap.";
+		text = "The level leaks: there's a gap somewhere between the inside and the void outside, so it can't be built.";
 	}
 	buildProblems.Append( text );
+	buildProblemIsError.Append( error || strstr( line, "leaked" ) != NULL );
 }
 
 // pick up what rbdmap has printed since last time
@@ -524,6 +525,7 @@ static void StartBuild( const char* mapName, buildThen_t then )
 	buildMap = mapName;
 	buildThen = then;
 	buildProblems.Clear();
+	buildProblemIsError.Clear();
 	buildLeaked = false;
 	view.leakPath.Clear();
 	buildLog.Clear();
@@ -603,6 +605,18 @@ static void StartLevel( const char* mapName )
 	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, va( "map %s\n", mapName ) );
 }
 
+// Problems (defined near the end, after everything they use)
+static void			RefreshProblems( bool force );
+static int			EntityProblemSeverity( int entity );			// worst warning or error, -1 for none
+static int			WorldProblemSeverity( int primitive );
+static void			RowTypeProblem( const char* label, const char* text, int severity, int entity, int primitive = -1 );
+static int			LevelErrorCount();								// errors Play would run into
+static void			RequestPlayWithErrors( bool fromCamera );
+static void			DrawSelectionProblems();
+static void			DrawProblemMarkers( const ImGuiDockNode* central );
+static bool			playWithErrors = false;		// Play anyway: skip the question once
+static void			RegisterProblemCommands();
+
 // build the level when it needs it, then play it
 static void Play( const char* mapName )
 {
@@ -636,6 +650,12 @@ static void PlayDocument()
 // Play the open level: save it first so the game sees exactly what's in the editor
 static void PlayDocument( bool fromCamera )
 {
+	if( !playWithErrors && document.IsOpen() && !IsPlaying() && LevelErrorCount() > 0 )
+	{
+		RequestPlayWithErrors( fromCamera );
+		return;
+	}
+	playWithErrors = false;
 	playTeleportPending = fromCamera;
 	playStarting = true;
 	playTeleportEye = view.camera.origin;
@@ -1099,6 +1119,7 @@ static void BuildUpdate()
 			if( buildProblems.Num() == 0 )
 			{
 				buildProblems.Append( "The level compiler finished without writing the level. The build log may say why." );
+				buildProblemIsError.Append( true );
 			}
 		}
 	}
@@ -1107,6 +1128,7 @@ static void BuildUpdate()
 	if( buildFailed && buildProblems.Num() == 0 )
 	{
 		buildProblems.Append( va( "rbdmap stopped with exit code %d before it finished.", exitCode ) );
+		buildProblemIsError.Append( true );
 	}
 	common->Printf( "Editor: build of %s %s in %d s\n", buildMap.c_str(), buildFailed ? "FAILED" : "finished", buildSeconds );
 
@@ -1209,7 +1231,12 @@ static void OpenMap( const char* mapName )
 
 static void EditorPlay_f( const idCmdArgs& args )
 {
-	if( args.Argc() > 1 )
+	if( args.Argc() > 1 && idStr::Icmp( args.Argv( 1 ), "anyway" ) == 0 )
+	{
+		playWithErrors = true;
+		PlayDocument();
+	}
+	else if( args.Argc() > 1 )
 	{
 		Play( args.Argv( 1 ) );
 	}
@@ -1528,6 +1555,7 @@ static void RegisterCommands()
 		return;
 	}
 	commandsRegistered = true;
+	RegisterProblemCommands();
 
 	cmdSystem->AddCommand( "editorPlay", EditorPlay_f, CMD_FL_SYSTEM, "plays the open level (or the given map) in the editor window" );
 	cmdSystem->AddCommand( "editorStop", EditorStop_f, CMD_FL_SYSTEM, "stops playing and returns to the editor" );
@@ -2167,14 +2195,15 @@ static void DrawOutliner()
 	if( outlinerFilter[0] == '\0' )
 	{
 		const bool open = ImGui::TreeNodeEx( "Level geometry", ImGuiTreeNodeFlags_SpanAvailWidth, ICON_BRUSH "  Level geometry" );
-		RowType( va( "%d", world->GetNumPrimitives() ) );
+		RowTypeProblem( ICON_BRUSH "      Level geometry", va( "%d", world->GetNumPrimitives() ), WorldProblemSeverity( -1 ), 0 );
 		if( open )
 		{
 			for( int p = 0; p < world->GetNumPrimitives(); p++ )
 			{
 				const bool isBrush = world->GetPrimitive( p )->GetType() == idMapPrimitive::TYPE_BRUSH;
 				const bool selected = document.selection.Contains( Selection( 0, p ) );
-				if( ImGui::Selectable( va( "%s  %s %d##prim%d", isBrush ? ICON_BRUSH : ICON_PATCH, isBrush ? "Brush" : "Patch", p, p ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
+				const idStr label = va( "%s  %s %d##prim%d", isBrush ? ICON_BRUSH : ICON_PATCH, isBrush ? "Brush" : "Patch", p, p );
+				if( ImGui::Selectable( label, selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 				{
 					ClickSelect( Selection( 0, p ) );
 					if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
@@ -2182,6 +2211,7 @@ static void DrawOutliner()
 						FocusSelection();
 					}
 				}
+				RowTypeProblem( label, "", WorldProblemSeverity( p ), 0, p );
 			}
 			ImGui::TreePop();
 		}
@@ -2191,8 +2221,8 @@ static void DrawOutliner()
 	for( int i = 1; i < map->GetNumEntities(); i++ )
 	{
 		const idMapEntity* ent = map->GetEntity( i );
-		const idStr label = EntityLabel( ent, i );
-		if( outlinerFilter[0] != '\0' && label.Find( outlinerFilter, false ) < 0 )
+		const idStr searchLabel = EntityLabel( ent, i );
+		if( outlinerFilter[0] != '\0' && searchLabel.Find( outlinerFilter, false ) < 0 )
 		{
 			continue;
 		}
@@ -2203,7 +2233,8 @@ static void DrawOutliner()
 		if( IsPrefabAnchor( ent ) )
 		{
 			const bool selected = document.selection.Contains( Selection( i ) );
-			if( ImGui::Selectable( va( ICON_MODE_KITS "  %s##ent%d", ent->epairs.GetString( "name" ), i ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
+			const idStr label = va( ICON_MODE_KITS "  %s##ent%d", ent->epairs.GetString( "name" ), i );
+			if( ImGui::Selectable( label, selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 			{
 				SelectHit( Selection( i ), ImGui::GetIO().KeyCtrl );
 				if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
@@ -2211,14 +2242,15 @@ static void DrawOutliner()
 					FocusSelection();
 				}
 			}
-			RowType( va( "Piece: %s", ent->epairs.GetString( KEY_PREFAB ) ) );
+			RowTypeProblem( label, va( "Piece: %s", ent->epairs.GetString( KEY_PREFAB ) ), EntityProblemSeverity( i ), i );
 			continue;
 		}
 		const char* classname = ent->epairs.GetString( "classname", "?" );
 		const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
 		const char* name = ent->epairs.GetString( "name", classname );
 		const bool selected = document.selection.Contains( Selection( i ) );
-		if( ImGui::Selectable( va( "%s  %s##ent%d", def != NULL ? ThingIcon( def ) : ICON_WARNING, name, i ), selected, ImGuiSelectableFlags_AllowDoubleClick ) )
+		const idStr label = va( "%s  %s##ent%d", def != NULL ? ThingIcon( def ) : ICON_ENTITY, name, i );
+		if( ImGui::Selectable( label, selected, ImGuiSelectableFlags_AllowDoubleClick ) )
 		{
 			ClickSelect( Selection( i ) );
 			if( ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
@@ -2226,7 +2258,7 @@ static void DrawOutliner()
 				FocusSelection();
 			}
 		}
-		RowType( def != NULL ? ThingLabel( def ) : classname );
+		RowTypeProblem( label, def != NULL ? ThingLabel( def ) : classname, EntityProblemSeverity( i ), i );
 	}
 
 	ImGui::EndChild();
@@ -2275,7 +2307,7 @@ static idStr ShortMaterialName( const char* name );
 // the door's settings in plain terms; the raw keys are under Advanced
 static void DrawDoorCard( idMapEntity* ent, const idDeclEntityDef* def )
 {
-	if( UI::BeginCard( "door", ICON_DOOR, "Door", "The green arrow in the view shows where the door slides to. It opens when the player comes near, unless it's locked." ) )
+	if( UI::BeginCard( "door", ICON_DOOR, "Door", "The violet arrow in the view shows where the door slides to. It opens when the player comes near, unless it's locked." ) )
 	{
 		idDict args;
 		if( def != NULL )
@@ -2984,11 +3016,6 @@ static void DrawEntityInspector( idMapEntity* ent )
 	const idDeclEntityDef* def = static_cast<const idDeclEntityDef*>( declManager->FindType( DECL_ENTITYDEF, classname, false ) );
 	const bool isWorld = document.selection.Primary().entity == 0;
 
-	if( def == NULL && !isWorld )
-	{
-		ImGui::TextColored( UI::Warn(), ICON_WARNING "  No type called \"%s\" exists, so this won't appear in the game.", classname );
-	}
-
 	if( !isWorld )
 	{
 		DrawPlacementCard();
@@ -3045,6 +3072,7 @@ static void DrawInspectorHeader( const char* icon, const char* title, const char
 		UI::Hint( usage );
 	}
 	ImGui::Spacing();
+	DrawSelectionProblems();
 }
 
 static void DrawInspector()
@@ -3446,13 +3474,6 @@ static void DrawContentBrowser()
 	ImGui::End();
 }
 
-static void ProblemRow( const char* text )
-{
-	ImGui::TextColored( UI::Warn(), ICON_WARNING );
-	ImGui::SameLine();
-	ImGui::TextWrapped( "%s", text );
-}
-
 // load the leak line dmap wrote (maps/<level>.lin) and look along it
 static void ShowLeak()
 {
@@ -3494,129 +3515,6 @@ static void ShowLeak()
 	}
 	view.camera.Focus( bounds );
 	Status( "The red line runs from inside the level out through the gap" );
-}
-
-static void DrawProblems()
-{
-	if( focusProblems )
-	{
-		focusProblems = false;
-		ImGui::SetNextWindowFocus();
-	}
-	if( !ImGui::Begin( WINDOW_PROBLEMS, &showProblems ) )
-	{
-		ImGui::End();
-		return;
-	}
-	{
-		const float startY = ImGui::GetCursorPosY();
-		ImGui::SetCursorPosX( ImGui::GetContentRegionMax().x - ImGui::GetFrameHeight() );
-		UI::HelpButton( "panels/problems", "About Problems" );
-		ImGui::SetCursorPosY( startY );
-	}
-
-	bool any = false;
-	const idMapFile* map = document.Map();
-	if( map != NULL )
-	{
-		bool hasStart = false;
-		for( int i = 1; i < map->GetNumEntities(); i++ )
-		{
-			const idMapEntity* ent = map->GetEntity( i );
-			const char* classname = ent->epairs.GetString( "classname" );
-			if( idStr::Icmp( classname, "info_player_start" ) == 0 )
-			{
-				hasStart = true;
-			}
-			if( ent->GetNumPrimitives() > 0 && idStr::Icmp( ent->epairs.GetString( "model" ), ent->epairs.GetString( "name" ) ) != 0 )
-			{
-				any = true;
-				ImGui::PushID( i + 100000 );
-				if( ImGui::SmallButton( ICON_OK " Fix" ) )
-				{
-					document.BeginChange( "Fix model name" );
-					map->GetEntity( i )->epairs.Set( "model", ent->epairs.GetString( "name" ) );
-					document.EndChange();
-				}
-				ImGui::SameLine();
-				ProblemRow( va( "\"%s\" is made of brushes, but its 'model' doesn't match its name, so it won't appear in the game.", EntityLabel( ent, i ).c_str() ) );
-				ImGui::PopID();
-			}
-			if( declManager->FindType( DECL_ENTITYDEF, classname, false ) == NULL )
-			{
-				any = true;
-				ImGui::PushID( i );
-				if( ImGui::SmallButton( ICON_FOCUS " Show" ) )
-				{
-					document.selection.Set( Selection( i ) );
-					FocusSelection();
-				}
-				ImGui::SameLine();
-				ProblemRow( va( "\"%s\" uses the type \"%s\", which doesn't exist. It won't appear in the game.", EntityLabel( ent, i ).c_str(), classname ) );
-				ImGui::PopID();
-			}
-		}
-		if( !hasStart )
-		{
-			any = true;
-			ImGui::PushID( "start" );
-			if( ImGui::SmallButton( ICON_PLUS " Add" ) )
-			{
-				PlaceThing( "info_player_start" );
-			}
-			ImGui::SameLine();
-			ProblemRow( "The level has no player start, so Play has nowhere to put you." );
-			ImGui::PopID();
-		}
-	}
-
-	DrawPieceProblems( any );
-	DrawModelProblems( any );
-
-	// what the last build said, while it's about the open level
-	const bool buildAboutThis = document.IsOpen() && buildHasResult && buildResultMap.Icmp( document.Name() ) == 0 && !BuildRunning();
-	if( buildAboutThis && ( buildFailed || buildProblems.Num() > 0 ) )
-	{
-		any = true;
-		ImGui::Spacing();
-		UI::SectionLabel( buildFailed ? "The last build failed" : "The last build" );
-		for( int i = 0; i < buildProblems.Num() && i < 50; i++ )
-		{
-			if( buildLeaked && i == 0 )
-			{
-				if( ImGui::SmallButton( ICON_FOCUS " Show" ) )
-				{
-					ShowLeak();
-				}
-				UI::Tip( "Draw the leak in the view and look at it. Follow the red line from inside to where it escapes: that's the gap to close." );
-				ImGui::SameLine();
-			}
-			ProblemRow( buildProblems[i].c_str() );
-		}
-		if( buildProblems.Num() > 50 )
-		{
-			Hint( va( "...and %d more in the build log.", buildProblems.Num() - 50 ) );
-		}
-	}
-
-	if( !any )
-	{
-		ImGui::TextColored( UI::Good(), ICON_OK );
-		ImGui::SameLine();
-		ImGui::TextUnformatted( "No problems found." );
-		Hint( buildAboutThis ? va( "The last build took %d s and had nothing to say.", buildSeconds ) : "Building the level (Ctrl+B, or Play) also checks it, for leaks and other trouble." );
-	}
-	if( buildLog.Length() > 0 )
-	{
-		ImGui::Spacing();
-		if( ImGui::SmallButton( ICON_BOOK "  Build log" ) )
-		{
-			showBuildLog = true;
-		}
-		UI::Tip( "Everything the level compiler printed during the last build" );
-	}
-
-	ImGui::End();
 }
 
 static void DrawBuildLog()
@@ -4449,7 +4347,7 @@ static void DrawBrushToolPreview()
 
 	const idVec3 size = box[1] - box[0];
 	const ImVec2 mouse = ImGui::GetIO().MousePos;
-	const char* text = ( drawStage == DRAW_FOOTPRINT ) ? va( "%.0f x %.0f", size.x, size.y ) : va( "%.0f x %.0f x %.0f   click to finish, Esc cancels", size.x, size.y, size.z );
+	const idStr text = ( drawStage == DRAW_FOOTPRINT ) ? idStr( va( "%.0f x %.0f", size.x, size.y ) ) : idStr( va( "%.0f x %.0f x %.0f   click to finish, Esc cancels", size.x, size.y, size.z ) );
 	ImGui::GetBackgroundDrawList()->AddText( ImVec2( mouse.x + 16.0f, mouse.y + 12.0f ), IM_COL32( 255, 255, 255, 255 ), text );
 }
 
@@ -6028,39 +5926,6 @@ static void DrawPartCard()
 	UI::EndCard();
 }
 
-// copies whose piece file has gone
-static void DrawPieceProblems( bool& any )
-{
-	idMapFile* map = document.Map();
-	if( map == NULL )
-	{
-		return;
-	}
-	for( int e = 1; e < map->GetNumEntities(); e++ )
-	{
-		const idMapEntity* ent = map->GetEntity( e );
-		if( !IsPrefabAnchor( ent ) || PrefabExists( ent->epairs.GetString( KEY_PREFAB ) ) )
-		{
-			continue;
-		}
-		any = true;
-		ImGui::PushID( e + 200000 );
-		if( ImGui::SmallButton( ICON_UNGROUP " Unlink" ) )
-		{
-			document.BeginChange( "Unlink piece" );
-			UnlinkPiece( map, e );
-			document.selection.Clear();
-			document.EndChange();
-			ImGui::PopID();
-			return;
-		}
-		ImGui::SameLine();
-		ProblemRow( va( "\"%s\" is a copy of the piece \"%s\", which is missing (maps/prefabs/%s.map), so it can't be updated. Unlink keeps what's there as ordinary things.",
-						ent->epairs.GetString( "name" ), ent->epairs.GetString( KEY_PREFAB ), ent->epairs.GetString( KEY_PREFAB ) ) );
-		ImGui::PopID();
-	}
-}
-
 // while editing a piece in place: what's going on, and the way out
 static void DrawPieceEditBanner( const ImGuiDockNode* central )
 {
@@ -6469,41 +6334,6 @@ static void DrawModelCard( idMapEntity* ent )
 		ImGui::PopTextWrapPos();
 	}
 	UI::EndCard();
-}
-
-// notes from bringing models in, for the models this level uses
-static void DrawModelProblems( bool& any )
-{
-	const idMapFile* map = document.Map();
-	if( map == NULL )
-	{
-		return;
-	}
-	idStrList shown;
-	for( int e = 1; e < map->GetNumEntities(); e++ )
-	{
-		const Import::model_t* m = Import::FindByModel( map->GetEntity( e )->epairs.GetString( "model" ) );
-		if( m == NULL || shown.FindIndex( m->name ) >= 0 )
-		{
-			continue;
-		}
-		shown.Append( m->name );
-		for( int i = 0; i < m->warnings.Num(); i++ )
-		{
-			any = true;
-			ProblemRow( va( "%s: %s", m->name.c_str(), m->warnings[i].c_str() ) );
-		}
-		if( m->sourceMissing )
-		{
-			any = true;
-			ProblemRow( va( "%s: the file it was brought in from (%s) is gone, so it won't update any more.", m->name.c_str(), m->source.c_str() ) );
-		}
-	}
-	if( modelImportError.Length() > 0 )
-	{
-		any = true;
-		ProblemRow( modelImportError );
-	}
 }
 
 // Content > Models
@@ -7578,6 +7408,7 @@ static void DrawViewOverlay()
 	DrawToolDock( central );
 	DrawContextBar();
 	DrawPieceEditBanner( central );
+	DrawProblemMarkers( central );
 	Help::DrawLessonStrip( ImVec2( central->Pos.x + central->Size.x, central->Pos.y ) );
 }
 
@@ -7934,6 +7765,1017 @@ bool IsEditing()
 bool IsPlayPaused()
 {
 	return IsEditorMode() && IsPlaying() && playPaused;
+}
+
+/*
+===============================================================================
+
+	Problems (see EditorProblems.h)
+
+	The open level is checked whenever it changes (and twice a second, so
+	builds and model imports show up). Each problem names what's wrong, where,
+	and what to do; a click on it selects and frames the thing. Problems also
+	show in the Outliner, as markers in the view, and on the Inspector. Play
+	asks first when the level has errors. "Check every level" reads every map
+	in the project.
+
+===============================================================================
+*/
+
+static idList<Problems::problem_t>	problems;		// the open level's, the last build's included
+static int			problemsRevision = -1;
+static int			problemsTime = 0;
+static idStr		problemsLevel;
+static idList<int>	entityProblem;					// worst warning or error per entity (a piece's parts mark its copy too)
+static idList<int>	entityProblemOwn;				// the same, for problems with that entity itself (markers)
+static idList<int>	worldProblem;					// the same for the level's own brushes
+static int			problemErrors = 0, problemWarnings = 0, problemNotes = 0;
+
+struct levelCheck_t
+{
+	idStr							map;
+	idList<Problems::problem_t>		problems;
+};
+static idList<levelCheck_t>	projectCheck;
+static bool			projectChecked = false;
+static bool			playErrorsAsk = false;			// open the "Play with errors?" question
+static bool			playErrorsFromCamera = false;
+
+static ImVec4 SeverityColor( int severity )
+{
+	return severity == Problems::SEV_ERROR ? UI::Bad() : ( severity == Problems::SEV_WARNING ? UI::Warn() : UI::Muted() );
+}
+
+static void WorstOf( idList<int>& list, int index, int severity )
+{
+	if( index >= 0 && index < list.Num() && severity > list[index] )
+	{
+		list[index] = severity;
+	}
+}
+
+static void RefreshProblems( bool force )
+{
+	if( !document.IsOpen() )
+	{
+		problems.Clear();
+		entityProblem.Clear();
+		entityProblemOwn.Clear();
+		worldProblem.Clear();
+		problemErrors = problemWarnings = problemNotes = 0;
+		problemsLevel.Clear();
+		return;
+	}
+	const int now = Sys_Milliseconds();
+	if( !force && document.Revision() == problemsRevision && problemsLevel.Icmp( document.Name() ) == 0 && now - problemsTime < 500 )
+	{
+		return;
+	}
+	problemsRevision = document.Revision();
+	problemsTime = now;
+	problemsLevel = document.Name();
+
+	const idMapFile* map = document.Map();
+	const bool isPiece = idStr::Icmpn( document.Name(), PREFAB_FOLDER "/", idStr::Length( PREFAB_FOLDER ) + 1 ) == 0;
+	Problems::CheckLevel( map, isPiece ? Problems::PIECE : Problems::LEVEL, problems );
+
+	// what the last build said, while it's about this level
+	if( buildHasResult && buildResultMap.Icmp( document.Name() ) == 0 && !BuildRunning() )
+	{
+		for( int i = 0; i < buildProblems.Num() && i < 50; i++ )
+		{
+			const bool leak = buildLeaked && idStr::Icmpn( buildProblems[i], "The level leaks", 15 ) == 0;
+			Problems::problem_t& p = problems.Alloc();
+			p = Problems::problem_t();
+			p.severity = ( i < buildProblemIsError.Num() && buildProblemIsError[i] ) ? Problems::SEV_ERROR : Problems::SEV_WARNING;
+			p.code = leak ? "leak" : "build";
+			p.text = va( "Build: %s", buildProblems[i].c_str() );
+			p.next = leak ? "Show draws a red line from inside the level, out through the gap: close that gap, then build again."
+					 : "The build log has the details. Build again (Ctrl+B) once it's sorted.";
+			p.fix = leak ? Problems::FIX_SHOW_LEAK : Problems::FIX_BUILD_LOG;
+		}
+		if( buildProblems.Num() > 50 )
+		{
+			Problems::problem_t& p = problems.Alloc();
+			p = Problems::problem_t();
+			p.severity = Problems::SEV_NOTE;
+			p.code = "build";
+			p.text = va( "Build: %d more in the build log.", buildProblems.Num() - 50 );
+			p.next = "Open the build log to see them all.";
+			p.fix = Problems::FIX_BUILD_LOG;
+		}
+	}
+	if( modelImportError.Length() > 0 )
+	{
+		Problems::problem_t& p = problems.Alloc();
+		p = Problems::problem_t();
+		p.severity = Problems::SEV_WARNING;
+		p.code = "import_failed";
+		p.text = modelImportError;
+		p.next = "Check that the file opens in Blender (or another viewer), then bring it in again.";
+	}
+	Problems::Sort( problems );
+	Problems::Count( problems, problemErrors, problemWarnings, problemNotes );
+
+	// where they are, for the Outliner and the markers (notes stay in the panel)
+	entityProblem.SetNum( map->GetNumEntities() );
+	entityProblemOwn.SetNum( map->GetNumEntities() );
+	worldProblem.SetNum( map->GetEntity( 0 )->GetNumPrimitives() );
+	for( int i = 0; i < entityProblem.Num(); i++ )
+	{
+		entityProblem[i] = entityProblemOwn[i] = -1;
+	}
+	for( int i = 0; i < worldProblem.Num(); i++ )
+	{
+		worldProblem[i] = -1;
+	}
+	for( int i = 0; i < problems.Num(); i++ )
+	{
+		const Problems::problem_t& p = problems[i];
+		if( p.severity == Problems::SEV_NOTE || p.where.entity < 0 || p.where.entity >= map->GetNumEntities() )
+		{
+			continue;
+		}
+		if( p.where.entity == 0 )
+		{
+			WorstOf( worldProblem, p.where.primitive, p.severity );
+			continue;
+		}
+		WorstOf( entityProblem, p.where.entity, p.severity );
+		WorstOf( entityProblemOwn, p.where.entity, p.severity );
+		WorstOf( entityProblem, TopAnchorOf( map, Selection( p.where.entity ) ), p.severity );
+	}
+}
+
+static int EntityProblemSeverity( int entity )
+{
+	return ( entity >= 0 && entity < entityProblem.Num() ) ? entityProblem[entity] : -1;
+}
+
+// one of the level's own brushes; -1 for the worst of them
+static int WorldProblemSeverity( int primitive )
+{
+	if( primitive >= 0 )
+	{
+		return primitive < worldProblem.Num() ? worldProblem[primitive] : -1;
+	}
+	int worst = -1;
+	for( int i = 0; i < worldProblem.Num(); i++ )
+	{
+		worst = Max( worst, worldProblem[i] );
+	}
+	return worst;
+}
+
+static int PlayErrorCount();
+
+static int LevelErrorCount()
+{
+	RefreshProblems( true );
+	return PlayErrorCount();
+}
+
+// errors in the list as it stands
+static int PlayErrorCount()
+{
+	int errors = 0;
+	for( int i = 0; i < problems.Num(); i++ )
+	{
+		// the last build's errors don't count: Play builds again
+		if( problems[i].severity == Problems::SEV_ERROR && problems[i].code != "build" && problems[i].code != "leak" )
+		{
+			errors++;
+		}
+	}
+	return errors;
+}
+
+// does this problem concern the thing at (entity, primitive)? a piece copy owns its parts' problems
+static bool ProblemIsAbout( const Problems::problem_t& p, int entity, int primitive )
+{
+	const idMapFile* map = document.Map();
+	if( map == NULL || p.where.entity < 0 || entity < 0 )
+	{
+		return false;
+	}
+	if( p.where.entity == entity )
+	{
+		return primitive < 0 || p.where.primitive < 0 || p.where.primitive == primitive;
+	}
+	return primitive < 0 && entity < map->GetNumEntities() && IsPrefabAnchor( map->GetEntity( entity ) ) && TopAnchorOf( map, Selection( p.where.entity ) ) == entity;
+}
+
+static void ProblemTooltip( int entity, int primitive )
+{
+	ImGui::BeginTooltip();
+	ImGui::PushTextWrapPos( 380.0f * UI::Scale() );
+	int shown = 0;
+	for( int i = 0; i < problems.Num() && shown < 4; i++ )
+	{
+		if( problems[i].severity != Problems::SEV_NOTE && ProblemIsAbout( problems[i], entity, primitive ) )
+		{
+			ImGui::TextColored( SeverityColor( problems[i].severity ), "%s", Problems::SeverityIcon( problems[i].severity ) );
+			ImGui::SameLine();
+			ImGui::TextUnformatted( problems[i].text );
+			shown++;
+		}
+	}
+	ImGui::TextDisabled( "Select it to see how to fix it in the Inspector." );
+	ImGui::PopTextWrapPos();
+	ImGui::EndTooltip();
+}
+
+// a row's type, right-aligned, with a problem icon in front when the thing has one;
+// when the name leaves no room, the type gives way and the icon stays
+static void RowTypeProblem( const char* label, const char* text, int severity, int entity, int primitive )
+{
+	const float gap = 6.0f * UI::Scale();
+	const float labelEnd = ImGui::GetItemRectMin().x - ImGui::GetWindowPos().x + ImGui::GetScrollX() + ImGui::CalcTextSize( label, NULL, true ).x + gap;
+	const float right = ImGui::GetWindowContentRegionMax().x - 4.0f * UI::Scale();
+	const char* icon = severity >= 0 ? Problems::SeverityIcon( ( Problems::severity_t )severity ) : NULL;
+	const float iconWidth = icon != NULL ? ImGui::CalcTextSize( icon ).x : 0.0f;
+	bool showText = text[0] != '\0';
+	float width = iconWidth + ( showText ? ImGui::CalcTextSize( text ).x + ( icon != NULL ? gap : 0.0f ) : 0.0f );
+	if( showText && right - width < labelEnd )
+	{
+		showText = false;
+		width = iconWidth;
+	}
+	if( width <= 0.0f )
+	{
+		return;
+	}
+	ImGui::SameLine( Max( labelEnd, right - width ) );
+	if( icon != NULL )
+	{
+		ImGui::TextColored( SeverityColor( severity ), "%s", icon );
+		if( ImGui::IsItemHovered() )
+		{
+			ProblemTooltip( entity, primitive );
+		}
+		if( showText )
+		{
+			ImGui::SameLine( 0.0f, gap );
+		}
+	}
+	if( showText )
+	{
+		ImGui::TextDisabled( "%s", text );
+	}
+}
+
+static idStr FixLabel( const Problems::problem_t& p )
+{
+	switch( p.fix )
+	{
+		case Problems::FIX_ADD_START:
+			return ICON_PLUS "  Add a player start";
+		case Problems::FIX_MODEL_NAME:
+			return ICON_OK "  Fix";
+		case Problems::FIX_RENAME:
+			return ICON_OK "  Rename it";
+		case Problems::FIX_REMOVE_KEY:
+			return ICON_DELETE "  Remove the link";
+		case Problems::FIX_USE_MATERIAL:
+			return va( ICON_PAINT "  Paint with %s", ShortMaterialName( currentMaterial ).c_str() );
+		case Problems::FIX_UNLINK_PIECE:
+			return ICON_UNGROUP "  Unlink";
+		case Problems::FIX_SHOW_LEAK:
+			return ICON_FOCUS "  Show the leak";
+		case Problems::FIX_BUILD_LOG:
+			return ICON_BOOK "  Build log";
+		default:
+			return "";
+	}
+}
+
+static bool ProblemEntityValid( const Problems::problem_t& p )
+{
+	const idMapFile* map = document.Map();
+	return map != NULL && p.where.entity >= 0 && p.where.entity < map->GetNumEntities() &&
+		   ( p.where.primitive < 0 || p.where.primitive < map->GetEntity( p.where.entity )->GetNumPrimitives() );
+}
+
+// carry out a problem's fix; true when the level changed
+static bool ApplyFix( const Problems::problem_t problem )		// a copy: fixing changes the list
+{
+	idMapFile* map = document.Map();
+	if( map == NULL )
+	{
+		return false;
+	}
+	idMapEntity* ent = ProblemEntityValid( problem ) ? map->GetEntity( problem.where.entity ) : NULL;
+	switch( problem.fix )
+	{
+		case Problems::FIX_ADD_START:
+			PlaceThing( "info_player_start" );
+			break;
+		case Problems::FIX_MODEL_NAME:
+			if( ent == NULL )
+			{
+				return false;
+			}
+			document.BeginChange( "Fix model name" );
+			ent->epairs.Set( "model", ent->epairs.GetString( "name" ) );
+			document.EndChange();
+			break;
+		case Problems::FIX_RENAME:
+		{
+			if( ent == NULL )
+			{
+				return false;
+			}
+			const idStr name = map->GetUniqueEntityName( problem.subject );
+			document.BeginChange( "Rename" );
+			const bool brushModel = ent->GetNumPrimitives() > 0 && idStr::Icmp( ent->epairs.GetString( "model" ), ent->epairs.GetString( "name" ) ) == 0;
+			ent->epairs.Set( "name", name );
+			if( brushModel )
+			{
+				ent->epairs.Set( "model", name );
+			}
+			document.EndChange();
+			Status( va( "Renamed it %s", name.c_str() ) );
+			break;
+		}
+		case Problems::FIX_REMOVE_KEY:
+			if( ent == NULL )
+			{
+				return false;
+			}
+			document.BeginChange( "Remove link" );
+			ent->epairs.Delete( problem.subject );
+			document.EndChange();
+			break;
+		case Problems::FIX_USE_MATERIAL:
+		{
+			int faces = 0;
+			document.BeginChange( "Paint over a missing material" );
+			for( int e = 0; e < map->GetNumEntities(); e++ )
+			{
+				idMapEntity* owner = map->GetEntity( e );
+				for( int p = 0; p < owner->GetNumPrimitives(); p++ )
+				{
+					idMapPrimitive* prim = owner->GetPrimitive( p );
+					if( prim->GetType() == idMapPrimitive::TYPE_BRUSH )
+					{
+						idMapBrush* brush = static_cast<idMapBrush*>( prim );
+						for( int s = 0; s < brush->GetNumSides(); s++ )
+						{
+							if( idStr::Icmp( brush->GetSide( s )->GetMaterial(), problem.subject ) == 0 )
+							{
+								brush->GetSide( s )->SetMaterial( currentMaterial );
+								faces++;
+							}
+						}
+					}
+					else if( prim->GetType() == idMapPrimitive::TYPE_PATCH && idStr::Icmp( static_cast<idMapPatch*>( prim )->GetMaterial(), problem.subject ) == 0 )
+					{
+						static_cast<idMapPatch*>( prim )->SetMaterial( currentMaterial );
+						faces++;
+					}
+				}
+			}
+			if( faces == 0 )
+			{
+				document.CancelChange();
+				return false;
+			}
+			document.EndChange();
+			view.Rebuild();
+			Status( va( "Painted %d face%s with %s", faces, faces == 1 ? "" : "s", ShortMaterialName( currentMaterial ).c_str() ) );
+			break;
+		}
+		case Problems::FIX_UNLINK_PIECE:
+			if( ent == NULL )
+			{
+				return false;
+			}
+			document.BeginChange( "Unlink piece" );
+			UnlinkPiece( map, problem.where.entity );
+			document.selection.Clear();
+			document.EndChange();
+			break;
+		case Problems::FIX_SHOW_LEAK:
+			ShowLeak();
+			return false;
+		case Problems::FIX_BUILD_LOG:
+			showBuildLog = true;
+			return false;
+		default:
+			return false;
+	}
+	RefreshProblems( true );
+	return true;
+}
+
+// select the thing at fault and look at it
+static void ShowProblem( const Problems::problem_t& p )
+{
+	if( p.fix == Problems::FIX_SHOW_LEAK )
+	{
+		ShowLeak();
+		return;
+	}
+	if( !ProblemEntityValid( p ) || ( p.where.entity == 0 && p.where.primitive < 0 ) )
+	{
+		return;
+	}
+	document.selection.Set( p.where );
+	FocusSelection();
+}
+
+static bool ProblemCanShow( const Problems::problem_t& p )
+{
+	return p.fix == Problems::FIX_SHOW_LEAK || ( ProblemEntityValid( p ) && !( p.where.entity == 0 && p.where.primitive < 0 ) );
+}
+
+// one problem: icon, what's wrong (click to show it), what to do, and the buttons
+static bool DrawProblemRow( int index, const Problems::problem_t& p, bool live )
+{
+	bool changed = false;
+	ImGui::PushID( index );
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex( 0 );
+	ImGui::TextColored( SeverityColor( p.severity ), "%s", Problems::SeverityIcon( p.severity ) );
+	if( ImGui::IsItemHovered() )
+	{
+		ImGui::SetTooltip( "%s", p.severity == Problems::SEV_ERROR ? "Error: the game will break, or this won't be there at all" :
+						   p.severity == Problems::SEV_WARNING ? "Warning: it'll look or behave wrong" : "Note: worth knowing; nothing is broken" );
+	}
+	ImGui::TableSetColumnIndex( 1 );
+	ImGui::PushTextWrapPos( 0.0f );
+	const bool canShow = live && ProblemCanShow( p );
+	ImGui::TextUnformatted( p.text );
+	if( canShow && ImGui::IsItemHovered() )
+	{
+		ImGui::SetMouseCursor( ImGuiMouseCursor_Hand );
+		ImGui::GetWindowDrawList()->AddLine( ImVec2( ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y ), ImGui::GetItemRectMax(), ImGui::GetColorU32( UI::Muted() ) );
+		if( ImGui::IsMouseClicked( ImGuiMouseButton_Left ) )
+		{
+			ShowProblem( p );
+		}
+	}
+	ImGui::PushStyleColor( ImGuiCol_Text, UI::Muted() );
+	ImGui::TextUnformatted( p.next );
+	ImGui::PopStyleColor();
+	ImGui::PopTextWrapPos();
+	if( live )
+	{
+		bool sameLine = false;
+		if( canShow && p.fix != Problems::FIX_SHOW_LEAK )
+		{
+			if( ImGui::SmallButton( ICON_FOCUS "  Show" ) )
+			{
+				ShowProblem( p );
+			}
+			UI::Tip( "Select it and look at it" );
+			sameLine = true;
+		}
+		const idStr fix = FixLabel( p );
+		if( fix.Length() > 0 )
+		{
+			if( sameLine )
+			{
+				ImGui::SameLine();
+			}
+			if( ImGui::SmallButton( fix ) )
+			{
+				changed = ApplyFix( p );
+			}
+		}
+	}
+	ImGui::PopID();
+	return changed;
+}
+
+static void DrawProblemCounts( int errors, int warnings, int notes )
+{
+	if( errors + warnings + notes == 0 )
+	{
+		ImGui::TextColored( UI::Good(), ICON_OK );
+		ImGui::SameLine();
+		ImGui::TextUnformatted( "No problems found." );
+		return;
+	}
+	const int counts[3] = { errors, warnings, notes };
+	const char* names[3][2] = { { "error", "errors" }, { "warning", "warnings" }, { "note", "notes" } };
+	const Problems::severity_t sev[3] = { Problems::SEV_ERROR, Problems::SEV_WARNING, Problems::SEV_NOTE };
+	bool first = true;
+	for( int i = 0; i < 3; i++ )
+	{
+		if( counts[i] == 0 )
+		{
+			continue;
+		}
+		if( !first )
+		{
+			ImGui::SameLine( 0.0f, 14.0f * UI::Scale() );
+		}
+		first = false;
+		ImGui::TextColored( SeverityColor( sev[i] ), "%s", Problems::SeverityIcon( sev[i] ) );
+		ImGui::SameLine();
+		ImGui::Text( "%d %s", counts[i], names[i][counts[i] == 1 ? 0 : 1] );
+	}
+}
+
+// read every level in the project and check it; the open one as it is now, unsaved changes included
+static void CheckEveryLevel()
+{
+	idStrList maps;
+	Problems::ListLevels( maps );
+	projectCheck.Clear();
+	int errors = 0, warnings = 0, notes = 0;
+	for( int i = 0; i < maps.Num(); i++ )
+	{
+		levelCheck_t& check = projectCheck.Alloc();
+		check.map = maps[i];
+		const Problems::levelKind_t kind = idStr::Icmpn( maps[i], PREFAB_FOLDER "/", idStr::Length( PREFAB_FOLDER ) + 1 ) == 0 ? Problems::PIECE : Problems::LEVEL;
+		if( document.IsOpen() && maps[i].Icmp( document.Name() ) == 0 )
+		{
+			Problems::CheckLevel( document.Map(), kind, check.problems );
+		}
+		else
+		{
+			idMapFile map;
+			if( map.Parse( va( "maps/%s", maps[i].c_str() ), true ) )
+			{
+				Problems::CheckLevel( &map, kind, check.problems );
+			}
+			else
+			{
+				Problems::problem_t& p = check.problems.Alloc();
+				p.severity = Problems::SEV_ERROR;
+				p.code = "unreadable";
+				p.text = "The level's file couldn't be read.";
+				p.next = "Open it in a text editor to see what's wrong, or restore it from a backup.";
+			}
+		}
+		int e, w, n;
+		Problems::Count( check.problems, e, w, n );
+		errors += e;
+		warnings += w;
+		notes += n;
+	}
+	projectChecked = true;
+	common->Printf( "Problems: checked %d levels: %d errors, %d warnings, %d notes\n", projectCheck.Num(), errors, warnings, notes );
+	for( int i = 0; i < projectCheck.Num(); i++ )
+	{
+		common->Printf( "  level %s: %s\n", projectCheck[i].map.c_str(), Problems::Summary( projectCheck[i].problems ).c_str() );
+		for( int j = 0; j < projectCheck[i].problems.Num(); j++ )
+		{
+			const Problems::problem_t& p = projectCheck[i].problems[j];
+			common->Printf( "    %s %s: %s\n", Problems::SeverityName( p.severity ), p.code.c_str(), p.text.c_str() );
+		}
+	}
+	Status( va( "Checked %d levels", projectCheck.Num() ) );
+}
+
+static void DrawProjectCheck()
+{
+	if( !projectChecked )
+	{
+		return;
+	}
+	int clean = 0;
+	for( int i = 0; i < projectCheck.Num(); i++ )
+	{
+		if( projectCheck[i].problems.Num() == 0 )
+		{
+			clean++;
+		}
+	}
+	ImGui::Spacing();
+	if( !ImGui::CollapsingHeader( va( "Every level: %d checked###everylevel", projectCheck.Num() ), ImGuiTreeNodeFlags_DefaultOpen ) )
+	{
+		return;
+	}
+	ImGui::SameLine();
+	if( ImGui::SmallButton( ICON_CLOSE "##closecheck" ) )
+	{
+		projectChecked = false;
+		projectCheck.Clear();
+		return;
+	}
+	UI::Tip( "Put the results away" );
+	for( int i = 0; i < projectCheck.Num(); i++ )
+	{
+		const levelCheck_t& check = projectCheck[i];
+		if( check.problems.Num() == 0 )
+		{
+			continue;
+		}
+		ImGui::PushID( i );
+		const bool open = ImGui::TreeNodeEx( "level", ImGuiTreeNodeFlags_SpanAvailWidth, ICON_MAP_FILE "  %s", check.map.c_str() );
+		ImGui::SameLine();
+		int e, w, n;
+		Problems::Count( check.problems, e, w, n );
+		const int worst = e > 0 ? Problems::SEV_ERROR : ( w > 0 ? Problems::SEV_WARNING : Problems::SEV_NOTE );
+		ImGui::TextColored( SeverityColor( worst ), "%s", Problems::Summary( check.problems ).c_str() );
+		const bool isOpenLevel = document.IsOpen() && check.map.Icmp( document.Name() ) == 0;
+		if( !isOpenLevel )
+		{
+			ImGui::SameLine();
+			if( ImGui::SmallButton( ICON_OPEN "  Open" ) )
+			{
+				OpenMap( check.map );
+			}
+			UI::Tip( "Open this level to show and fix its problems" );
+		}
+		if( open )
+		{
+			if( ImGui::BeginTable( "levelproblems", 2, ImGuiTableFlags_PadOuterX ) )
+			{
+				ImGui::TableSetupColumn( "icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() );
+				ImGui::TableSetupColumn( "text", ImGuiTableColumnFlags_WidthStretch );
+				for( int j = 0; j < check.problems.Num(); j++ )
+				{
+					DrawProblemRow( j, check.problems[j], false );
+				}
+				ImGui::EndTable();
+			}
+			ImGui::TreePop();
+		}
+		ImGui::PopID();
+	}
+	if( clean > 0 )
+	{
+		ImGui::TextColored( UI::Good(), ICON_OK );
+		ImGui::SameLine();
+		ImGui::TextDisabled( "%s", clean == projectCheck.Num() ? "Every level is fine." : ( clean == 1 ? "1 other level is fine." : va( "%d other levels are fine.", clean ) ) );
+	}
+}
+
+static void DrawProblems()
+{
+	if( focusProblems )
+	{
+		focusProblems = false;
+		ImGui::SetNextWindowFocus();
+	}
+	// the tab says how many, with the worst one's icon
+	const int total = problemErrors + problemWarnings + problemNotes;
+	const char* icon = problemErrors > 0 ? ICON_ERROR : ( problemWarnings > 0 ? ICON_WARNING : ICON_PROBLEMS );
+	const idStr title = total > 0 ? idStr( va( "%s  Problems (%d)###Problems", icon, total ) ) : idStr( ICON_PROBLEMS "  Problems###Problems" );
+	if( !ImGui::Begin( title, &showProblems ) )
+	{
+		ImGui::End();
+		return;
+	}
+
+	// the counts, Check every level, help
+	ImGui::AlignTextToFramePadding();
+	DrawProblemCounts( problemErrors, problemWarnings, problemNotes );
+	{
+		const char* label = ICON_SEARCH "  Check every level";
+		const float buttonWidth = ImGui::CalcTextSize( label ).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+		ImGui::SameLine( Max( ImGui::GetCursorPosX() + 12.0f * UI::Scale(), ImGui::GetContentRegionMax().x - buttonWidth - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x ) );
+		if( ImGui::Button( label ) )
+		{
+			CheckEveryLevel();
+		}
+		UI::Tip( "Read every level and piece in the project and check them all. Levels with problems are listed below; open one to fix it." );
+		ImGui::SameLine();
+		UI::HelpButton( "panels/problems", "About Problems" );
+	}
+	ImGui::Separator();
+
+	ImGui::BeginChild( "problem_list" );
+	if( document.IsOpen() && problems.Num() > 0 && ImGui::BeginTable( "problems", 2, ImGuiTableFlags_PadOuterX | ImGuiTableFlags_RowBg ) )
+	{
+		ImGui::TableSetupColumn( "icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() );
+		ImGui::TableSetupColumn( "text", ImGuiTableColumnFlags_WidthStretch );
+		for( int i = 0; i < problems.Num(); i++ )
+		{
+			if( DrawProblemRow( i, problems[i], true ) )
+			{
+				break;		// the list has changed
+			}
+		}
+		ImGui::EndTable();
+	}
+	else if( document.IsOpen() )
+	{
+		const bool built = buildHasResult && buildResultMap.Icmp( document.Name() ) == 0 && !BuildRunning();
+		Hint( built ? va( "The last build took %d s and had nothing to say.", buildSeconds ) : "Building the level (Ctrl+B, or Play) also checks it, for leaks and other trouble." );
+	}
+	if( buildLog.Length() > 0 )
+	{
+		ImGui::Spacing();
+		if( ImGui::SmallButton( ICON_BOOK "  Build log" ) )
+		{
+			showBuildLog = true;
+		}
+		UI::Tip( "Everything the level compiler printed during the last build" );
+	}
+	DrawProjectCheck();
+	ImGui::EndChild();
+
+	ImGui::End();
+}
+
+// the Inspector's card for the selection's problems
+static void DrawSelectionProblems()
+{
+	const Selection sel = document.selection.Primary();
+	if( sel.entity < 0 || document.selection.IsFaces() )
+	{
+		return;
+	}
+	idList<int> mine;
+	for( int i = 0; i < problems.Num(); i++ )
+	{
+		if( ProblemIsAbout( problems[i], sel.entity, sel.primitive ) )
+		{
+			mine.Append( i );
+		}
+	}
+	if( mine.Num() == 0 )
+	{
+		return;
+	}
+	int worst = Problems::SEV_NOTE;
+	for( int i = 0; i < mine.Num(); i++ )
+	{
+		worst = Max( worst, ( int )problems[mine[i]].severity );
+	}
+	if( UI::BeginCard( "problems", Problems::SeverityIcon( ( Problems::severity_t )worst ), mine.Num() == 1 ? "1 problem" : va( "%d problems", mine.Num() ), "What's wrong with this, and what to do about it. The Problems panel lists the whole level's." ) )
+	{
+		if( ImGui::BeginTable( "selproblems", 2 ) )
+		{
+			ImGui::TableSetupColumn( "icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight() * 0.8f );
+			ImGui::TableSetupColumn( "text", ImGuiTableColumnFlags_WidthStretch );
+			for( int i = 0; i < mine.Num(); i++ )
+			{
+				const Problems::problem_t& p = problems[mine[i]];
+				ImGui::PushID( mine[i] );
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex( 0 );
+				ImGui::TextColored( SeverityColor( p.severity ), "%s", Problems::SeverityIcon( p.severity ) );
+				ImGui::TableSetColumnIndex( 1 );
+				ImGui::PushTextWrapPos( 0.0f );
+				ImGui::TextUnformatted( p.text );
+				ImGui::PushStyleColor( ImGuiCol_Text, UI::Muted() );
+				ImGui::TextUnformatted( p.next );
+				ImGui::PopStyleColor();
+				ImGui::PopTextWrapPos();
+				const idStr fix = FixLabel( p );
+				bool changed = false;
+				if( fix.Length() > 0 && ImGui::SmallButton( fix ) )
+				{
+					changed = ApplyFix( p );
+				}
+				ImGui::PopID();
+				if( changed )
+				{
+					break;
+				}
+			}
+			ImGui::EndTable();
+		}
+	}
+	UI::EndCard();
+}
+
+// a marker over everything with a warning or an error, in the 3D view
+static void DrawProblemMarkers( const ImGuiDockNode* central )
+{
+	const idMapFile* map = document.Map();
+	if( planView || map == NULL || problemErrors + problemWarnings == 0 || IsPlaying() )
+	{
+		return;
+	}
+	ImDrawList* draw = ImGui::GetBackgroundDrawList();
+	const ImVec2 lo = central->Pos;
+	const ImVec2 hi( central->Pos.x + central->Size.x, central->Pos.y + central->Size.y );
+	const float radius = 9.0f * UI::Scale();
+	const ImVec2 mouse = ImGui::GetIO().MousePos;
+	const bool mouseFree = !ImGui::GetIO().WantCaptureMouse;
+	int hoverEntity = -1, hoverPrimitive = -1;
+	int drawn = 0;
+
+	auto marker = [&]( const idBounds& bounds, int severity, int entity, int primitive )
+	{
+		idVec3 top = bounds.GetCenter();
+		top.z = bounds[1].z + 12.0f;
+		idVec2 sp;
+		if( !view.WorldToScreen( top, sp ) || sp.x < lo.x + radius || sp.y < lo.y + radius || sp.x > hi.x - radius || sp.y > hi.y - radius )
+		{
+			return;
+		}
+		const ImVec2 at( sp.x, sp.y );
+		draw->AddCircleFilled( at, radius, IM_COL32( 20, 24, 29, 220 ) );
+		draw->AddCircle( at, radius, ImGui::GetColorU32( SeverityColor( severity ) ), 0, 1.5f );
+		const char* icon = Problems::SeverityIcon( ( Problems::severity_t )severity );
+		const ImVec2 size = ImGui::CalcTextSize( icon );
+		draw->AddText( ImVec2( at.x - size.x * 0.5f, at.y - size.y * 0.5f ), ImGui::GetColorU32( SeverityColor( severity ) ), icon );
+		if( mouseFree && ( mouse.x - at.x ) * ( mouse.x - at.x ) + ( mouse.y - at.y ) * ( mouse.y - at.y ) < radius * radius * 1.6f )
+		{
+			hoverEntity = entity;
+			hoverPrimitive = primitive;
+		}
+		drawn++;
+	};
+
+	for( int e = 1; e < map->GetNumEntities() && e < entityProblemOwn.Num() && drawn < 200; e++ )
+	{
+		if( entityProblemOwn[e] < Problems::SEV_WARNING )
+		{
+			continue;
+		}
+		const idMapEntity* ent = map->GetEntity( e );
+		idBounds bounds;
+		if( !EntityBounds( ent, bounds ) )
+		{
+			const idVec3 origin = ent->epairs.GetVector( "origin" );
+			bounds = idBounds( origin - idVec3( 8, 8, 8 ), origin + idVec3( 8, 8, 8 ) );
+		}
+		marker( bounds, entityProblemOwn[e], e, -1 );
+	}
+	const idMapEntity* world = map->GetEntity( 0 );
+	for( int p = 0; p < worldProblem.Num() && p < world->GetNumPrimitives() && drawn < 200; p++ )
+	{
+		idBounds bounds;
+		if( worldProblem[p] >= Problems::SEV_WARNING && PrimitiveBounds( world->GetPrimitive( p ), bounds ) )
+		{
+			marker( bounds, worldProblem[p], 0, p );
+		}
+	}
+	if( hoverEntity >= 0 )
+	{
+		ProblemTooltip( hoverEntity, hoverPrimitive );
+	}
+}
+
+// Play when the level has errors: say so first
+static void RequestPlayWithErrors( bool fromCamera )
+{
+	playErrorsAsk = true;
+	playErrorsFromCamera = fromCamera;
+	const int errors = PlayErrorCount();
+	common->Printf( "Editor: Play is waiting: the level has %d error%s\n", errors, errors == 1 ? "" : "s" );
+}
+
+static void DrawPlayErrorsDialog()
+{
+	if( playErrorsAsk )
+	{
+		playErrorsAsk = false;
+		ImGui::OpenPopup( "Play with errors?" );
+	}
+	ImGui::SetNextWindowSize( ImVec2( 480.0f * UI::Scale(), 0.0f ) );
+	if( !ImGui::BeginPopupModal( "Play with errors?", NULL, ImGuiWindowFlags_NoResize ) )
+	{
+		return;
+	}
+	const int errors = PlayErrorCount();
+	ImGui::TextWrapped( "%s", errors == 1 ? "The level has an error, so part of it may not work when you play:" : va( "The level has %d errors, so parts of it may not work when you play:", errors ) );
+	ImGui::Spacing();
+	int shown = 0, first = -1;
+	ImGui::PushTextWrapPos( 0.0f );
+	for( int i = 0; i < problems.Num() && shown < 5; i++ )
+	{
+		if( problems[i].severity != Problems::SEV_ERROR || problems[i].code == "build" || problems[i].code == "leak" )
+		{
+			continue;
+		}
+		if( first < 0 )
+		{
+			first = i;
+		}
+		ImGui::TextColored( UI::Bad(), ICON_ERROR );
+		ImGui::SameLine();
+		ImGui::TextUnformatted( problems[i].text );
+		shown++;
+	}
+	ImGui::PopTextWrapPos();
+	if( errors > shown )
+	{
+		Hint( va( "...and %d more in Problems.", errors - shown ) );
+	}
+	ImGui::Spacing();
+	if( UI::ColorButton( ICON_PLAY "  Play anyway", UI::Good() ) )
+	{
+		ImGui::CloseCurrentPopup();
+		playWithErrors = true;
+		PlayDocument( playErrorsFromCamera );
+	}
+	ImGui::SameLine();
+	if( ImGui::Button( ICON_FOCUS "  Show me" ) )
+	{
+		ImGui::CloseCurrentPopup();
+		showProblems = true;
+		focusProblems = true;
+		if( first >= 0 )
+		{
+			ShowProblem( problems[first] );
+		}
+	}
+	UI::Tip( "Open Problems and look at the first error" );
+	ImGui::SameLine();
+	if( ImGui::Button( "Cancel" ) || ImGui::IsKeyPressed( ImGuiKey_Escape ) )
+	{
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+}
+
+/*
+-------------------------------------------------------------------------------
+	problem console commands (for tests and scripting)
+-------------------------------------------------------------------------------
+*/
+
+// editorProblems [label]: list the open level's problems
+static void EditorProblems_f( const idCmdArgs& args )
+{
+	RefreshProblems( true );
+	showProblems = true;
+	focusProblems = true;
+	const idStr prefix = args.Argc() > 1 ? va( "%s: ", args.Argv( 1 ) ) : "";
+	const idMapFile* map = document.Map();
+	for( int i = 0; i < problems.Num(); i++ )
+	{
+		const Problems::problem_t& p = problems[i];
+		const char* thing = ( map != NULL && ProblemEntityValid( p ) && p.where.entity > 0 ) ? map->GetEntity( p.where.entity )->epairs.GetString( "name" ) : "";
+		common->Printf( "%sproblem: %s %s [%s] %s\n", prefix.c_str(), Problems::SeverityName( p.severity ), p.code.c_str(), thing, p.text.c_str() );
+	}
+	common->Printf( "%sproblems: %d errors, %d warnings, %d notes\n", prefix.c_str(), problemErrors, problemWarnings, problemNotes );
+}
+
+// editorFixProblem <code>: apply the fix of the first problem of that kind
+static void EditorFixProblem_f( const idCmdArgs& args )
+{
+	if( args.Argc() != 2 )
+	{
+		common->Printf( "usage: editorFixProblem <code>\n" );
+		return;
+	}
+	RefreshProblems( true );
+	for( int i = 0; i < problems.Num(); i++ )
+	{
+		if( problems[i].code.Icmp( args.Argv( 1 ) ) == 0 )
+		{
+			common->Printf( ApplyFix( problems[i] ) ? "fixed %s\n" : "couldn't fix %s\n", args.Argv( 1 ) );
+			return;
+		}
+	}
+	common->Printf( "no %s problem\n", args.Argv( 1 ) );
+}
+
+static void EditorCheckProject_f( const idCmdArgs& args )
+{
+	CheckEveryLevel();
+}
+
+// editorPlace <classname> <x> <y> <z> [key value]...: add a thing (selected)
+static void EditorPlace_f( const idCmdArgs& args )
+{
+	if( args.Argc() < 5 || ( args.Argc() - 5 ) % 2 != 0 || !document.IsOpen() )
+	{
+		common->Printf( "usage: editorPlace <classname> <x> <y> <z> [key value]...\n" );
+		return;
+	}
+	idDict keys;
+	for( int i = 5; i + 1 < args.Argc(); i += 2 )
+	{
+		keys.Set( args.Argv( i ), args.Argv( i + 1 ) );
+	}
+	const idVec3 origin( atof( args.Argv( 2 ) ), atof( args.Argv( 3 ) ), atof( args.Argv( 4 ) ) );
+	const int index = document.AddEntity( args.Argv( 1 ), origin, &keys );
+	if( index >= 0 )
+	{
+		common->Printf( "placed %s\n", document.Map()->GetEntity( index )->epairs.GetString( "name" ) );
+	}
+}
+
+// editorSetKey <key> [value]: change a setting of the selected thing (no value removes it)
+static void EditorSetKey_f( const idCmdArgs& args )
+{
+	idMapEntity* ent = document.SelectedEntity();
+	if( args.Argc() < 2 || ent == NULL )
+	{
+		common->Printf( "usage: editorSetKey <key> [value], with something selected\n" );
+		return;
+	}
+	document.BeginChange( "Change setting" );
+	if( args.Argc() >= 3 )
+	{
+		ent->epairs.Set( args.Argv( 1 ), args.Argv( 2 ) );
+	}
+	else
+	{
+		ent->epairs.Delete( args.Argv( 1 ) );
+	}
+	document.EndChange();
+}
+
+static void RegisterProblemCommands()
+{
+	cmdSystem->AddCommand( "editorProblems", EditorProblems_f, CMD_FL_SYSTEM, "lists the open level's problems" );
+	cmdSystem->AddCommand( "editorFixProblem", EditorFixProblem_f, CMD_FL_SYSTEM, "applies the fix of the first problem with the given code" );
+	cmdSystem->AddCommand( "editorCheckProject", EditorCheckProject_f, CMD_FL_SYSTEM, "checks every level in the project for problems" );
+	cmdSystem->AddCommand( "editorPlace", EditorPlace_f, CMD_FL_SYSTEM, "adds a thing: editorPlace <classname> <x> <y> <z> [key value]..." );
+	cmdSystem->AddCommand( "editorSetKey", EditorSetKey_f, CMD_FL_SYSTEM, "changes a setting of the selected thing" );
 }
 
 void DrawWorld()
@@ -8347,6 +9189,7 @@ void Draw( unsigned int mainDockSpaceId )
 	BuildUpdate();
 	Sys_FileDropped = Import::QueueDroppedFile;
 	ModelsUpdate();
+	RefreshProblems( false );
 	document.afterChange = PieceAfterChange;
 	document.filesRestored = PieceFilesRestored;
 	prefabFileWritten = PieceFileWritten;
@@ -8466,6 +9309,7 @@ void Draw( unsigned int mainDockSpaceId )
 	DrawNewProjectDialog();
 	DrawMakePieceDialog();
 	DrawImportDialog();
+	DrawPlayErrorsDialog();
 	UI::DrawHighlights();
 	DrawOpenProjectDialog();
 	DrawMapNameDialog( "Save Map As", openSaveAsPopup, false );

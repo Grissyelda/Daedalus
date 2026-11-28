@@ -23,12 +23,13 @@ Daedalus is a fork of [RBDOOM-3-BFG](https://github.com/RobertBeckebans/RBDOOM-3
 - **Pieces (prefabs):** linked copies with per-copy overrides, edited in place, nestable.
 - **Models:** drag in a glTF, GLB or OBJ file and it becomes a placeable model with PBR materials, updating by itself when you save it again in Blender.
 - **Play:** in the same window, from the player start or the camera; pausing brings the editor back and edits flow into the game.
-- **Background builds** with leak finding, and a **Problems** panel that checks the level.
+- **Background builds** with leak finding.
+- **Problems:** errors, warnings and notes about the level, each pointing at the thing at fault with a next step and often a one-click fix. They show in the Outliner, the view and the Inspector too; Play asks first when there are errors, and **Check every level** checks the whole project.
 - **Help:** a page for every panel and tool, and lessons that tick off as you go.
 
 ## Next up
 
-- Problems that point at the thing at fault and say how to fix it, plus a whole-project check.
+- Clearer live editing: what went into the running game, and what needs a rebuild.
 - A material editor with PBR presets, a view of the level's areas and portals, and light looks with one-click baked lighting.
 - Then behavior: When/Do rule cards on objects that open up into node graphs and Doom Script.
 
@@ -75,7 +76,7 @@ Each test is a folder in `scripts/test/editor/`. CI runs them on every push.
 Run the executable from the repository root (or a package folder), next to `content/`. It opens the editor:
 
 - The level fills the middle. The **tool dock** at the bottom has five tabs: **Build** (move, turn, resize, draw, cut, corners, and shapes to drag in), **Paint** (click surfaces to paint them), **Logic** (doors and the player start), **Light** and **Kits** (ready-made things to drop in). Keys 1 to 5 switch tabs; hold **Space** over the level for a wheel of every tool.
-- The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** panels dock around it. Drag a panel's tab to rearrange them, or out of the window onto another monitor (`editor_detachablePanels 0` turns that off). **View → Reset layout** puts them back.
+- The **Outliner**, **Inspector** (settings for the selection, as cards, with the raw keys under Advanced), **Content** and **Problems** (what's wrong with the level and how to fix it) panels dock around it. Drag a panel's tab to rearrange them, or out of the window onto another monitor (`editor_detachablePanels 0` turns that off). **View → Reset layout** puts them back.
 - **Play** (top centre, **F5**) saves and runs the open level. **Esc** pauses it and brings the editor back with the game still loaded: changes go into the game, and brush changes rebuild the level around you when you carry on (**F5**). **F10** stops.
 - Levels are compiled by `rbdmap`, which ships next to the editor and runs in the background (the bar left of Play shows how far it's got), so the editor never freezes. Play builds when the level needs it; **File → Build** (**Ctrl+B**) builds without playing. What the build says shows up in **Problems**, with the full build log a click away.
 - **Models:** drag a `.glb`, `.gltf` or `.obj` file onto the window, use **Kits → Bring in**, or drop it in the project's `import/` folder. It's copied into `models/imported/` with its textures and materials, and appears as a tile in **Kits**. Saving the source file again updates the model in the level. The Inspector's Model card sets its size (pick what program it was made in) and which way it faces.
