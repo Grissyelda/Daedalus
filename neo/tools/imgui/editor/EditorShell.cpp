@@ -2024,9 +2024,10 @@ static void SwitchProject( const char* name )
 	{
 		document.Save();
 	}
-	const char* args[3] = { "+set", "fs_game", name };
+	// the editor again, even if this process was started as the game (later settings win)
+	const char* args[6] = { "+set", "fs_game", name, "+set", "editor", "1" };
 	common->Printf( "Editor: restarting into project '%s'\n", name[0] ? name : "(engine content)" );
-	Sys_ReLaunchWithArgs( args, 3 );
+	Sys_ReLaunchWithArgs( args, 6 );
 }
 
 // a game's mod project as the game itself, without the editor

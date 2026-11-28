@@ -873,6 +873,9 @@ void JoystickSamplingThread( void* data )
 	static uint64 nextCheck[MAX_JOYSTICKS] = { 0 };
 	const uint64 waitTime = 5000000; // poll every 5 seconds to see if a controller was connected
 	joystickThreadRunning = true;
+	// however the process ends (closing the window ends it without the engine's shutdown),
+	// stop before the globals this locks are destroyed
+	atexit( Sys_StopInputThreads );
 	while( !joystickThreadQuit )
 	{
 		// hopefully we see close to 4000 usec each loop
@@ -915,6 +918,10 @@ void JoystickSamplingThread( void* data )
 				}
 			}
 
+			if( joystickThreadQuit )
+			{
+				break;
+			}
 			// do this short amount of processing inside a critical section
 			idScopedCriticalSection cs( win32.g_Joystick.mutexXis );
 
