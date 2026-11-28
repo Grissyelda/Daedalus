@@ -71,6 +71,9 @@ void idWorldspawn::Spawn()
 
 	g_gravity.SetFloat( spawnArgs.GetFloat( "gravity", va( "%f", DEFAULT_GRAVITY ) ) );
 
+	// Daedalus: how bright the level is where no light reaches, until lighting is baked
+	cvarSystem->SetCVarFloat( "r_fillLight", spawnArgs.GetFloat( "fill_light", "0.12" ) );
+
 	// RB: start some background music Quake style
 	SetMusicTrack();
 

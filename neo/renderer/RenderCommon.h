@@ -1256,6 +1256,7 @@ extern idCVar r_ldrContrastThreshold;
 extern idCVar r_ldrContrastOffset;
 
 extern idCVar r_forceAmbient;
+extern idCVar r_fillLight;
 
 extern idCVar r_useSSAO;
 extern idCVar r_ssaoDebug;

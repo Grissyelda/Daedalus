@@ -3184,6 +3184,24 @@ static void DrawPrimitiveInspector( idMapPrimitive* prim )
 	UI::EndCard();
 }
 
+// worldspawn: how bright the level is where no light reaches
+static void DrawLevelLightingCard( idMapEntity* ent )
+{
+	if( UI::BeginCard( "levellight", ICON_LIGHT, "Lighting", "Fill light is how bright the level is where none of your lights reach. Keep it low so your lights stand out; baking lighting replaces it with light bounced from your lights." ) )
+	{
+		float fill = ent->epairs.GetFloat( "fill_light", "0.12" );
+		UI::FieldLabel( "Fill light" );
+		if( ImGui::SliderFloat( "##fill", &fill, 0.0f, 1.0f, fill <= 0.0f ? "None: pitch dark" : "%.2f" ) )
+		{
+			ent->epairs.Set( "fill_light", va( "%.2f", fill ) );
+			document.EndChange();
+		}
+		UndoBracket( "Fill light" );
+		UI::Tip( "0 is pitch dark away from lights; 1 lights everything evenly" );
+	}
+	UI::EndCard();
+}
+
 static void DrawEntityInspector( idMapEntity* ent )
 {
 	const char* classname = ent->epairs.GetString( "classname" );
@@ -3193,6 +3211,10 @@ static void DrawEntityInspector( idMapEntity* ent )
 	if( !isWorld )
 	{
 		DrawPlacementCard();
+	}
+	else
+	{
+		DrawLevelLightingCard( ent );
 	}
 	if( idStr::Icmp( classname, "func_door" ) == 0 )
 	{

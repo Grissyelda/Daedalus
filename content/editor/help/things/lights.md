@@ -10,3 +10,7 @@ In the [Inspector](panels/inspector), the **Light** card has:
 - **Shadows**: whether things in its light cast shadows.
 
 > Lights changed while the game is paused change in the game straight away. See [Live edits](play/live-edits).
+
+## Fill light
+
+Where none of your lights reach, the level isn't pitch black: a dim **fill light** shows its shape. Click **Level settings** at the top of the Inspector (with nothing selected) and use the **Lighting** card's **Fill light** slider. Keep it low so your lights stand out; 0 is pitch dark, 1 lights everything evenly and hides your lights. The game uses the same setting.

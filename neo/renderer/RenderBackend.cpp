@@ -2333,9 +2333,17 @@ void idRenderBackend::AmbientPass( const drawSurf_t* const* drawSurfs, int numDr
 
 		float ambientBoost = 1.0f;
 
-		ambientColor.x = r_forceAmbient.GetFloat() * ambientBoost;
-		ambientColor.y = r_forceAmbient.GetFloat() * ambientBoost;
-		ambientColor.z = r_forceAmbient.GetFloat() * ambientBoost;
+		// Daedalus: with no baked lighting the ambient pass lights everything from a built-in
+		// lobby probe, which at r_forceAmbient's 0.5 drowned out the level's own lights.
+		// Unbaked levels use their fill light instead (worldspawn fill_light, set into r_fillLight).
+		float ambient = r_forceAmbient.GetFloat();
+		if( viewDef->irradianceImage == globalImages->defaultUACIrradianceCube )
+		{
+			ambient = r_fillLight.GetFloat();
+		}
+		ambientColor.x = ambient * ambientBoost;
+		ambientColor.y = ambient * ambientBoost;
+		ambientColor.z = ambient * ambientBoost;
 		ambientColor.w = 1;
 	}
 

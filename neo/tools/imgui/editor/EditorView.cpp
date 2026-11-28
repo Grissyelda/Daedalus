@@ -859,6 +859,16 @@ void View::Draw( const Document& doc )
 {
 	Sync( doc );
 
+	// the level's fill light (the game sets the same from worldspawn when it loads)
+	{
+		const idMapFile* map = doc.Map();
+		const float fill = ( map != NULL && map->GetNumEntities() > 0 ) ? map->GetEntity( 0 )->epairs.GetFloat( "fill_light", "0.12" ) : 0.12f;
+		if( cvarSystem->GetCVarFloat( "r_fillLight" ) != fill )
+		{
+			cvarSystem->SetCVarFloat( "r_fillLight", fill );
+		}
+	}
+
 	if( world == NULL )
 	{
 		return;
