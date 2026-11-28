@@ -76,16 +76,18 @@ static bool InGame()
 	return game != NULL && game->IsInGame();
 }
 
+void GameMenu::Init()
+{
+	shellAvailable = ( fileSystem->ReadFile( "generated/swf/shell.bswf", NULL, NULL ) > 0 || fileSystem->ReadFile( "swf/shell.swf", NULL, NULL ) > 0 ) ? 1 : 0;
+}
+
 bool GameMenu::Wanted()
 {
 	if( !game_menu.GetBool() || cvarSystem->GetCVarBool( "editor" ) )
 	{
 		return false;
 	}
-	if( shellAvailable < 0 )
-	{
-		shellAvailable = ( fileSystem->ReadFile( "generated/swf/shell.bswf", NULL, NULL ) > 0 || fileSystem->ReadFile( "swf/shell.swf", NULL, NULL ) > 0 ) ? 1 : 0;
-	}
+	// decided once at start-up (Init): this is asked every frame, from more than one thread
 	return shellAvailable == 0;
 }
 
@@ -118,6 +120,7 @@ void GameMenu::Close()
 	menuOpen = false;
 	bindingAction = -1;
 	cvarSystem->SetCVarInteger( "com_pause", 0 );
+	ImGui::GetIO().ConfigFlags &= ~( ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad );
 }
 
 void GameMenu::Toggle()
@@ -391,6 +394,8 @@ void GameMenu::Draw()
 	}
 	ImGuiIO& io = ImGui::GetIO();
 	io.MouseDrawCursor = true;
+	// arrows, Enter and a gamepad work too, not only the mouse
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 
 	// dim the game behind
 	ImGui::GetBackgroundDrawList()->AddRectFilled( ImVec2( 0, 0 ), io.DisplaySize, IM_COL32( 0, 0, 0, 150 ) );

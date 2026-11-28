@@ -35,6 +35,7 @@ or (at your option) any later version.
 
 namespace GameMenu
 {
+void	Init();					// after the file system starts: looks for the game's own menus once
 bool	Wanted();				// no menus of the game's own, and not playing from the editor
 bool	IsOpen();
 void	Open();

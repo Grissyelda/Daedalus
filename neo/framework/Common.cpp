@@ -1263,6 +1263,9 @@ void idCommonLocal::Init( int argc, const char* const* argv, const char* cmdline
 		// initialize the declaration manager
 		declManager->Init();
 
+		// Daedalus: whether this game has menus of its own (read once, here, on one thread)
+		GameMenu::Init();
+
 		// init journalling, etc
 		eventLoop->Init();
 
