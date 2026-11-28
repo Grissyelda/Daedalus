@@ -549,9 +549,7 @@ bool IconButton( const char* id, const char* icon, const char* tooltip, bool act
 		draw->AddRectFilled( pos, max, ImGui::ColorConvertFloat4ToU32( Grey( held ? 0.26f : 0.21f ) ), ImGui::GetStyle().FrameRounding );
 	}
 	const ImU32 color = !enabled ? ImGui::ColorConvertFloat4ToU32( Grey( 0.36f ) ) : active ? AccentU32() : ImGui::ColorConvertFloat4ToU32( TEXT_COLOR );
-	ImFont* font = ImGui::GetFont();
-	const ImVec2 size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.0f, icon );
-	draw->AddText( font, font->FontSize, ImVec2( idMath::Rint( pos.x + ( h - size.x ) * 0.5f ), idMath::Rint( pos.y + ( h - size.y ) * 0.5f ) ), color, icon );
+	IconCentered( draw, pos, max, icon, color );
 
 	Tip( tooltip );
 	ImGui::PopID();
@@ -598,6 +596,89 @@ bool ModeTab( const char* icon, const char* label, bool active, const char* tool
 	ImGui::PopID();
 	MarkRect( va( "tab:%s", label ), pos, max );
 	return pressed;
+}
+
+void IconCentered( ImDrawList* draw, const ImVec2& min, const ImVec2& max, const char* icon, ImU32 color )
+{
+	ImFont* font = ImGui::GetFont();
+	unsigned int c = 0;
+	ImTextCharFromUtf8( &c, icon, NULL );
+	const ImFontGlyph* glyph = font->FindGlyphNoFallback( ( ImWchar )c );
+	if( glyph == NULL )
+	{
+		const ImVec2 size = font->CalcTextSizeA( font->FontSize, FLT_MAX, 0.0f, icon );
+		draw->AddText( font, font->FontSize, ImVec2( idMath::Rint( ( min.x + max.x - size.x ) * 0.5f ), idMath::Rint( ( min.y + max.y - size.y ) * 0.5f ) ), color, icon );
+		return;
+	}
+	// the glyph's own box, not the font's line box: Lucide icons sit off the line's centre
+	const float w = ( glyph->X1 - glyph->X0 );
+	const float h = ( glyph->Y1 - glyph->Y0 );
+	const ImVec2 at( idMath::Rint( ( min.x + max.x - w ) * 0.5f - glyph->X0 ), idMath::Rint( ( min.y + max.y - h ) * 0.5f - glyph->Y0 ) );
+	draw->AddText( font, font->FontSize, at, color, icon, icon + ImTextCountUtf8BytesFromChar( icon, NULL ) );
+}
+
+bool PillButton( const char* id, const char* icon, const char* label, const ImVec4& color, float width, float h, bool enabled, bool darkText )
+{
+	ImGui::PushID( id );
+	const bool hasLabel = label != NULL && label[0] != 0;
+	ImGui::PushFont( Font( FONT_BOLD ) );
+	const float pad = h * 0.42f;
+	const float iconBox = h * 0.62f;
+	const float gap = h * 0.22f;
+	const float labelWidth = hasLabel ? ImGui::CalcTextSize( label ).x : 0.0f;
+	if( width <= 0.0f )
+	{
+		width = hasLabel ? pad + iconBox + gap + labelWidth + pad : h;
+	}
+	const ImVec2 pos = ImGui::GetCursorScreenPos();
+	ImGui::BeginDisabled( !enabled );
+	const bool pressed = ImGui::InvisibleButton( "##pill", ImVec2( width, h ) );
+	ImGui::EndDisabled();
+	const bool hovered = enabled && ImGui::IsItemHovered();
+	const bool held = enabled && ImGui::IsItemActive();
+
+	ImVec4 fill = color;
+	if( !enabled )
+	{
+		fill = ImVec4( color.x * 0.5f, color.y * 0.5f, color.z * 0.5f, 0.6f );
+	}
+	else if( held )
+	{
+		fill = ImVec4( color.x * 0.9f, color.y * 0.9f, color.z * 0.9f, 1.0f );
+	}
+	else if( hovered )
+	{
+		fill = ImVec4( Min( 1.0f, color.x * 1.12f ), Min( 1.0f, color.y * 1.12f ), Min( 1.0f, color.z * 1.12f ), 1.0f );
+	}
+	const ImVec2 max( pos.x + width, pos.y + h );
+	ImDrawList* draw = ImGui::GetWindowDrawList();
+	draw->AddRectFilled( pos, max, ImGui::ColorConvertFloat4ToU32( fill ), h * 0.5f );
+	const ImU32 ink = ImGui::ColorConvertFloat4ToU32( !enabled ? Grey( 0.45f ) : darkText ? Grey( 0.06f ) : TEXT_COLOR );
+	if( icon != NULL && icon[0] != 0 )
+	{
+		if( hasLabel )
+		{
+			// icon and label centred together
+			const float total = iconBox + gap + labelWidth;
+			const float startX = pos.x + ( width - total ) * 0.5f;
+			IconCentered( draw, ImVec2( startX, pos.y ), ImVec2( startX + iconBox, max.y ), icon, ink );
+			const ImVec2 ts = ImGui::CalcTextSize( label );
+			draw->AddText( ImVec2( idMath::Rint( startX + iconBox + gap ), idMath::Rint( pos.y + ( h - ts.y ) * 0.5f ) ), ink, label );
+		}
+		else
+		{
+			IconCentered( draw, pos, max, icon, ink );
+		}
+	}
+	else if( hasLabel )
+	{
+		const ImVec2 ts = ImGui::CalcTextSize( label );
+		draw->AddText( ImVec2( idMath::Rint( pos.x + ( width - ts.x ) * 0.5f ), idMath::Rint( pos.y + ( h - ts.y ) * 0.5f ) ), ink, label );
+	}
+	ImGui::PopFont();
+	ImGui::PopID();
+	MarkRect( id, pos, max );
+	return pressed && enabled;
 }
 
 bool ColorButton( const char* label, const ImVec4& color, const ImVec2& size )

@@ -10364,34 +10364,40 @@ void DrawMainMenuBar()
 	// Play / Stop sits in the middle of the bar, like other editors
 	const float buttonWidth = 104.0f * UI::Scale();
 	const float stopWidth = 80.0f * UI::Scale();
-	const float groupWidth = paused ? buttonWidth + stopWidth + 6.0f * UI::Scale() : playing ? buttonWidth : buttonWidth + ImGui::GetFrameHeight() + 2.0f * UI::Scale();
+	const float pillHeightForGroup = ImGui::GetFontSize() + 10.0f * UI::Scale();
+	const float groupWidth = paused ? buttonWidth + stopWidth + 6.0f * UI::Scale() : playing ? buttonWidth : buttonWidth + pillHeightForGroup + 2.0f * UI::Scale();
 	ImGui::PushStyleVar( ImGuiStyleVar_FrameRounding, 20.0f * UI::Scale() );
 	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 4.0f * UI::Scale() ) );
 	const float barHeight = ImGui::GetWindowHeight();
-	const float pillHeight = ImGui::GetFontSize() + 8.0f * UI::Scale();
-	const float pillY = ( barHeight - pillHeight ) * 0.5f;
+	const float pillHeight = pillHeightForGroup;
+	const float pillY = idMath::Rint( ( barHeight - pillHeight ) * 0.5f );
 
-	// the build sits just left of Play: progress while it runs, a Build button otherwise
+	// the build sits just left of Play: progress while it runs, a Build button otherwise.
+	// Every control here is placed on the same centre line and drawn with its icon centred on
+	// the icon's own shape, so circles and pills line up.
 	const bool building = BuildRunning();
 	const bool showBuildButton = !building && ( !playing || paused );
 	const float buildBarWidth = 210.0f * UI::Scale();
-	const float buildWidth = building ? buildBarWidth + pillHeight + 2.0f * UI::Scale() : showBuildButton ? pillHeight : 0.0f;
+	const float gapSmall = 4.0f * UI::Scale();
+	const float buildWidth = building ? buildBarWidth + gapSmall + pillHeight : showBuildButton ? pillHeight : 0.0f;
 	const float playX = ( ImGui::GetWindowWidth() - groupWidth ) * 0.5f;
 	if( buildWidth > 0.0f )
 	{
-		ImGui::SetCursorPos( ImVec2( playX - buildWidth - 8.0f * UI::Scale(), pillY ) );
+		const float buildX = playX - buildWidth - 8.0f * UI::Scale();
+		ImGui::SetCursorPos( ImVec2( buildX, pillY ) );
 		if( building )
 		{
 			const float progress = BuildProgress();
 			ImGui::PushStyleColor( ImGuiCol_PlotHistogram, UI::Accent() );
+			ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 10.0f * UI::Scale(), 0.0f ) );
 			ImGui::ProgressBar( progress, ImVec2( buildBarWidth, pillHeight ), va( ICON_BUILD "  %s  %d%%", buildStage.c_str(), ( int )( progress * 100.0f ) ) );
+			ImGui::PopStyleVar();
 			ImGui::PopStyleColor();
 			UI::Tip( buildThen == BUILD_THEN_PLAY ? "Building the level. It plays as soon as it's built; you can keep editing meanwhile." :
 					 buildThen == BUILD_THEN_RELOAD ? "Rebuilding the level with your brush changes. The game carries on, where you were, when it's done." :
 					 "Building the level. You can keep editing meanwhile." );
-			ImGui::SameLine( 0.0f, 2.0f * UI::Scale() );
-			ImGui::SetCursorPosY( pillY );
-			if( UI::ColorButton( ICON_CLOSE "##cancelbuild", UI::Bad(), ImVec2( pillHeight, pillHeight ) ) )
+			ImGui::SetCursorPos( ImVec2( buildX + buildBarWidth + gapSmall, pillY ) );
+			if( UI::PillButton( "cancelbuild", ICON_CLOSE, NULL, UI::Bad(), 0.0f, pillHeight ) )
 			{
 				CancelBuild();
 				Status( "Build cancelled" );
@@ -10400,14 +10406,11 @@ void DrawMainMenuBar()
 		}
 		else
 		{
-			ImGui::BeginDisabled( !document.IsOpen() );
-			if( UI::ColorButton( ICON_BUILD "##build", ImGui::GetStyleColorVec4( ImGuiCol_Button ), ImVec2( pillHeight, pillHeight ) ) )
+			if( UI::PillButton( "build", ICON_BUILD, NULL, ImGui::GetStyleColorVec4( ImGuiCol_Button ), 0.0f, pillHeight, document.IsOpen(), false ) )
 			{
 				BuildDocument();
 			}
-			UI::Mark( "build" );
 			UI::Tip( "Build the level (Ctrl+B): turn it into what the game loads. Play does this for you when it's needed; it runs in the background, so you can keep editing." );
-			ImGui::EndDisabled();
 		}
 	}
 
@@ -10415,16 +10418,14 @@ void DrawMainMenuBar()
 	if( paused )
 	{
 		const bool rebuilding = building && buildThen == BUILD_THEN_RELOAD;
-		ImGui::BeginDisabled( rebuilding );
-		if( UI::ColorButton( rebuilding ? ICON_BUILD "  Building" : ( liveGeometryChanged ? ICON_BUILD "  Resume" : ICON_PLAY "  Resume" ), UI::Good(), ImVec2( buttonWidth, 0 ) ) )
+		if( UI::PillButton( "resume", ( rebuilding || liveGeometryChanged ) ? ICON_BUILD : ICON_PLAY, rebuilding ? "Building" : "Resume", UI::Good(), buttonWidth, pillHeight, !rebuilding ) )
 		{
 			ResumePlay();
 		}
-		ImGui::EndDisabled();
 		UI::Tip( liveGeometryChanged ? "Rebuild and carry on (F5): some changes need the level rebuilt, so it's built first and then reloads around you." :
 				 "Carry on playing from where you were, with your changes (F5)" );
-		ImGui::SameLine( 0.0f, 6.0f * UI::Scale() );
-		if( UI::ColorButton( ICON_STOP "  Stop", UI::Bad(), ImVec2( stopWidth, 0 ) ) )
+		ImGui::SetCursorPos( ImVec2( playX + buttonWidth + 6.0f * UI::Scale(), pillY ) );
+		if( UI::PillButton( "stop", ICON_STOP, "Stop", UI::Bad(), stopWidth, pillHeight ) )
 		{
 			Stop();
 		}
@@ -10432,7 +10433,7 @@ void DrawMainMenuBar()
 	}
 	else if( playing )
 	{
-		if( UI::ColorButton( ICON_PAUSE "  Pause", UI::Warn(), ImVec2( buttonWidth, 0 ) ) )
+		if( UI::PillButton( "pause", ICON_PAUSE, "Pause", UI::Warn(), buttonWidth, pillHeight ) )
 		{
 			PausePlay();
 		}
@@ -10441,21 +10442,18 @@ void DrawMainMenuBar()
 	else
 	{
 		const bool fromCamera = editor_playFrom.GetInteger() == 1;
-		ImGui::BeginDisabled( !document.IsOpen() );
-		if( UI::ColorButton( fromCamera ? ICON_PLAY "  Play here" : ICON_PLAY "  Play", UI::Good(), ImVec2( buttonWidth, 0 ) ) )
+		if( UI::PillButton( "play", ICON_PLAY, fromCamera ? "Play here" : "Play", UI::Good(), buttonWidth, pillHeight, document.IsOpen() ) )
 		{
 			PlayDocument();
 		}
-		UI::Mark( "play" );
 		UI::Tip( fromCamera ? "Save and play, starting where the camera is (F5). Shift+click starts at the player start. Esc pauses to edit." :
 				 "Save and play from the player start (F5). Shift+click starts where the camera is. Esc pauses to edit." );
-		ImGui::SameLine( 0.0f, 2.0f * UI::Scale() );
-		if( UI::ColorButton( ICON_CHEVRON_DOWN "##playfrom", UI::Good(), ImVec2( ImGui::GetFrameHeight(), 0 ) ) )
+		ImGui::SetCursorPos( ImVec2( playX + buttonWidth + 2.0f * UI::Scale(), pillY ) );
+		if( UI::PillButton( "playfrom", ICON_CHEVRON_DOWN, NULL, UI::Good(), 0.0f, pillHeight, document.IsOpen() ) )
 		{
 			ImGui::OpenPopup( "##playmenu" );
 		}
 		UI::Tip( "Where Play starts you" );
-		ImGui::EndDisabled();
 		if( ImGui::BeginPopup( "##playmenu" ) )
 		{
 			if( ImGui::MenuItem( ICON_PLAYER "  Play from the player start", NULL, !fromCamera ) )

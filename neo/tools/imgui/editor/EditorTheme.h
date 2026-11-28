@@ -109,6 +109,13 @@ bool		ModeTab( const char* icon, const char* label, bool active, const char* too
 // filled accent / coloured button
 bool		ColorButton( const char* label, const ImVec4& color, const ImVec2& size = ImVec2( 0, 0 ) );
 
+// an icon drawn so its visible shape (not its line box) is centred in the rectangle
+void		IconCentered( ImDrawList* draw, const ImVec2& min, const ImVec2& max, const char* icon, ImU32 color );
+
+// a filled pill (or a circle when there's no label and width is 0) with an icon centred on its shape
+// and an optional label; at the cursor, height h; returns true when clicked
+bool		PillButton( const char* id, const char* icon, const char* label, const ImVec4& color, float width, float h, bool enabled = true, bool darkText = true );
+
 // a rounded panel with an icon title, optional help, and a fold arrow.
 // Content goes between BeginCard and EndCard only when BeginCard returns true; always call EndCard.
 bool		BeginCard( const char* id, const char* icon, const char* title, const char* help = NULL, bool defaultOpen = true );
