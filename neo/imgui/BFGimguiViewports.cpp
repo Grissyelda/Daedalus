@@ -410,6 +410,26 @@ void ViewportsNewFrame( bool pollMouse, ImVec2& mousePos )
 	{
 		void* window = Sys_WindowUnderCursor();
 		ImGuiViewport* viewport = window != NULL ? ImGui::FindViewportByPlatformHandle( window ) : NULL;
+		// Windows doesn't always skip the panel being dragged (it ignores HTTRANSPARENT for some
+		// lookups), and docking needs what's under it: then pick the front-most other viewport
+		// under the mouse, so drop targets on the sides of panels catch
+		if( viewport == NULL || ( viewport->Flags & ImGuiViewportFlags_NoInputs ) != 0 )
+		{
+			ImGuiViewportP* best = NULL;
+			for( int i = 0; i < platform.Viewports.Size; i++ )
+			{
+				ImGuiViewportP* v = ( ImGuiViewportP* )platform.Viewports[i];
+				if( ( v->Flags & ( ImGuiViewportFlags_NoInputs | ImGuiViewportFlags_IsMinimized ) ) != 0 || !v->GetMainRect().Contains( mousePos ) )
+				{
+					continue;
+				}
+				if( best == NULL || v->LastFocusedStampCount > best->LastFocusedStampCount )
+				{
+					best = v;
+				}
+			}
+			viewport = best;
+		}
 		io.MouseHoveredViewport = viewport != NULL ? viewport->ID : 0;
 	}
 
