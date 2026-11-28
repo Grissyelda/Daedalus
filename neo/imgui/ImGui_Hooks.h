@@ -50,6 +50,8 @@ bool	InjectSysEvent( const sysEvent_t* keyEvent );
 
 // inject the current mouse wheel delta for scrolling
 bool	InjectMouseWheel( int delta );
+// fractional notches straight from the window (touchpads send less than one); used while the game has not grabbed the mouse
+bool	InjectMouseWheelSmooth( float notches );
 
 // call this once per frame *before* calling ImGui::* commands to draw widgets etc
 // (but ideally after getting all new events)

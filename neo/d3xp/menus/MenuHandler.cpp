@@ -154,6 +154,14 @@ void idMenuHandler::PlaySound( menuSounds_t type, int channel )
 		return;
 	}
 
+	// Daedalus: a project without this sound would play the engine's default buzz instead
+	// (it sounded like a beep every time the editor started, from the menu music)
+	const idSoundShader* shader = declManager->FindSound( sounds[ type ], false );
+	if( shader == NULL || shader->GetState() == DS_DEFAULTED )
+	{
+		return;
+	}
+
 	int c = SCHANNEL_ANY;
 	if( channel != -1 )
 	{

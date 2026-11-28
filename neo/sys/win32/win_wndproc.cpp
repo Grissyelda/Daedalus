@@ -36,6 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 #include <windowsx.h>
 #include <shellapi.h>
 #include <sys/DeviceManager.h>
+#include "../../imgui/ImGui_Hooks.h"
 
 LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
 
@@ -616,6 +617,12 @@ LONG WINAPI MainWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 		}
 		case WM_MOUSEWHEEL:
 		{
+			// Daedalus: while the mouse isn't grabbed (the editor), DirectInput isn't polled,
+			// so ImGui would never see the wheel and panels wouldn't scroll
+			if( !win32.mouseGrabbed )
+			{
+				ImGuiHook::InjectMouseWheelSmooth( ( float )GET_WHEEL_DELTA_WPARAM( wParam ) / ( float )WHEEL_DELTA );
+			}
 			int delta = GET_WHEEL_DELTA_WPARAM( wParam ) / WHEEL_DELTA;
 			int key = delta < 0 ? K_MWHEELDOWN : K_MWHEELUP;
 			delta = abs( delta );

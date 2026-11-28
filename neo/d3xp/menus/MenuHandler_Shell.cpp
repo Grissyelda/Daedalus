@@ -601,7 +601,7 @@ void idMenuHandler_Shell::Initialize( const char* swfFile, idSoundWorld* sw )
 	const idSoundShader* soundShader = NULL;
 	if( !inGame )
 	{
-		soundShader = declManager->FindSound( "gui/menu_music", true );
+		soundShader = declManager->FindSound( "gui/menu_music", false );
 		if( soundShader != NULL )
 		{
 			sounds[ GUI_SOUND_MUSIC ] = soundShader->GetName();

@@ -846,7 +846,17 @@ bool InjectMouseWheel( int delta )
 {
 	if( IsInitialized() && UseInput() && !PlayingFromEditor() && delta != 0 )
 	{
-		g_MouseWheel = ( delta > 0 ) ? 1 : -1;
+		g_MouseWheel += ( float )delta;
+		return true;
+	}
+	return false;
+}
+
+bool InjectMouseWheelSmooth( float notches )
+{
+	if( IsInitialized() && UseInput() && !PlayingFromEditor() && notches != 0.0f )
+	{
+		g_MouseWheel += notches;
 		return true;
 	}
 	return false;
