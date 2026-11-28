@@ -210,6 +210,7 @@ static void FitSelectedFaces();
 
 static void SwitchProject( const char* name );
 static void MakePortal();
+static void ForgetThumbnails();
 static void LoadPortals( const char* mapName );
 static void PlayGame( const char* project, const char* level );
 static void CenterPlanOnCamera();
@@ -8556,15 +8557,64 @@ static void RequestNewMaterial()
 // undo put material files back: load whatever changed, and show it
 static void MaterialFilesRestored()
 {
+	ForgetThumbnails();
 	declManager->Reload( false );
 	ReloadMaterialPanel();
 	LoadMaterialPanel();
 }
 
 // a material's picture, drawn flat; a click on it returns true
+// thumbnails are made only for tiles on screen, a few a frame: a game's data has thousands of
+// materials, and making them all in one frame (parsing each and loading its picture) froze the editor
+static idHashIndex			thumbHash;
+static idStrList			thumbNames;
+static idList<const idMaterial*>	thumbMaterials;
+static int					thumbFrame = -1;
+static int					thumbsMadeThisFrame = 0;
+
+static const idMaterial* CachedThumbnail( const char* declName, bool visible )
+{
+	const int key = thumbHash.GenerateKey( declName, false );
+	for( int i = thumbHash.First( key ); i != -1; i = thumbHash.Next( i ) )
+	{
+		if( thumbNames[i].Icmp( declName ) == 0 )
+		{
+			return thumbMaterials[i];
+		}
+	}
+	if( !visible )
+	{
+		return NULL;
+	}
+	const int frame = ImGui::GetFrameCount();
+	if( frame != thumbFrame )
+	{
+		thumbFrame = frame;
+		thumbsMadeThisFrame = 0;
+	}
+	if( thumbsMadeThisFrame >= 4 )
+	{
+		return NULL;		// next frame
+	}
+	thumbsMadeThisFrame++;
+	const idMaterial* thumb = Materials::Thumbnail( declName );
+	const int index = thumbNames.Append( declName );
+	thumbMaterials.Append( thumb );
+	thumbHash.Add( key, index );
+	return thumb;
+}
+
+// a material changed: its thumbnail is made again
+static void ForgetThumbnails()
+{
+	thumbHash.Clear();
+	thumbNames.Clear();
+	thumbMaterials.Clear();
+}
+
 static bool DrawMaterialThumb( const char* declName, float size, bool selected )
 {
-	const idMaterial* thumb = Materials::Thumbnail( declName );
+	const idMaterial* thumb = CachedThumbnail( declName, ImGui::IsRectVisible( ImVec2( size, size ) ) );
 	const ImVec2 at = ImGui::GetCursorScreenPos();
 	ImGui::PushID( declName );
 	const bool clicked = ImGui::InvisibleButton( "thumb", ImVec2( size, size ) );
@@ -8614,6 +8664,7 @@ static void DrawPictureThumb( const idStr& picture, float size )
 // write the working copy, as one undo step when a level is open
 static bool SaveMaterial( const char* label )
 {
+	ForgetThumbnails();
 	if( matName.Length() == 0 )
 	{
 		return false;
