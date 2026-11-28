@@ -1,0 +1,5 @@
+# a project with no menus of its own gets Daedalus' game menu, listing its levels
+Game menu: open (wanted: yes)
+level: testmaps/test_room
+!signal caught
+!Sys_Error

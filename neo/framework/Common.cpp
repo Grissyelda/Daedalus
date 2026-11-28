@@ -36,6 +36,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "ConsoleHistory.h"
 #include "GameLibrary.h"
+#include "GameMenu.h"
 
 #include "../sound/sound.h"
 
@@ -1729,6 +1730,7 @@ void idCommonLocal::InitCommands()
 {
 	// compilers
 	GameLibrary::RegisterCommands();
+	GameMenu::RegisterCommands();
 	cmdSystem->AddCommand( "dmap", Dmap_f, CMD_FL_TOOL, "compiles a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "runAAS", RunAAS_f, CMD_FL_TOOL, "compiles an AAS file for a map", idCmdSystem::ArgCompletion_MapName );
 	cmdSystem->AddCommand( "runAASDir", RunAASDir_f, CMD_FL_TOOL, "compiles AAS files for all maps in a folder", idCmdSystem::ArgCompletion_MapName );
@@ -1822,6 +1824,12 @@ bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 		return true;
 	}
 
+	// Daedalus: a key being bound in the game menu
+	if( GameMenu::CaptureEvent( event ) )
+	{
+		return true;
+	}
+
 	// hitting escape anywhere brings up the menu
 	if( game && game->IsInGame() )
 	{
@@ -1842,6 +1850,13 @@ bool idCommonLocal::ProcessEvent( const sysEvent_t* event )
 			else if( game->CheckInCinematic() )
 			{
 				game->SkipCinematicScene();
+			}
+			else if( GameMenu::Wanted() )
+			{
+				// Daedalus: games with no menus of their own get Daedalus' menu
+				console->Close();
+				GameMenu::Toggle();
+				return true;
 			}
 			else
 			{

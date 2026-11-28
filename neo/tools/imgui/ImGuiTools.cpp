@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "precompiled.h"
+#include "../../framework/GameMenu.h"
 #pragma hdrstop
 
 #include "../imgui/BFGimgui.h"
@@ -61,7 +62,7 @@ bool ReleaseMouseForTools()
 {
 	// RB: ignore everything as long right mouse button is pressed
 	// Daedalus: the editor shell keeps the cursor free while editing; the right button looks around without capturing it
-	if( DaedalusEditor::IsEditing() )
+	if( DaedalusEditor::IsEditing() || GameMenu::IsOpen() )
 	{
 		return true;
 	}

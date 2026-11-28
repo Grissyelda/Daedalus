@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 ===========================================================================
 */
 #include "precompiled.h"
+#include "../framework/GameMenu.h"
 #pragma hdrstop
 
 #include "BFGimgui.h"
@@ -255,12 +256,12 @@ void SetClipboardText( void*, const char* text )
 bool ShowWindows()
 {
 	// Daedalus: the editor shell is always drawn in editor mode (also while playing, for the Stop button)
-	return ( DaedalusEditor::IsEditorMode() || ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 );
+	return ( DaedalusEditor::IsEditorMode() || ImGuiTools::AreEditorsActive() || imgui_showDemoWindow.GetBool() || com_showFPS.GetInteger() > 1 || GameMenu::IsOpen() || GameMenu::Wanted() );
 }
 
 bool UseInput()
 {
-	return ( ImGuiTools::ReleaseMouseForTools() || imgui_showDemoWindow.GetBool() );
+	return ( ImGuiTools::ReleaseMouseForTools() || imgui_showDemoWindow.GetBool() || GameMenu::IsOpen() );
 }
 
 // Daedalus: while a level is played from the editor the mouse belongs to the game.
@@ -969,6 +970,9 @@ void Render()
 		DaedalusEditor::Draw( mainDockSpaceId );
 
 		ImGuiTools::DrawToolWindows();
+
+		// Daedalus: the menu for games that have none of their own
+		GameMenu::Draw();
 
 		if( imgui_showDemoWindow.GetBool() )
 		{
